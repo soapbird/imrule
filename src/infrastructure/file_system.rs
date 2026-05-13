@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::application::ports::FileSystemPort;
 use crate::domain::constants::{
-    normalize_path_separators, xdg_config_home, GENERATED_BY_RULER_MARKER, SKILLS_DIR,
+    normalize_path_separators, xdg_config_home, GENERATED_BY_IMRULE_MARKER, SKILLS_DIR,
 };
 use crate::domain::error::ImruleError;
 const SUBAGENTS_DIR_NAME: &str = "agents";
@@ -68,7 +68,7 @@ impl FileSystemPort for FsFileSystem {
         path.exists()
     }
 
-    fn find_ruler_dir(&self, start_path: &Path, check_global: bool) -> Option<PathBuf> {
+    fn find_imrule_dir(&self, start_path: &Path, check_global: bool) -> Option<PathBuf> {
         let mut current = start_path.to_path_buf();
         loop {
             let candidate = current.join(".imrule");
@@ -92,22 +92,22 @@ impl FileSystemPort for FsFileSystem {
 
     fn read_markdown_files(
         &self,
-        ruler_dir: &Path,
+        imrule_dir: &Path,
         include_agents: bool,
     ) -> Result<Vec<(PathBuf, String)>, ImruleError> {
         let mut md_files = Vec::new();
         let mut saw_excluded_agents = false;
         walk_markdown(
-            ruler_dir,
-            ruler_dir,
+            imrule_dir,
+            imrule_dir,
             include_agents,
             &mut saw_excluded_agents,
             &mut md_files,
         )
         .map_err(|e| ImruleError::filesystem(e.to_string()))?;
 
-        let top_level_agents = ruler_dir.join("AGENTS.md");
-        let top_level_legacy = ruler_dir.join("instructions.md");
+        let top_level_agents = imrule_dir.join("AGENTS.md");
+        let top_level_legacy = imrule_dir.join("instructions.md");
 
         let mut primary: Option<(PathBuf, String)> = md_files
             .iter()
@@ -132,17 +132,17 @@ impl FileSystemPort for FsFileSystem {
         }
         ordered.extend(others);
 
-        let repo_root = ruler_dir.parent().unwrap_or_else(|| Path::new("."));
+        let repo_root = imrule_dir.parent().unwrap_or_else(|| Path::new("."));
         let root_agents = repo_root.join("AGENTS.md");
         if !same_path(&root_agents, &top_level_agents) {
             if let Ok(content) = fs::read_to_string(&root_agents) {
-                let is_generated = content.starts_with(GENERATED_BY_RULER_MARKER);
-                let has_ruler_files = !ordered.is_empty() || saw_excluded_agents;
-                let contains_ruler_sources = content.contains("<!-- Source: .imrule/")
+                let is_generated = content.starts_with(GENERATED_BY_IMRULE_MARKER);
+                let has_imrule_files = !ordered.is_empty() || saw_excluded_agents;
+                let contains_imrule_sources = content.contains("<!-- Source: .imrule/")
                     || content.contains("<!-- Source: imrule/");
                 let is_probably_generated =
-                    is_generated || (contains_ruler_sources && has_ruler_files);
-                if !is_probably_generated || !has_ruler_files {
+                    is_generated || (contains_imrule_sources && has_imrule_files);
+                if !is_probably_generated || !has_imrule_files {
                     ordered.insert(0, (root_agents, content));
                 }
             }
@@ -151,12 +151,12 @@ impl FileSystemPort for FsFileSystem {
         Ok(ordered)
     }
 
-    fn find_all_ruler_dirs(&self, start_path: &Path) -> Vec<PathBuf> {
+    fn find_all_imrule_dirs(&self, start_path: &Path) -> Vec<PathBuf> {
         let mut found = Vec::new();
         let root = start_path
             .canonicalize()
             .unwrap_or_else(|_| start_path.to_path_buf());
-        find_all_ruler_dirs_inner(start_path, &root, &mut found);
+        find_all_imrule_dirs_inner(start_path, &root, &mut found);
         found.sort_by(|a, b| {
             let depth_a = a.components().count();
             let depth_b = b.components().count();
@@ -169,7 +169,7 @@ impl FileSystemPort for FsFileSystem {
 }
 
 fn walk_markdown(
-    ruler_dir: &Path,
+    imrule_dir: &Path,
     dir: &Path,
     include_agents: bool,
     saw_excluded_agents: &mut bool,
@@ -191,7 +191,7 @@ fn walk_markdown(
         };
 
         if metadata.is_dir() {
-            let relative = full_path.strip_prefix(ruler_dir).unwrap_or(&full_path);
+            let relative = full_path.strip_prefix(imrule_dir).unwrap_or(&full_path);
             let relative_string = normalize_path_separators(&relative.to_string_lossy());
             if relative_string == SKILLS_DIR
                 || relative_string.starts_with(&format!("{SKILLS_DIR}/"))
@@ -206,7 +206,7 @@ fn walk_markdown(
                 continue;
             }
             walk_markdown(
-                ruler_dir,
+                imrule_dir,
                 &full_path,
                 include_agents,
                 saw_excluded_agents,
@@ -222,7 +222,7 @@ fn walk_markdown(
     Ok(())
 }
 
-fn find_all_ruler_dirs_inner(dir: &Path, root: &Path, found: &mut Vec<PathBuf>) {
+fn find_all_imrule_dirs_inner(dir: &Path, root: &Path, found: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -242,7 +242,7 @@ fn find_all_ruler_dirs_inner(dir: &Path, root: &Path, found: &mut Vec<PathBuf>) 
             if git_dir.is_dir() && canonical != root {
                 continue;
             }
-            find_all_ruler_dirs_inner(&path, root, found);
+            find_all_imrule_dirs_inner(&path, root, found);
         }
     }
 }

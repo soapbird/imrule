@@ -1,10 +1,10 @@
-//! Rule-file concatenation for generated Ruler instructions.
+//! Rule-file concatenation for generated ImRule instructions.
 
 use std::path::{Path, PathBuf};
 
 use crate::domain::constants::normalize_path_separators;
 
-/// Concatenates markdown rule files into the generated Ruler section format.
+/// Concatenates markdown rule files into the generated ImRule section format.
 pub fn concatenate_rules(files: &[(PathBuf, String)], base_dir: Option<&Path>) -> String {
     let base = base_dir.unwrap_or_else(|| Path::new("."));
     let sections: Vec<String> = files

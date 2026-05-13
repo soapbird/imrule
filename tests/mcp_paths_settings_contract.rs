@@ -8,7 +8,7 @@ use imrule::domain::mcp::{
 };
 use imrule::infrastructure::mcp_storage::JsonMcpStorage;
 use imrule::infrastructure::vscode_settings::{
-    get_vscode_settings_path, merge_augment_mcp_servers, transform_ruler_to_augment_mcp,
+    get_vscode_settings_path, merge_augment_mcp_servers, transform_imrule_to_augment_mcp,
 };
 use serde_json::json;
 use tempfile::tempdir;
@@ -150,7 +150,7 @@ fn vscode_augment_settings_transform_and_merge_match_native_contract() {
             "two": { "command": "python" }
         }
     });
-    let servers = transform_ruler_to_augment_mcp(&mcp_json);
+    let servers = transform_imrule_to_augment_mcp(&mcp_json);
     assert_eq!(
         serde_json::to_value(&servers).unwrap(),
         json!([

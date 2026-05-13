@@ -6,7 +6,7 @@ use crate::application::apply_use_case::instruction_output_path;
 use crate::application::ports::{AgentWriterPort, FileSystemPort};
 use crate::domain::agent::AgentDefinition;
 use crate::domain::config::AgentConfig;
-use crate::domain::constants::GENERATED_BY_RULER_MARKER;
+use crate::domain::constants::GENERATED_BY_IMRULE_MARKER;
 use crate::domain::error::ImruleError;
 
 pub struct DefaultAgentWriter<'a> {
@@ -40,7 +40,7 @@ impl<'a> AgentWriterPort for DefaultAgentWriter<'a> {
             self.fs.ensure_dir_exists(parent)?;
         }
 
-        let content = format!("{GENERATED_BY_RULER_MARKER}\n{rules}");
+        let content = format!("{GENERATED_BY_IMRULE_MARKER}\n{rules}");
         if self.fs.read_text(&path).ok().as_deref() == Some(content.as_str()) {
             return Ok(Some(path));
         }

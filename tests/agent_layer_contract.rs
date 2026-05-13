@@ -208,7 +208,7 @@ fn agent_registry_matches_native_names_paths_mcp_keys_and_capabilities() {
         (
             "augmentcode",
             "AugmentCode",
-            AgentOutputPaths::single("/project/.augment/rules/ruler_augment_instructions.md"),
+            AgentOutputPaths::single("/project/.augment/rules/imrule_augment_instructions.md"),
             "mcpServers",
             false,
             false,
@@ -313,7 +313,7 @@ fn agent_registry_matches_native_names_paths_mcp_keys_and_capabilities() {
         (
             "kiro",
             "Kiro",
-            AgentOutputPaths::single("/project/.kiro/steering/ruler_kiro_instructions.md"),
+            AgentOutputPaths::single("/project/.kiro/steering/imrule_kiro_instructions.md"),
             "mcpServers",
             true,
             true,
@@ -361,7 +361,7 @@ fn agent_registry_matches_native_names_paths_mcp_keys_and_capabilities() {
             "amazonqcli",
             "Amazon Q CLI",
             AgentOutputPaths::many([
-                ("instructions", "/project/.amazonq/rules/ruler_q_rules.md"),
+                ("instructions", "/project/.amazonq/rules/imrule_q_rules.md"),
                 ("mcp", "/project/.amazonq/mcp.json"),
             ]),
             "mcpServers",
@@ -399,7 +399,7 @@ fn agent_registry_matches_native_names_paths_mcp_keys_and_capabilities() {
         (
             "antigravity",
             "Antigravity",
-            AgentOutputPaths::single("/project/.agent/rules/ruler.md"),
+            AgentOutputPaths::single("/project/.agent/rules/imrule.md"),
             "mcpServers",
             false,
             false,

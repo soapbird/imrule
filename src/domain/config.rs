@@ -106,7 +106,7 @@ pub struct AgentConfig {
     pub mcp: Option<McpConfig>,
 }
 
-/// Parsed Ruler configuration values.
+/// Parsed ImRule configuration values.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LoadedConfig {
     pub default_agents: Option<Vec<String>>,

@@ -10,7 +10,7 @@ use crate::domain::skills::SkillsDiscovery;
 
 /// Discovers skills in `.imrule/skills`.
 pub fn discover_skills(project_root: &Path) -> io::Result<SkillsDiscovery> {
-    let skills_dir = project_root.join(RULER_SKILLS_PATH);
+    let skills_dir = project_root.join(IMRULE_SKILLS_PATH);
     if !skills_dir.exists() {
         return Ok(SkillsDiscovery::default());
     }

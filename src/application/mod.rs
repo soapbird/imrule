@@ -1,4 +1,4 @@
-//! Application use cases for the native Ruler CLI.
+//! Application use cases for the native ImRule CLI.
 
 pub mod apply_use_case;
 pub mod init_use_case;

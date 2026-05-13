@@ -124,7 +124,7 @@ const ROO_PATHS: &[(&str, &str)] = &[
     ("mcp", ".roo/mcp.json"),
 ];
 const AMAZON_Q_PATHS: &[(&str, &str)] = &[
-    ("instructions", ".amazonq/rules/ruler_q_rules.md"),
+    ("instructions", ".amazonq/rules/imrule_q_rules.md"),
     ("mcp", ".amazonq/mcp.json"),
 ];
 const FIREBENDER_PATHS: &[(&str, &str)] = &[
@@ -225,7 +225,7 @@ const AGENT_DEFINITIONS: &[AgentDefinition] = &[
         identifier: "augmentcode",
         name: "AugmentCode",
         output_template: AgentOutputTemplate::Single(
-            ".augment/rules/ruler_augment_instructions.md",
+            ".augment/rules/imrule_augment_instructions.md",
         ),
         mcp_server_key: "mcpServers",
         capabilities: caps(false, false, false, false, false),
@@ -289,7 +289,7 @@ const AGENT_DEFINITIONS: &[AgentDefinition] = &[
     AgentDefinition {
         identifier: "kiro",
         name: "Kiro",
-        output_template: AgentOutputTemplate::Single(".kiro/steering/ruler_kiro_instructions.md"),
+        output_template: AgentOutputTemplate::Single(".kiro/steering/imrule_kiro_instructions.md"),
         mcp_server_key: "mcpServers",
         capabilities: caps(true, true, false, false, false),
     },
@@ -338,7 +338,7 @@ const AGENT_DEFINITIONS: &[AgentDefinition] = &[
     AgentDefinition {
         identifier: "antigravity",
         name: "Antigravity",
-        output_template: AgentOutputTemplate::Single(".agent/rules/ruler.md"),
+        output_template: AgentOutputTemplate::Single(".agent/rules/imrule.md"),
         mcp_server_key: "mcpServers",
         capabilities: caps(false, false, false, true, false),
     },

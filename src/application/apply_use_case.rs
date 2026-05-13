@@ -60,9 +60,9 @@ impl<'a> ApplyUseCase<'a> {
             options.agents.clone(),
         )?;
         let selected_agents = resolve_selected_agents(&config, options.agents.as_deref())?;
-        let ruler_dir = self
+        let imrule_dir = self
             .fs_port
-            .find_ruler_dir(&options.project_root, !options.local_only)
+            .find_imrule_dir(&options.project_root, !options.local_only)
             .ok_or_else(|| {
                 ImruleError::rules(format!(
                     "could not find .imrule directory from {}",
@@ -77,8 +77,8 @@ impl<'a> ApplyUseCase<'a> {
             .unwrap_or(false);
         let rule_files = self
             .fs_port
-            .read_markdown_files(&ruler_dir, include_agents)?;
-        let rules = concatenate_rules(&rule_files, ruler_dir.parent());
+            .read_markdown_files(&imrule_dir, include_agents)?;
+        let rules = concatenate_rules(&rule_files, imrule_dir.parent());
         let mut written_paths = Vec::new();
 
         for agent in &selected_agents {
@@ -142,7 +142,7 @@ impl<'a> ApplyUseCase<'a> {
         config: &LoadedConfig,
         selected_agents: &[AgentDefinition],
     ) -> Result<Vec<PathBuf>, ImruleError> {
-        let Some(ruler_mcp) = self.mcp_port.read_ruler_mcp_config(&options.project_root)? else {
+        let Some(imrule_mcp) = self.mcp_port.read_imrule_mcp_config(&options.project_root)? else {
             return Ok(Vec::new());
         };
         let strategy = if options.mcp_overwrite {
@@ -156,7 +156,7 @@ impl<'a> ApplyUseCase<'a> {
         };
         let mut written = Vec::new();
         for agent in selected_agents {
-            let Some(filtered) = filter_mcp_config_for_agent(&ruler_mcp, agent) else {
+            let Some(filtered) = filter_mcp_config_for_agent(&imrule_mcp, agent) else {
                 continue;
             };
             let Some(path) = self

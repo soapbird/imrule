@@ -39,12 +39,12 @@ impl GitignorePort for GitignoreUpdater {
             Err(err) => return Err(ImruleError::gitignore(err.to_string())),
         };
 
-        let existing_paths = get_existing_paths_excluding_ruler_block(&existing_content);
+        let existing_paths = get_existing_paths_excluding_imrule_block(&existing_content);
         let mut new_paths = BTreeSet::new();
 
         for path in paths {
             let relative = normalize_output_path(project_root, path);
-            if is_ruler_input_path(&relative) {
+            if is_imrule_input_path(&relative) {
                 continue;
             }
             let rooted = if relative.starts_with('/') {
@@ -57,8 +57,8 @@ impl GitignorePort for GitignoreUpdater {
             }
         }
 
-        let ruler_paths: Vec<_> = new_paths.into_iter().collect();
-        let new_content = update_gitignore_content(&existing_content, &ruler_paths);
+        let imrule_paths: Vec<_> = new_paths.into_iter().collect();
+        let new_content = update_gitignore_content(&existing_content, &imrule_paths);
 
         if let Some(parent) = gitignore_path.parent() {
             fs::create_dir_all(parent).map_err(|e| ImruleError::gitignore(e.to_string()))?;
@@ -92,25 +92,25 @@ fn normalize_output_path(project_root: &Path, path: &Path) -> String {
     normalize_path_separators(&relative)
 }
 
-fn is_ruler_input_path(path: &str) -> bool {
+fn is_imrule_input_path(path: &str) -> bool {
     path.contains("/.imrule/") || path.starts_with(".imrule/")
 }
 
-fn get_existing_paths_excluding_ruler_block(content: &str) -> Vec<String> {
+fn get_existing_paths_excluding_imrule_block(content: &str) -> Vec<String> {
     let mut paths = Vec::new();
-    let mut in_ruler_block = false;
+    let mut in_imrule_block = false;
 
     for line in content.split('\n') {
         let trimmed = line.trim();
         if trimmed == IMRULE_START_MARKER {
-            in_ruler_block = true;
+            in_imrule_block = true;
             continue;
         }
         if trimmed == IMRULE_END_MARKER {
-            in_ruler_block = false;
+            in_imrule_block = false;
             continue;
         }
-        if !in_ruler_block && !trimmed.is_empty() && !trimmed.starts_with('#') {
+        if !in_imrule_block && !trimmed.is_empty() && !trimmed.starts_with('#') {
             paths.push(trimmed.to_string());
         }
     }
@@ -118,39 +118,39 @@ fn get_existing_paths_excluding_ruler_block(content: &str) -> Vec<String> {
     paths
 }
 
-fn update_gitignore_content(existing_content: &str, ruler_paths: &[String]) -> String {
+fn update_gitignore_content(existing_content: &str, imrule_paths: &[String]) -> String {
     let lines: Vec<_> = existing_content.split('\n').collect();
     let mut new_lines = Vec::new();
-    let mut in_first_ruler_block = false;
-    let mut has_ruler_block = false;
+    let mut in_first_imrule_block = false;
+    let mut has_imrule_block = false;
     let mut processed_first_block = false;
 
     for line in lines {
         let trimmed = line.trim();
         if trimmed == IMRULE_START_MARKER && !processed_first_block {
-            in_first_ruler_block = true;
-            has_ruler_block = true;
+            in_first_imrule_block = true;
+            has_imrule_block = true;
             new_lines.push(line.to_string());
-            new_lines.extend(ruler_paths.iter().cloned());
+            new_lines.extend(imrule_paths.iter().cloned());
             continue;
         }
-        if trimmed == IMRULE_END_MARKER && in_first_ruler_block {
-            in_first_ruler_block = false;
+        if trimmed == IMRULE_END_MARKER && in_first_imrule_block {
+            in_first_imrule_block = false;
             processed_first_block = true;
             new_lines.push(line.to_string());
             continue;
         }
-        if !in_first_ruler_block {
+        if !in_first_imrule_block {
             new_lines.push(line.to_string());
         }
     }
 
-    if !has_ruler_block {
+    if !has_imrule_block {
         if !existing_content.trim().is_empty() && !existing_content.ends_with("\n\n") {
             new_lines.push(String::new());
         }
         new_lines.push(IMRULE_START_MARKER.to_string());
-        new_lines.extend(ruler_paths.iter().cloned());
+        new_lines.extend(imrule_paths.iter().cloned());
         new_lines.push(IMRULE_END_MARKER.to_string());
     }
 

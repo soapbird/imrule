@@ -19,9 +19,9 @@ pub struct AugmentMcpServer {
 }
 
 /// Transforms standard ImRule MCP JSON into Augment's array format.
-pub fn transform_ruler_to_augment_mcp(ruler_mcp_json: &Value) -> Vec<AugmentMcpServer> {
+pub fn transform_imrule_to_augment_mcp(imrule_mcp_json: &Value) -> Vec<AugmentMcpServer> {
     let mut servers = Vec::new();
-    let Some(mcp_servers) = ruler_mcp_json.get("mcpServers").and_then(Value::as_object) else {
+    let Some(mcp_servers) = imrule_mcp_json.get("mcpServers").and_then(Value::as_object) else {
         return servers;
     };
 

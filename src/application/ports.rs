@@ -8,9 +8,9 @@ use crate::domain::agent::AgentDefinition;
 use crate::domain::config::{AgentConfig, LoadedConfig};
 use crate::domain::error::ImruleError;
 
-/// Loads and parses Ruler configuration.
+/// Loads and parses ImRule configuration.
 pub trait ConfigPort {
-    /// Loads local/global Ruler TOML configuration.
+    /// Loads local/global ImRule TOML configuration.
     fn load_config(
         &self,
         project_root: &Path,
@@ -43,22 +43,22 @@ pub trait FileSystemPort {
     fn file_exists(&self, path: &Path) -> bool;
 
     /// Searches upwards for `.imrule`, optionally falling back to global config.
-    fn find_ruler_dir(&self, start_path: &Path, check_global: bool) -> Option<PathBuf>;
+    fn find_imrule_dir(&self, start_path: &Path, check_global: bool) -> Option<PathBuf>;
 
     /// Recursively reads markdown files from a `.imrule` directory.
     fn read_markdown_files(
         &self,
-        ruler_dir: &Path,
+        imrule_dir: &Path,
         include_agents: bool,
     ) -> Result<Vec<(PathBuf, String)>, ImruleError>;
 
     /// Finds all `.imrule` directories below `start_path`, deepest first.
-    fn find_all_ruler_dirs(&self, start_path: &Path) -> Vec<PathBuf>;
+    fn find_all_imrule_dirs(&self, start_path: &Path) -> Vec<PathBuf>;
 }
 
 /// Updates ignore files with generated paths.
 pub trait GitignorePort {
-    /// Updates an ignore file with a ImRule-managed block.
+    /// Updates an ignore file with an ImRule-managed block.
     fn update_gitignore(
         &self,
         project_root: &Path,
@@ -70,7 +70,7 @@ pub trait GitignorePort {
 /// Reads and writes MCP configuration files.
 pub trait McpPort {
     /// Reads `.imrule/mcp.json` when present.
-    fn read_ruler_mcp_config(&self, project_root: &Path) -> Result<Option<Value>, ImruleError>;
+    fn read_imrule_mcp_config(&self, project_root: &Path) -> Result<Option<Value>, ImruleError>;
 
     /// Reads a native JSON MCP config, returning `{}` when missing or invalid.
     fn read_native_mcp(&self, path: &Path) -> Result<Value, ImruleError>;

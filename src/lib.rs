@@ -1,4 +1,4 @@
-//! Native Rust implementation of Ruler.
+//! Native Rust implementation of ImRule.
 //!
 //! The crate exposes the domain layer, application use cases, and infrastructure
 //! implementations for consumers who want to wire their own adapters.

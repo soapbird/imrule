@@ -1,4 +1,4 @@
-//! Thin CLI adapter for the native Ruler application layer.
+//! Thin CLI adapter for the native ImRule application layer.
 
 use std::process::ExitCode;
 

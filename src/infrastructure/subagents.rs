@@ -53,7 +53,7 @@ pub fn load_subagent_file(file_path: &Path) -> io::Result<SubagentInfo> {
 
 /// Discovers valid subagents from `.imrule/agents`.
 pub fn discover_subagents(project_root: &Path) -> io::Result<SubagentsDiscovery> {
-    let dir = project_root.join(RULER_SUBAGENTS_PATH);
+    let dir = project_root.join(IMRULE_SUBAGENTS_PATH);
     if !dir.exists() {
         return Ok(SubagentsDiscovery::default());
     }
@@ -79,7 +79,7 @@ pub fn get_subagents_gitignore_paths(
     project_root: &Path,
     agents: &[AgentDefinition],
 ) -> io::Result<Vec<PathBuf>> {
-    if !project_root.join(RULER_SUBAGENTS_PATH).exists() {
+    if !project_root.join(IMRULE_SUBAGENTS_PATH).exists() {
         return Ok(Vec::new());
     }
     let selected: std::collections::BTreeSet<_> = agents
