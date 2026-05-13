@@ -1,1143 +1,202 @@
-# Ruler: Centralise Your AI Coding Assistant Instructions
+# Ruler
 
-<table style="width:100%">
-  <tr>
-    <td style="vertical-align: top;">
-      <p>
-        <a href="https://github.com/intellectronica/ruler/actions/workflows/ci.yml"><img src="https://github.com/intellectronica/ruler/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-        <a href="https://www.npmjs.com/package/@intellectronica/ruler"><img src="https://badge.fury.io/js/%40intellectronica%2Fruler.svg" alt="npm version"></a>
-        <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT">
-      </p>
-      <ul>
-        <li><strong>GitHub</strong>: <a href="https://github.com/intellectronica/ruler">intellectronica/ruler</a></li>
-        <li><strong>NPM</strong>: <a href="https://www.npmjs.com/package/@intellectronica/ruler">@intellectronica/ruler</a></li>
-      </ul>
-      <hr />
-      <p>
-        <em>Animation by <a href="https://isaacflath.com/">Isaac Flath</a> of <strong><a href="https://elite-ai-assisted-coding.dev/">Elite AI-Assisted Coding</a></strong></em> ➡︎
-      </p>
-    </td>
-    <td style="vertical-align: top; width:33%;">
-      <img src="img/ruler-short.gif" alt="Ruler demo" style="width:300px; height:auto; display:block;" />
-    </td>
-  </tr>
-</table>
+**Apply the same rules to all coding agents.**
 
----
+Ruler lets you write project instructions, MCP server configurations, skills, and subagent definitions once in a `.ruler/` directory, then propagates them to every supported AI coding agent with a single command.
 
-> **Beta Research Preview**
->
-> - Please test this version carefully in your environment
-> - Report issues at https://github.com/intellectronica/ruler/issues
+## Features
 
-## Why Ruler?
+- **30+ supported agents** — Copilot, Claude Code, Codex, Cursor, Windsurf, Cline, Aider, Gemini CLI, and many more
+- **MCP server config** — merge or overwrite `mcp.json` into each agent's native format
+- **Skills propagation** — sync `.ruler/skills/` to agent-specific skill directories
+- **Subagent propagation** — transform `.ruler/agents/` definitions to agent-native formats
+- **Gitignore management** — automatically update `.gitignore` with generated paths
+- **Backup & revert** — `.bak` files on apply, clean rollback with `ruler revert`
+- **Dry-run mode** — preview all changes without writing files
+- **Global config** — `~/.config/ruler/` for shared rules across projects
+- **Nested projects** — discover `.ruler/` in parent directories
 
-Managing instructions across multiple AI coding tools becomes complex as your team grows. Different agents (GitHub Copilot, Claude, Cursor, Aider, etc.) require their own configuration files, leading to:
+## Installation
 
-- **Inconsistent guidance** across AI tools
-- **Duplicated effort** maintaining multiple config files
-- **Context drift** as project requirements evolve
-- **Onboarding friction** for new AI tools
-- **Complex project structures** requiring context-specific instructions for different components
-
-Ruler solves this by providing a **single source of truth** for all your AI agent instructions, automatically distributing them to the right configuration files. With support for **nested rule loading**, Ruler can handle complex project structures with context-specific instructions for different components.
-
-## Core Features
-
-- **Centralised Rule Management**: Store all AI instructions in a dedicated `.ruler/` directory using Markdown files
-- **Nested Rule Loading**: Support complex project structures with multiple `.ruler/` directories for context-specific instructions
-- **Automatic Distribution**: Ruler applies these rules to configuration files of supported AI agents
-- **Targeted Agent Configuration**: Fine-tune which agents are affected and their specific output paths via `ruler.toml`
-- **MCP Server Propagation**: Manage and distribute Model Context Protocol (MCP) server settings
-- **`.gitignore` Automation**: Keeps generated agent config files out of version control automatically
-- **Simple CLI**: Easy-to-use commands for initialising and applying configurations
-
-## Supported AI Agents
-
-| Agent                  | Rules File(s)                                  | MCP Configuration / Notes                        | Skills Support / Location | Subagents Support / Location |
-| ---------------------- | ---------------------------------------------- | ------------------------------------------------ | ------------------------- | ---------------------------- |
-| AGENTS.md              | `AGENTS.md`                                    | (pseudo-agent ensuring root `AGENTS.md` exists)  | -                         | -                            |
-| GitHub Copilot         | `AGENTS.md`                                    | `.vscode/mcp.json`                               | `.claude/skills/`         | `.github/agents/`            |
-| Claude Code            | `CLAUDE.md`                                    | `.mcp.json`                                      | `.claude/skills/`         | `.claude/agents/`            |
-| OpenAI Codex CLI       | `AGENTS.md`                                    | `.codex/config.toml`                             | `.codex/skills/`          | `.codex/agents/` (`.toml`)   |
-| Pi Coding Agent        | `AGENTS.md`                                    | -                                                | `.pi/skills/`             | -                            |
-| Jules                  | `AGENTS.md`                                    | -                                                | -                         | -                            |
-| Cursor                 | `AGENTS.md`                                    | `.cursor/mcp.json`                               | `.cursor/skills/`         | `.cursor/agents/`            |
-| Windsurf               | `AGENTS.md`                                    | `.windsurf/mcp_config.json`                      | `.windsurf/skills/`       | -                            |
-| Cline                  | `.clinerules`                                  | -                                                | -                         | -                            |
-| Crush                  | `CRUSH.md`                                     | `.crush.json`                                    | -                         | -                            |
-| Amp                    | `AGENTS.md`                                    | -                                                | `.agents/skills/`         | -                            |
-| Antigravity            | `.agent/rules/ruler.md`                        | -                                                | `.agent/skills/`          | -                            |
-| Amazon Q CLI           | `.amazonq/rules/ruler_q_rules.md`              | `.amazonq/mcp.json`                              | -                         | -                            |
-| Aider                  | `AGENTS.md`, `.aider.conf.yml`                 | `.mcp.json`                                      | -                         | -                            |
-| Firebase Studio        | `.idx/airules.md`                              | `.idx/mcp.json`                                  | -                         | -                            |
-| Open Hands             | `.openhands/microagents/repo.md`               | `config.toml`                                    | -                         | -                            |
-| Gemini CLI             | `AGENTS.md`                                    | `.gemini/settings.json`                          | `.gemini/skills/`         | -                            |
-| Junie                  | `.junie/guidelines.md`                         | `.junie/mcp/mcp.json`                            | `.junie/skills/`          | -                            |
-| AugmentCode            | `.augment/rules/ruler_augment_instructions.md` | -                                                | -                         | -                            |
-| Kilo Code              | `AGENTS.md`                                    | `.kilocode/mcp.json`                             | `.claude/skills/`         | -                            |
-| OpenCode               | `AGENTS.md`                                    | `opencode.json`                                  | `.opencode/skills/`       | -                            |
-| Goose                  | `.goosehints`                                  | -                                                | `.agents/skills/`         | -                            |
-| Qwen Code              | `AGENTS.md`                                    | `.qwen/settings.json`                            | -                         | -                            |
-| RooCode                | `AGENTS.md`                                    | `.roo/mcp.json`                                  | `.roo/skills/`            | -                            |
-| Zed                    | `AGENTS.md`                                    | `.zed/settings.json` (project root, never $HOME) | -                         | -                            |
-| Trae AI                | `.trae/rules/project_rules.md`                 | -                                                | -                         | -                            |
-| Warp                   | `WARP.md`                                      | -                                                | -                         | -                            |
-| Kiro                   | `.kiro/steering/ruler_kiro_instructions.md`    | `.kiro/settings/mcp.json`                        | -                         | -                            |
-| Firebender             | `firebender.json`                              | `firebender.json` (rules and MCP in same file)   | -                         | -                            |
-| Factory Droid          | `AGENTS.md`                                    | `.factory/mcp.json`                              | `.factory/skills/`        | -                            |
-| Mistral Vibe           | `AGENTS.md`                                    | `.vibe/config.toml`                              | `.vibe/skills/`           | -                            |
-| JetBrains AI Assistant | `.aiassistant/rules/AGENTS.md`                 | -                                                | -                         | -                            |
-
-## Getting Started
-
-### Installation
-
-Requires Node.js `^20.19.0 || ^22.12.0 || >=23`.
-
-**Global Installation (Recommended for CLI use):**
+### From source
 
 ```bash
-npm install -g @intellectronica/ruler
+git clone https://github.com/soapbird/imrule.git
+cd imrule
+make build        # or: cargo build --release
 ```
 
-**Using `npx` (for one-off commands):**
+The binary is at `target/release/ruler`.
+
+### With Cargo
 
 ```bash
-npx @intellectronica/ruler apply
+cargo install --path .
 ```
 
-### Project Initialisation
-
-1. Navigate to your project's root directory
-2. Run `ruler init`
-3. This creates:
-
-- `.ruler/` directory
-- `.ruler/AGENTS.md`: The primary starter Markdown file for your rules
-- `.ruler/ruler.toml`: The main configuration file for Ruler (now contains sample MCP server sections; legacy `.ruler/mcp.json` no longer scaffolded)
-- (Optional legacy fallback) If you previously used `.ruler/instructions.md`, it is still respected when `AGENTS.md` is absent. (The prior runtime warning was removed.)
-
-Additionally, you can create a global configuration to use when no local `.ruler/` directory is found:
+## Quick Start
 
 ```bash
-ruler init --global
-```
+# 1. Initialize a .ruler directory
+ruler init
 
-The global configuration will be created to `$XDG_CONFIG_HOME/ruler` (default: `~/.config/ruler`).
+# 2. Edit your instructions
+vim .ruler/AGENTS.md
 
-## Core Concepts
-
-### The `.ruler/` Directory
-
-This is your central hub for all AI agent instructions:
-
-- **Primary File Order & Precedence**:
-  1. A repository root `AGENTS.md` (outside `.ruler/`) if present (highest precedence, prepended)
-  2. `.ruler/AGENTS.md` (new default starter file)
-  3. Legacy `.ruler/instructions.md` (only if `.ruler/AGENTS.md` absent; no longer emits a deprecation warning)
-  4. Remaining discovered `.md` files under `.ruler/` (and subdirectories) in sorted order
-- **Rule Files (`*.md`)**: Discovered recursively from `.ruler/` or `$XDG_CONFIG_HOME/ruler` and concatenated in the order above
-- **Concatenation Marker**: Each file's content is prepended with `<!-- Source: <relative_path_to_md_file> -->` for traceability
-- **`ruler.toml`**: Master configuration for Ruler's behavior, agent selection, output paths, and MCP server settings
-- **`mcp.json`**: (Legacy, deprecated) Shared MCP server settings - no longer scaffolded but still supported for backward compatibility
-
-This ordering lets you keep a short, high-impact root `AGENTS.md` (e.g. executive project summary) while housing detailed guidance inside `.ruler/`.
-
-### Nested Rule Loading
-
-Ruler now supports **nested rule loading** with the `--nested` flag, enabling context-specific instructions for different parts of your project:
-
-```
-project/
-├── .ruler/           # Global project rules
-│   ├── AGENTS.md
-│   └── coding_style.md
-├── src/
-│   └── .ruler/       # Component-specific rules
-│       └── api_guidelines.md
-├── tests/
-│   └── .ruler/       # Test-specific rules
-│       └── testing_conventions.md
-└── docs/
-    └── .ruler/       # Documentation rules
-        └── writing_style.md
-```
-
-**How it works:**
-
-- Discover all `.ruler/` directories in the project hierarchy
-- Load and concatenate rules from each directory in order
-- Decide whether nested mode is enabled using the following precedence:
-  1. `ruler apply --nested` (or `--no-nested`) takes top priority
-  2. `nested = true` in `ruler.toml`
-  3. Default to disabled when neither option is provided
-- When a run is nested, downstream configs are forced to keep `nested = true`. If a child config attempts to disable it, Ruler keeps nested processing active and emits a warning in the logs.
-- Nested processing carries forward each directory's own MCP bundle and configuration settings so that generated files remain scoped to their source directories while being normalized back to the project root.
-
-> [!CAUTION]
-> Nested mode is experimental and may change in future releases. The CLI logs this warning the first time a nested run is detected so you know the behavior may evolve.
-
-**Perfect for:**
-
-- Monorepos with multiple services
-- Projects with distinct components (frontend/backend)
-- Teams needing different instructions for different areas
-- Complex codebases with varying standards
-
-### Best Practices for Rule Files
-
-**Granularity**: Break down complex instructions into focused `.md` files:
-
-- `coding_style.md`
-- `api_conventions.md`
-- `project_architecture.md`
-- `security_guidelines.md`
-
-**Example rule file (`.ruler/python_guidelines.md`):**
-
-```markdown
-# Python Project Guidelines
-
-## General Style
-
-- Follow PEP 8 for all Python code
-- Use type hints for all function signatures and complex variables
-- Keep functions short and focused on a single task
-
-## Error Handling
-
-- Use specific exception types rather than generic `Exception`
-- Log errors effectively with context
-
-## Security
-
-- Always validate and sanitize user input
-- Be mindful of potential injection vulnerabilities
-```
-
-## Usage: The `apply` Command
-
-### Primary Command
-
-```bash
-ruler apply [options]
-```
-
-The `apply` command looks for `.ruler/` in the current directory tree, reading the first match. If no such directory is found, it will look for a global configuration in `$XDG_CONFIG_HOME/ruler`.
-
-### Options
-
-| Option                         | Description                                                            |
-| ------------------------------ | ---------------------------------------------------------------------- |
-| `--project-root <path>`        | Project root path (default: current directory).                        |
-| `--agents <agent1,agent2,...>` | Comma-separated agent names to target (see supported list below).      |
-| `--config <path>`              | Custom `ruler.toml` path.                                              |
-| `--mcp` / `--with-mcp`         | Enable applying MCP server configurations (default: true).             |
-| `--no-mcp`                     | Disable applying MCP server configurations.                            |
-| `--mcp-overwrite`              | Overwrite native MCP config instead of merging.                        |
-| `--gitignore`                  | Enable automatic .gitignore updates (default: true).                   |
-| `--no-gitignore`               | Disable automatic .gitignore updates.                                  |
-| `--gitignore-local`            | Write managed ignore entries to `.git/info/exclude` instead.           |
-| `--nested`                     | Enable nested rule loading (default: inherit from config or disabled). |
-| `--no-nested`                  | Disable nested rule loading even if `nested = true` in config.         |
-| `--backup`                     | Enable creation of `.bak` backup files (default: enabled).             |
-| `--no-backup`                  | Disable creation of `.bak` backup files.                               |
-| `--skills`                     | Enable skills support (experimental, default: enabled).                |
-| `--no-skills`                  | Disable skills support.                                                |
-| `--subagents`                  | Enable subagents support (experimental, default: disabled).            |
-| `--no-subagents`               | Disable subagents support.                                             |
-| `--dry-run`                    | Preview changes without writing files.                                 |
-| `--local-only`                 | Skip `$XDG_CONFIG_HOME` when looking for configuration.                |
-| `--verbose` / `-v`             | Display detailed output during execution.                              |
-
-### Common Examples
-
-**Apply rules to all configured agents:**
-
-```bash
+# 3. Apply to all agents
 ruler apply
-```
 
-**Apply rules only to GitHub Copilot and Claude:**
-
-```bash
-ruler apply --agents copilot,claude
-```
-
-**Apply rules only to Firebase Studio:**
-
-```bash
-ruler apply --agents firebase
-```
-
-**Apply rules only to Warp:**
-
-```bash
-ruler apply --agents warp
-```
-
-**Apply rules only to Trae AI:**
-
-```bash
-ruler apply --agents trae
-```
-
-**Apply rules only to RooCode:**
-
-```bash
-ruler apply --agents roo
-```
-
-**Use a specific configuration file:**
-
-```bash
-ruler apply --config ./team-configs/ruler.frontend.toml
-```
-
-**Apply rules with verbose output:**
-
-```bash
-ruler apply --verbose
-```
-
-**Apply rules but skip MCP and .gitignore updates:**
-
-```bash
-ruler apply --no-mcp --no-gitignore
-```
-
-## Usage: The `revert` Command
-
-The `revert` command safely undoes all changes made by `ruler apply`, restoring your project to its pre-ruler state. It intelligently restores files from backups (`.bak` files) when available, or removes generated files that didn't exist before.
-
-### Why Revert is Needed
-
-When experimenting with different rule configurations or switching between projects, you may want to:
-
-- **Clean slate**: Remove all ruler-generated files to start fresh
-- **Restore originals**: Revert modified files back to their original state
-- **Selective cleanup**: Remove configurations for specific agents only
-- **Safe experimentation**: Try ruler without fear of permanent changes
-
-### Primary Command
-
-```bash
-ruler revert [options]
-```
-
-### Options
-
-| Option                         | Description                                                                                                                                                                                                                                                                                                                    |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--project-root <path>`        | Path to your project's root (default: current directory)                                                                                                                                                                                                                                                                       |
-| `--agents <agent1,agent2,...>` | Comma-separated list of agent names to revert (agentsmd, aider, amazonqcli, amp, antigravity, augmentcode, claude, cline, codex, copilot, crush, cursor, factory, firebase, firebender, gemini-cli, goose, jetbrains-ai, jules, junie, kilocode, kiro, mistral, opencode, openhands, pi, qwen, roo, trae, warp, windsurf, zed) |
-| `--config <path>`              | Path to a custom `ruler.toml` configuration file                                                                                                                                                                                                                                                                               |
-| `--keep-backups`               | Keep backup files (.bak) after restoration (default: false)                                                                                                                                                                                                                                                                    |
-| `--dry-run`                    | Preview changes without actually reverting files                                                                                                                                                                                                                                                                               |
-| `--verbose` / `-v`             | Display detailed output during execution                                                                                                                                                                                                                                                                                       |
-| `--local-only`                 | Only search for local .ruler directories, ignore global config                                                                                                                                                                                                                                                                 |
-
-### Common Examples
-
-**Revert all ruler changes:**
-
-```bash
+# 4. Revert when needed
 ruler revert
 ```
 
-**Preview what would be reverted (dry-run):**
+## Usage
+
+### `ruler init`
+
+Scaffold a `.ruler/` directory with default files (`AGENTS.md`, `ruler.toml`).
 
 ```bash
-ruler revert --dry-run
+ruler init                          # local .ruler/ in current directory
+ruler init --global                 # ~/.config/ruler/
+ruler init --project-root ~/myproj  # specify a different project
 ```
 
-**Revert only specific agents:**
+### `ruler apply`
+
+Read `.ruler/` contents and write to each agent's native config files.
 
 ```bash
-ruler revert --agents claude,copilot
+ruler apply                              # all agents, current directory
+ruler apply --agents claude,copilot      # specific agents only
+ruler apply --dry-run                    # preview without writing
+ruler apply --no-mcp                     # skip MCP config
+ruler apply --mcp-overwrite              # replace (not merge) MCP config
+ruler apply --verbose                    # show file counts
+ruler apply --local-only                 # ignore global config
+ruler apply --backup false               # disable .bak files
+ruler apply --project-root ~/myproj      # specify project root
+ruler apply --config custom.toml         # use custom config file
 ```
 
-**Revert with detailed output:**
+### `ruler revert`
+
+Restore agent config files from backups and remove generated content.
 
 ```bash
-ruler revert --verbose
+ruler revert                             # revert all agents
+ruler revert --agents claude             # revert specific agent
+ruler revert --dry-run                   # preview revert
+ruler revert --keep-backups              # keep .bak files
 ```
 
-**Keep backup files after reverting:**
+## Supported Agents
 
-```bash
-ruler revert --keep-backups
-```
+| Identifier | Agent | Identifier | Agent |
+|---|---|---|---|
+| `agentsmd` | AgentsMd | `copilot` | GitHub Copilot |
+| `claude` | Claude Code | `codex` | OpenAI Codex CLI |
+| `cursor` | Cursor | `windsurf` | Windsurf |
+| `cline` | Cline | `aider` | Aider |
+| `firebase` | Firebase Studio | `openhands` | Open Hands |
+| `gemini-cli` | Gemini CLI | `jules` | Jules |
+| `junie` | Junie | `augmentcode` | AugmentCode |
+| `kilocode` | Kilo Code | `opencode` | OpenCode |
+| `goose` | Goose | `crush` | Crush |
+| `amp` | Amp | `zed` | Zed |
+| `qwen` | Qwen Code | `kiro` | Kiro |
+| `warp` | Warp | `roo` | RooCode |
+| `trae` | Trae AI | `amazonqcli` | Amazon Q CLI |
+| `firebender` | Firebender | `factory` | Factory Droid |
+| `antigravity` | Antigravity | `mistral` | Mistral |
+| `pi` | Pi Coding Agent | `jetbrains-ai` | JetBrains AI Assistant |
 
-## Configuration (`ruler.toml`) in Detail
+## Configuration
 
-### Location
+### `.ruler/AGENTS.md`
 
-Defaults to `.ruler/ruler.toml` in the project root. Override with `--config` CLI option.
+Central markdown file for your coding guidelines, style guides, and project context. All `.md` files in `.ruler/` (including subdirectories) are concatenated, starting with `AGENTS.md` (if present), then remaining files in sorted order.
 
-### Complete Example
+### `.ruler/ruler.toml`
 
 ```toml
-# Default agents to run when --agents is not specified
-# Uses case-insensitive substring matching
-default_agents = ["copilot", "claude", "aider"]
+# Default agents when --agents is not specified
+# default_agents = ["claude", "copilot"]
 
-# --- Global MCP Server Configuration ---
-[mcp]
-# Enable/disable MCP propagation globally (default: true)
-enabled = true
-# Global merge strategy: 'merge' or 'overwrite' (default: 'merge')
-merge_strategy = "merge"
+# [agents.ClaudeCode]
+# enabled = true
+# output_path = "CLAUDE.md"
 
-# --- MCP Server Definitions ---
-[mcp_servers.filesystem]
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/project"]
+# [agents.GitHubCopilot]
+# enabled = true
+# output_path = ".github/copilot-instructions.md"
 
-[mcp_servers.git]
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-git", "--repository", "."]
+# [mcp]
+# enabled = true
+# strategy = "merge"    # or "overwrite"
 
-[mcp_servers.remote_api]
-url = "https://api.example.com"
+# [gitignore]
+# enabled = true
+# local = false
 
-[mcp_servers.remote_api.headers]
-Authorization = "Bearer your-token"
+# [skills]
+# enabled = true
 
-# --- Global .gitignore Configuration ---
-[gitignore]
-# Enable/disable automatic .gitignore updates (default: true)
-enabled = true
-# Write managed entries to .git/info/exclude instead of .gitignore (default: false)
-local = false
-
-# --- Agent-Specific Configurations ---
-[agents.copilot]
-enabled = true
-
-[agents.claude]
-enabled = true
-output_path = "CLAUDE.md"
-
-[agents.aider]
-enabled = true
-output_path_instructions = "AGENTS.md"
-output_path_config = ".aider.conf.yml"
-
-# OpenAI Codex CLI agent and MCP config
-[agents.codex]
-enabled = true
-output_path = "AGENTS.md"
-output_path_config = ".codex/config.toml"
-
-# Agent-specific MCP configuration for Codex CLI
-[agents.codex.mcp]
-enabled = true
-merge_strategy = "merge"
-
-[agents.firebase]
-enabled = true
-output_path = ".idx/airules.md"
-
-[agents.gemini-cli]
-enabled = true
-
-[agents.jules]
-enabled = true
-
-[agents.junie]
-enabled = true
-output_path = ".junie/guidelines.md"
-
-[agents.junie.mcp]
-enabled = true
-merge_strategy = "merge"
-
-# Agent-specific MCP configuration
-[agents.cursor.mcp]
-enabled = true
-merge_strategy = "merge"
-
-# Disable specific agents
-[agents.windsurf]
-enabled = false
-
-[agents.kilocode]
-enabled = true
-output_path = "AGENTS.md"
-
-[agents.warp]
-enabled = true
-output_path = "WARP.md"
+# [subagents]
+# enabled = true
+# include_in_rules = false
 ```
 
-### Configuration Precedence
+### `.ruler/mcp.json`
 
-1. **CLI flags** (e.g., `--agents`, `--no-mcp`, `--mcp-overwrite`, `--no-gitignore`)
-2. **Settings in `ruler.toml`** (`default_agents`, specific agent settings, global sections)
-3. **Ruler's built-in defaults** (all agents enabled, standard output paths, MCP enabled with 'merge')
-
-## MCP (Model Context Protocol) Server Configuration
-
-MCP provides broader context to AI models through server configurations. Ruler can manage and distribute these settings across compatible agents.
-
-### TOML Configuration (Recommended)
-
-You can now define MCP servers directly in `ruler.toml` using the `[mcp_servers.<name>]` syntax:
-
-```toml
-# Global MCP behavior
-[mcp]
-enabled = true
-merge_strategy = "merge"  # or "overwrite"
-
-# Local (stdio) server
-[mcp_servers.filesystem]
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/project"]
-
-[mcp_servers.filesystem.env]
-API_KEY = "your-api-key"
-
-# Remote server
-[mcp_servers.search]
-url = "https://mcp.example.com"
-
-[mcp_servers.search.headers]
-Authorization = "Bearer your-token"
-"X-API-Version" = "v1"
-```
-
-### Legacy `.ruler/mcp.json` (Deprecated)
-
-For backward compatibility, you can still use the JSON format; a warning is issued encouraging migration to TOML. The file is no longer created during `ruler init`.
+MCP server definitions in standard format:
 
 ```json
 {
   "mcpServers": {
-    "filesystem": {
+    "my-server": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-filesystem",
-        "/path/to/project"
-      ]
-    },
-    "git": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-git", "--repository", "."]
+      "args": ["my-mcp-server"]
     }
   }
 }
 ```
 
-### Configuration Precedence
+### `.ruler/skills/`
 
-When both TOML and JSON configurations are present:
+Place skill directories here. Each skill needs a `SKILL.md` file.
 
-1. **TOML servers take precedence** over JSON servers with the same name
-2. **Servers are merged** from both sources (unless using overwrite strategy)
-3. **Deprecation warning** is shown encouraging migration to TOML (warning shown once per run)
+### `.ruler/agents/`
 
-### Server Types
-
-**Local/stdio servers** require a `command` field:
-
-```toml
-[mcp_servers.local_server]
-command = "node"
-args = ["server.js"]
-
-[mcp_servers.local_server.env]
-DEBUG = "1"
-```
-
-**Remote servers** require a `url` field (headers optional; bearer Authorization token auto-extracted for OpenHands when possible):
-
-```toml
-[mcp_servers.remote_server]
-url = "https://api.example.com"
-
-[mcp_servers.remote_server.headers]
-Authorization = "Bearer token"
-```
-
-Ruler uses this configuration with the `merge` (default) or `overwrite` strategy, controlled by `ruler.toml` or CLI flags.
-
-**Home Directory Safety:** Ruler never writes MCP configuration files outside your project root. Any historical references to user home directories (e.g. `~/.codeium/windsurf/mcp_config.json` or `~/.zed/settings.json`) have been removed; only project-local paths are targeted.
-
-**Note for OpenAI Codex CLI:** To apply the local Codex CLI MCP configuration, set the `CODEX_HOME` environment variable to your project’s `.codex` directory:
-
-```bash
-export CODEX_HOME="$(pwd)/.codex"
-```
-
-## Skills Support (Experimental)
-
-**⚠️ Experimental Feature**: Skills support is currently experimental. Skills are only propagated to agents with native skills support; other agents are skipped with a warning.
-
-Ruler can manage and propagate skills to supported AI agents. Skills are stored in `.ruler/skills/` and are automatically distributed to compatible agents when you run `ruler apply`.
-
-### How It Works
-
-Skills are specialized knowledge packages that extend AI agent capabilities with domain-specific expertise, workflows, or tool integrations. Ruler discovers skills in your `.ruler/skills/` directory and propagates them to compatible agents:
-
-- **Agents with native skills support**: Skills are copied directly to each agent's native skills directory:
-  - **Claude Code**: `.claude/skills/`
-  - **GitHub Copilot**: `.claude/skills/` (shared with Claude Code)
-  - **Kilo Code**: `.claude/skills/` (shared with Claude Code)
-  - **OpenAI Codex CLI**: `.codex/skills/`
-  - **OpenCode**: `.opencode/skills/`
-  - **Pi Coding Agent**: `.pi/skills/`
-  - **Goose**: `.agents/skills/`
-  - **Amp**: `.agents/skills/` (shared with Goose)
-  - **Antigravity**: `.agent/skills/`
-  - **Factory Droid**: `.factory/skills/`
-  - **Mistral Vibe**: `.vibe/skills/`
-  - **Roo Code**: `.roo/skills/`
-  - **Gemini CLI**: `.gemini/skills/`
-  - **Junie**: `.junie/skills/`
-  - **Cursor**: `.cursor/skills/`
-  - **Windsurf**: `.windsurf/skills/`
-
-### Skills Directory Structure
-
-Skills can be organized flat or nested:
-
-```
-.ruler/skills/
-├── my-skill/
-│   ├── SKILL.md           # Required: skill instructions/knowledge
-│   ├── helper.py          # Optional: additional resources (scripts)
-│   └── reference.md       # Optional: additional resources (docs)
-└── another-skill/
-    └── SKILL.md
-```
-
-Each skill must contain:
-
-- `SKILL.md` - Primary skill file with instructions or knowledge base
-
-Skills can optionally include additional resources like:
-
-- Markdown files with supplementary documentation
-- Python, JavaScript, or other scripts
-- Configuration files or data
-
-### Configuration
-
-Skills support is **enabled by default** but can be controlled via:
-
-**CLI flags:**
-
-```bash
-# Enable skills (default)
-ruler apply --skills
-
-# Disable skills
-ruler apply --no-skills
-```
-
-**Configuration in `ruler.toml`:**
-
-```toml
-[skills]
-enabled = true  # or false to disable
-```
-
-### Non-native Agents
-
-If you run Ruler for agents that do not support native skills, Ruler logs a warning and skips skills propagation for those agents.
-
-### `.gitignore` Integration
-
-When skills support is enabled and gitignore integration is active, Ruler automatically adds:
-
-- `.claude/skills/` (for Claude Code, GitHub Copilot, and Kilo Code)
-- `.codex/skills/` (for OpenAI Codex CLI)
-- `.opencode/skills/` (for OpenCode)
-- `.pi/skills/` (for Pi Coding Agent)
-- `.agents/skills/` (for Goose and Amp)
-- `.agent/skills/` (for Antigravity)
-- `.factory/skills/` (for Factory Droid)
-- `.vibe/skills/` (for Mistral Vibe)
-- `.roo/skills/` (for Roo Code)
-- `.gemini/skills/` (for Gemini CLI)
-- `.junie/skills/` (for Junie)
-- `.cursor/skills/` (for Cursor)
-- `.windsurf/skills/` (for Windsurf)
-
-to your `.gitignore` file within the managed Ruler block.
-
-### Requirements
-
-- **For agents with native skills support** (Claude Code, GitHub Copilot, Kilo Code, OpenAI Codex CLI, OpenCode, Pi Coding Agent, Goose, Amp, Antigravity, Factory Droid, Mistral Vibe, Roo Code, Gemini CLI, Junie, Cursor, Windsurf): No additional requirements.
-
-### Validation
-
-Ruler validates discovered skills and issues warnings for:
-
-- Missing required file (`SKILL.md`)
-- Invalid directory structures (directories without `SKILL.md` and no sub-skills)
-
-Warnings don't prevent propagation but help identify potential issues.
-
-### Dry-Run Mode
-
-Test skills propagation without making changes:
-
-```bash
-ruler apply --dry-run
-```
-
-This shows which skills would be copied.
-
-### Example Workflow
-
-```bash
-# 1. Add a skill to your project
-mkdir -p .ruler/skills/my-skill
-cat > .ruler/skills/my-skill/SKILL.md << 'EOF'
-# My Custom Skill
-
-This skill provides specialized knowledge for...
-
-## Usage
-
-When working on this project, always follow these guidelines:
-- Use TypeScript for all new code
-- Write tests for all features
-- Follow the existing code style
-EOF
-
-# 2. Apply to all agents (skills enabled by default)
-ruler apply
-
-# 3. Skills are now available to compatible agents:
-#    - Claude Code, GitHub Copilot & Kilo Code: .claude/skills/my-skill/
-#    - OpenAI Codex CLI: .codex/skills/my-skill/
-#    - OpenCode: .opencode/skills/my-skill/
-#    - Pi Coding Agent: .pi/skills/my-skill/
-#    - Goose & Amp: .agents/skills/my-skill/
-#    - Antigravity: .agent/skills/my-skill/
-#    - Factory Droid: .factory/skills/my-skill/
-#    - Mistral Vibe: .vibe/skills/my-skill/
-#    - Roo Code: .roo/skills/my-skill/
-#    - Gemini CLI: .gemini/skills/my-skill/
-#    - Junie: .junie/skills/my-skill/
-#    - Cursor: .cursor/skills/my-skill/
-#    - Windsurf: .windsurf/skills/my-skill/
-```
-
-## Subagents Support (Experimental)
-
-> **⚠️ Experimental:** Subagents support is experimental and behavior may change in future releases.
-
-Ruler can distribute named, delegatable **subagents** from a single source of truth (`.ruler/agents/`) to each agent's native subagent location. Each source file is one Markdown file with YAML frontmatter; Ruler transforms it into the format the target agent expects.
-
-### How It Works
-
-For agents with a native subagent primitive, Ruler writes one file per subagent into the target directory:
-
-| Agent             | Target location                | Format |
-| ----------------- | ------------------------------ | ------ |
-| Claude Code       | `.claude/agents/<name>.md`     | Markdown + YAML frontmatter |
-| Cursor            | `.cursor/agents/<name>.md`     | Markdown + YAML frontmatter |
-| OpenAI Codex CLI  | `.codex/agents/<name>.toml`    | TOML (one self-contained file per agent) |
-| GitHub Copilot    | `.github/agents/<name>.md`     | Markdown + YAML frontmatter |
-
-Other agents (Windsurf, RooCode, Aider, Gemini CLI, …) do not yet have a comparable native subagent primitive and are skipped with a warning. Subagent propagation will be added when those agents ship a comparable file format.
-
-### Source Format
-
-Author each subagent as `.ruler/agents/<name>.md`:
-
-```markdown
----
-name: code-reviewer
-description: Use PROACTIVELY after a feature/fix is implemented. Reviews against SOLID/DRY/KISS. Read-only.
-tools: [Read, Grep, Glob, Bash]
-model: inherit
-readonly: true
-is_background: false
----
-
-# Code Reviewer
-
-You operate in a fresh context window with read-only access. Your job is to
-review the diff and surrounding code against the design principles and return
-a structured verdict.
-```
-
-**Required frontmatter fields:**
-
-| Field         | Type   | Notes                                                 |
-| ------------- | ------ | ----------------------------------------------------- |
-| `name`        | string | Must match the filename stem (`code-reviewer.md` → `name: code-reviewer`). |
-| `description` | string | When the parent agent should delegate to this subagent. |
-
-**Optional frontmatter fields:**
-
-| Field           | Type             | Used by                                          | Default behavior                              |
-| --------------- | ---------------- | ------------------------------------------------ | --------------------------------------------- |
-| `tools`         | string[]         | Claude (verbatim), Copilot (mapped to aliases)   | Cursor / Codex ignore; omitted if absent.     |
-| `model`         | string           | All four targets                                 | Cursor defaults to `inherit`; others omit.    |
-| `readonly`      | boolean          | Cursor (verbatim), Codex (`sandbox_mode`), Copilot (`disable-model-invocation`) | Defaults to `false` for Cursor; omitted otherwise. |
-| `is_background` | boolean          | Cursor only                                      | Defaults to `false` for Cursor.               |
-
-For GitHub Copilot, source `tools` (Claude vocabulary: `Read`, `Grep`, `Bash`, …) are translated to Copilot's aliases (`read`, `search`, `execute`, …). Tools that do not have a Copilot equivalent are dropped silently on a normal apply; pass `--verbose` (or use `--dry-run` to preview) to see which tools were dropped.
-
-### Configuration
-
-Subagent propagation is **disabled by default**. Opt in via CLI flag or `ruler.toml`:
-
-```bash
-ruler apply --subagents   # enable subagent propagation for one run
-```
-
-```toml
-# .ruler/ruler.toml
-[agents]
-enabled = true
-# include_in_rules = true  # also append .ruler/agents/*.md into top-level CLAUDE.md / AGENTS.md (default: false)
-```
-
-> **Note:** the previous release used `[subagents]` for these keys. `[subagents]` is still honored as a fallback with a deprecation warning, and will be removed in a future release. Please migrate to `[agents]`.
-
-`[agents] enabled` controls only native subagent propagation from `.ruler/agents/`. It is independent from `[agents.<name>] enabled` (which toggles per-coding-agent output like `CLAUDE.md` / `AGENTS.md`).
-
-CLI flags take precedence over `ruler.toml`, which takes precedence over the default (disabled).
-
-### Validation
-
-Source files are validated at discovery time:
-
-- Files without YAML frontmatter are skipped with a warning.
-- Files missing required `name` or `description` are skipped with a warning.
-- Files where `name` does not match the filename stem are skipped with a warning.
-- Unknown frontmatter keys are dropped (not errored).
-
-### Dry-Run Mode
-
-Use `--dry-run` to preview which files would be written without touching disk.
-
-### `.gitignore` Integration
-
-When subagents are enabled, the four target directories are added to the Ruler-managed block of `.gitignore`:
-
-```
-.claude/agents/
-.cursor/agents/
-.codex/agents/
-.github/agents/
-```
-
-Use `--no-gitignore` to opt out.
-
-### Cleanup
-
-Subagent propagation does **not** currently have explicit `ruler revert` support. To remove generated subagent directories, set `[agents] enabled = false` (or pass `--no-subagents`) and run `ruler apply` once. Cleanup will run for all four targets even if no source `.ruler/agents/` directory exists.
-
-### Example Workflow
-
-```bash
-# 1. Author a subagent in your project
-mkdir -p .ruler/agents
-cat > .ruler/agents/code-reviewer.md << 'EOF'
----
-name: code-reviewer
-description: Reviews changes against SOLID/DRY/KISS
-tools: [Read, Grep, Glob]
-readonly: true
----
-
-You review code changes for quality.
-EOF
-
-# 2. Opt subagents in (default is disabled — see [agents] section above)
-echo -e "\n[agents]\nenabled = true" >> .ruler/ruler.toml
-
-# 3. Apply
-ruler apply
-
-# 4. The subagent is now available in each agent's native location:
-#    - Claude Code:  .claude/agents/code-reviewer.md
-#    - Cursor:       .cursor/agents/code-reviewer.md
-#    - Codex CLI:    .codex/agents/code-reviewer.toml
-#    - GitHub Copilot: .github/agents/code-reviewer.md
-```
-
-### Limitations
-
-- **No explicit revert command.** Cleanup happens via `[agents] enabled = false` on a subsequent `apply`.
-- **Atomic replace, not merge.** Ruler regenerates each agent's subagent directory from the source on every apply. Manual edits to generated files will be overwritten.
-- **No support yet for agents without a native subagent primitive.** Windsurf, RooCode, Aider, Gemini CLI, and others are skipped with a warning. Propagation will be added when those agents ship a comparable file format.
-
-## `.gitignore` Integration
-
-Ruler automatically manages your `.gitignore` file to keep generated agent configuration files out of version control.
-
-### How it Works
-
-- Creates or updates `.gitignore` in your project root
-- Adds paths to a managed block marked with `# START Ruler Generated Files` and `# END Ruler Generated Files`
-- Preserves existing content outside this block
-- Sorts paths alphabetically and uses relative POSIX-style paths
-
-### Example `.gitignore` Section (sample - actual list depends on enabled agents)
-
-```gitignore
-# Your existing rules
-node_modules/
-*.log
-
-# START Ruler Generated Files
-.aider.conf.yml
-.clinerules
-AGENTS.md
-CLAUDE.md
-# END Ruler Generated Files
-
-dist/
-```
-
-### Control Options
-
-- **CLI flags**: `--gitignore`, `--no-gitignore`, `--gitignore-local`, `--no-gitignore-local`
-- **Configuration**: `[gitignore].enabled` and `[gitignore].local` in `ruler.toml`
-- **Default**: enabled
-
-## Practical Usage Scenarios
-
-### Scenario 1: Getting Started Quickly
-
-```bash
-# Initialize Ruler in your project
-cd your-project
-ruler init
-
-# Edit the generated files
-# - Add your coding guidelines to .ruler/AGENTS.md (or keep adding additional .md files)
-# - Customize .ruler/ruler.toml if needed
-
-# Apply rules to all AI agents
-ruler apply
-```
-
-### Scenario 2: Complex Projects with Nested Rules
-
-For large projects with multiple components or services, enable nested rule loading so each directory keeps its own rules and MCP bundle:
-
-```bash
-# Set up nested .ruler directories
-mkdir -p src/.ruler tests/.ruler docs/.ruler
-
-# Add component-specific instructions
-echo "# API Design Guidelines" > src/.ruler/api_rules.md
-echo "# Testing Best Practices" > tests/.ruler/test_rules.md
-echo "# Documentation Standards" > docs/.ruler/docs_rules.md
-```
-
-```toml
-# .ruler/ruler.toml
-nested = true
-```
-
-```bash
-# The CLI inherits nested mode from ruler.toml
-ruler apply --verbose
-
-# Override from the CLI at any time
-ruler apply --no-nested
-```
-
-This creates context-specific instructions for different parts of your project while maintaining global rules in the root `.ruler/` directory. Nested runs automatically keep every nested config enabled even if a child tries to disable it.
-
-> [!NOTE]
-> The CLI prints "Nested mode is experimental and may change in future releases." the first time nested processing runs. Expect refinements in future versions.
-
-### Scenario 3: Team Standardization
-
-1. Create `.ruler/coding_standards.md`, `.ruler/api_usage.md`
-2. Commit the `.ruler` directory to your repository
-3. Team members pull changes and run `ruler apply` to update their local AI agent configurations
-
-### Scenario 4: Project-Specific Context for AI
-
-1. Detail your project's architecture in `.ruler/project_overview.md`
-2. Describe primary data structures in `.ruler/data_models.md`
-3. Run `ruler apply` to help AI tools provide more relevant suggestions
-
-### Integration with NPM Scripts
-
-```json
-{
-  "scripts": {
-    "ruler:apply": "ruler apply",
-    "dev": "npm run ruler:apply && your_dev_command",
-    "precommit": "npm run ruler:apply"
-  }
-}
-```
-
-### Integration with GitHub Actions
-
-```yaml
-# .github/workflows/ruler-check.yml
-name: Check Ruler Configuration
-on:
-  pull_request:
-    paths: ['.ruler/**']
-
-jobs:
-  check-ruler:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install Ruler
-        run: npm install -g @intellectronica/ruler
-
-      - name: Apply Ruler configuration
-        run: ruler apply --no-gitignore
-
-      - name: Check for uncommitted changes
-        run: |
-          if [[ -n $(git status --porcelain) ]]; then
-            echo "::error::Ruler configuration is out of sync!"
-            echo "Please run 'ruler apply' locally and commit the changes."
-            exit 1
-          fi
-```
-
-## Troubleshooting
-
-### Common Issues
-
-**"Cannot find module" errors:**
-
-- Ensure Ruler is installed globally: `npm install -g @intellectronica/ruler`
-- Or use `npx @intellectronica/ruler`
-
-**Permission denied errors:**
-
-- On Unix systems, you may need `sudo` for global installation
-
-**Agent files not updating:**
-
-- Check if the agent is enabled in `ruler.toml`
-- Verify agent isn't excluded by `--agents` flag
-- Use `--verbose` to see detailed execution logs
-
-**Configuration validation errors:**
-
-- Ruler now validates `ruler.toml` format and will show specific error details
-- Check that all configuration values match the expected types and formats
-
-### Debug Mode
-
-Use `--verbose` flag to see detailed execution logs:
-
-```bash
-ruler apply --verbose
-```
-
-This shows:
-
-- Configuration loading details
-- Agent selection logic
-- File processing information
-- MCP configuration steps
-
-## FAQ
-
-**Q: Can I use different rules for different agents?**
-A: Currently, all agents receive the same concatenated rules. For agent-specific instructions, include sections in your rule files like "## GitHub Copilot Specific" or "## Aider Configuration".
-
-**Q: How do I set up different instructions for different parts of my project?**
-A: Enable nested mode either by setting `nested = true` in `ruler.toml` or by passing `ruler apply --nested`. The CLI inherits the config setting by default, but `--no-nested` always wins if you need to opt out for a run. Nested mode keeps loading rules (and MCP settings) from every `.ruler/` directory in the hierarchy, forces child configs to remain nested, and logs "Nested mode is experimental and may change in future releases." if any nested processing occurs.
-
-**Q: How do I temporarily disable Ruler for an agent?**
-A: Set `enabled = false` in `ruler.toml` under `[agents.agentname]`, or use `--agents` flag to specify only the agents you want.
-
-**Q: What happens to my existing agent configuration files?**
-A: Ruler creates backups with `.bak` extension before overwriting any existing files.
-
-**Q: Can I run Ruler in CI/CD pipelines?**
-A: Yes! Use `ruler apply --no-gitignore` in CI to avoid modifying `.gitignore`. See the GitHub Actions example above.
-
-**Q: How do I migrate from older versions using `instructions.md`?**
-A: Simply rename `.ruler/instructions.md` to `.ruler/AGENTS.md` (recommended). If you keep the legacy file and omit `AGENTS.md`, Ruler will still use it (without emitting the old deprecation warning). Having both causes `AGENTS.md` to take precedence; the legacy file is still concatenated afterward.
-
-**Q: How does OpenHands MCP propagation classify servers?**
-A: Local stdio servers become `stdio_servers`. Remote URLs containing `/sse` are classified as `sse_servers`; others become `shttp_servers`. Bearer tokens in an `Authorization` header are extracted into `api_key` where possible.
-
-**Q: Where is Zed configuration written now?**
-A: Ruler writes a `settings.json` in the project root (not the user home dir) and transforms MCP server definitions to Zed's `context_servers` format including `source: "custom"`.
-
-**Q: What changed about MCP initialization?**
-A: `ruler init` now only adds example MCP server sections to `ruler.toml` instead of creating `.ruler/mcp.json`. The JSON file is still consumed if present, but TOML servers win on name conflicts.
-
-**Q: Is Kiro supported?**
-A: Yes. Kiro receives concatenated rules at `.kiro/steering/ruler_kiro_instructions.md`.
+Place subagent definitions here as markdown files with YAML frontmatter.
 
 ## Development
 
-### Setup
+Requires Rust 1.80+.
 
 ```bash
-git clone https://github.com/intellectronica/ruler.git
-cd ruler
-npm install
-npm run build
+make              # fmt + lint + test + build
+make build        # cargo build --release
+make test         # cargo test
+make test-e2e     # end-to-end tests against test-e2e/ fixtures
+make check        # fast compile check
+make lint         # cargo clippy
+make fmt          # check formatting
+make fmt-fix      # auto-format
+make clean        # cargo clean
+make install      # install to ~/.cargo/bin
 ```
 
-### Testing
+## Architecture
 
-```bash
-# Run all tests
-npm test
-
-# Run tests with coverage
-npm run test:coverage
-
-# Run tests in watch mode
-npm run test:watch
 ```
-
-### Code Quality
-
-```bash
-# Run linting
-npm run lint
-
-# Run formatting
-npm run format
+src/
+  domain/          — Pure business logic, zero I/O
+  application/     — Use cases (apply, init, revert)
+  infrastructure/  — Filesystem, config loader, gitignore, MCP storage
+  interface/       — CLI adapter (clap)
 ```
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Ensure all tests pass
-6. Submit a pull request
-
-For bugs and feature requests, please [open an issue](https://github.com/intellectronica/ruler/issues).
 
 ## License
 
 MIT
-
----
-
-© Eleanor Berger  
-[ai.intellectronica.net](https://ai.intellectronica.net/)

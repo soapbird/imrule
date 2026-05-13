@@ -1,0 +1,38 @@
+[package]
+name = "intellectronica-ruler"
+version = "0.4.0"
+edition = "2021"
+description = "Ruler — apply the same rules to all coding agents"
+license = "MIT"
+repository = "https://github.com/soapbird/imrule"
+homepage = "https://github.com/soapbird/imrule"
+readme = "README.md"
+rust-version = "1.80"
+keywords = ["ai", "developer-tools", "codex", "claude", "rules"]
+categories = ["command-line-utilities", "development-tools"]
+include = ["/src/**/*.rs", "/tests/**/*.rs", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE"]
+
+[[bin]]
+name = "ruler"
+path = "src/main.rs"
+
+[lib]
+name = "ruler"
+path = "src/lib.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_norway = "0.9.42"
+toml = "0.8"
+anyhow = "1"
+thiserror = "1"
+
+[dev-dependencies]
+assert_cmd = "2"
+tempfile = "3"
+
+[package.metadata.ruler]
+release-channel = "native-rust"
+breaking-change = "typescript-npm-runtime-removed"
