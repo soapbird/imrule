@@ -90,7 +90,6 @@ pub fn merge_mcp(base: &Value, incoming: &Value, strategy: McpStrategy, server_k
     }
 
     let mut new_base = base.as_object().cloned().unwrap_or_default();
-    new_base.remove("mcpServers");
     new_base.insert(server_key.to_string(), Value::Object(merged));
     Value::Object(new_base)
 }

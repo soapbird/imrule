@@ -201,7 +201,20 @@ fn walk_markdown(
         let file_type = entry.file_type()?;
         let metadata = if file_type.is_symlink() {
             match fs::metadata(&full_path) {
-                Ok(metadata) => metadata,
+                Ok(metadata) => {
+                    // Guard against symlinks that escape the project root.
+                    if let (Ok(canonical), Some(project_root)) =
+                        (full_path.canonicalize(), imrule_dir.parent())
+                    {
+                        let root_canonical = project_root
+                            .canonicalize()
+                            .unwrap_or_else(|_| project_root.to_path_buf());
+                        if !canonical.starts_with(&root_canonical) {
+                            continue;
+                        }
+                    }
+                    metadata
+                }
                 Err(_) => continue,
             }
         } else {

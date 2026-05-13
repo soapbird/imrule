@@ -349,7 +349,6 @@ fn installs_skills_from_local_source_to_imrule_skills_dir() {
             skill_names: None,
             list_only: false,
             global: false,
-            verbose: false,
         })
         .unwrap();
 
@@ -407,7 +406,6 @@ fn lists_skills_without_installing() {
             skill_names: None,
             list_only: true,
             global: false,
-            verbose: false,
         })
         .unwrap();
 
@@ -467,7 +465,6 @@ fn filters_skills_by_name_when_adding() {
             skill_names: Some(vec!["skill-a".into()]),
             list_only: false,
             global: false,
-            verbose: false,
         })
         .unwrap();
 

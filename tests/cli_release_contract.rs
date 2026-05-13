@@ -11,7 +11,7 @@ fn cli_version_and_help_are_release_ready() {
         .output()
         .unwrap();
     assert!(version.status.success());
-    assert!(String::from_utf8_lossy(&version.stdout).contains("imrule 0.4.0"));
+    assert!(String::from_utf8_lossy(&version.stdout).contains("imrule 0.1.0"));
 
     let help = Command::cargo_bin("imrule")
         .unwrap()

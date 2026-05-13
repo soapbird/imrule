@@ -1,16 +1,7 @@
 //! Shared constants for the native Rust CLI.
 
-/// Package name used by the Rust crate during migration.
-pub const PACKAGE_NAME: &str = env!("CARGO_PKG_NAME");
-
-/// Package version exposed by the native Rust crate.
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
 /// Default rules filename used by ImRule.
 pub const DEFAULT_RULES_FILENAME: &str = "AGENTS.md";
-
-/// Standard diagnostic prefix used by the existing CLI.
-pub const ERROR_PREFIX: &str = "[imrule] Error:";
 
 pub const SKILLS_DIR: &str = "skills";
 pub const IMRULE_SKILLS_PATH: &str = ".imrule/skills";

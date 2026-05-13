@@ -17,7 +17,6 @@ use crate::infrastructure::file_system::FsFileSystem;
 use crate::infrastructure::gitignore::GitignoreUpdater;
 use crate::infrastructure::mcp_storage::JsonMcpStorage;
 use crate::infrastructure::skill_fetcher::GitSkillFetcher;
-use crate::infrastructure::skills::discover_skills;
 use crate::interface::cli::{parse_agents, Cli, Command, SkillsCommand};
 
 /// Entry point for the CLI.
@@ -136,7 +135,6 @@ fn run_inner() -> Result<(), CliError> {
                         skill_names: args.skill,
                         list_only: args.list,
                         global: args.global,
-                        verbose: args.verbose,
                     })
                     .map_err(|err| CliError::new(1, err.to_string()))?;
 
@@ -152,6 +150,7 @@ fn run_inner() -> Result<(), CliError> {
                         println!("  - {name}");
                     }
 
+                    println!("Syncing skills to agent directories (running apply)...");
                     // Run apply to sync skills to agent directories.
                     let agent_writer = DefaultAgentWriter::new(&fs);
                     let apply_use_case =
@@ -189,12 +188,12 @@ fn run_inner() -> Result<(), CliError> {
                 } else {
                     imrule_skills
                 };
-                let discovery = discover_skills(&if args.global {
-                    crate::domain::constants::xdg_config_home().join("imrule")
+                let discovery = if skills_dir.exists() {
+                    crate::infrastructure::skills::walk_skills_tree(&skills_dir)
+                        .map_err(|e| CliError::new(1, e.to_string()))?
                 } else {
-                    project_root.clone()
-                })
-                .map_err(|e| CliError::new(1, e.to_string()))?;
+                    crate::domain::skills::SkillsDiscovery::default()
+                };
                 if discovery.skills.is_empty() {
                     println!("No skills installed in {}.", skills_dir.display());
                 } else {

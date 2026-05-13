@@ -89,62 +89,42 @@ test-e2e: build
 	$(BINARY) apply --project-root $(TMP)/apply-multi --agents claude,copilot --verbose
 	@test -f $(TMP)/apply-multi/CLAUDE.md                                 && echo "[PASS] CLAUDE.md generated"        || (echo "[FAIL] CLAUDE.md missing"           && exit 1)
 	@test -f $(TMP)/apply-multi/.github/copilot-instructions.md           && echo "[PASS] copilot instructions generated" || (echo "[FAIL] copilot instructions missing" && exit 1)
-	@echo ""; echo "━━━ E2E: imrule apply --no-mcp ━━━"
+	@echo ""; echo "━━━ E2E: imrule apply (no MCP config present) ━━━"
 	rm -rf $(TMP)/apply-nomcp && cp -r $(TEST_DIR) $(TMP)/apply-nomcp
-	$(BINARY) apply --project-root $(TMP)/apply-nomcp --agents claude --no-mcp --verbose
+	$(BINARY) apply --project-root $(TMP)/apply-nomcp --agents claude --verbose
 	@test -f $(TMP)/apply-nomcp/CLAUDE.md                                 && echo "[PASS] CLAUDE.md generated"        || (echo "[FAIL] CLAUDE.md missing"           && exit 1)
 	@echo ""; echo "━━━ E2E: imrule apply (MCP merge) ━━━"
 	rm -rf $(TMP)/apply-mcp && cp -r $(TEST_DIR) $(TMP)/apply-mcp
 	cp test-e2e/claude_desktop_config.json $(TMP)/apply-mcp/claude_desktop_config.json 2>/dev/null || true
 	$(BINARY) apply --project-root $(TMP)/apply-mcp --agents claude --verbose
 	@test -f $(TMP)/apply-mcp/CLAUDE.md                                   && echo "[PASS] CLAUDE.md generated"        || (echo "[FAIL] CLAUDE.md missing"           && exit 1)
-	@echo ""; echo "━━━ E2E: imrule apply --mcp-overwrite ━━━"
-	rm -rf $(TMP)/apply-mcpow && cp -r $(TEST_DIR) $(TMP)/apply-mcpow
-	$(BINARY) apply --project-root $(TMP)/apply-mcpow --agents claude --mcp-overwrite --verbose
-	@test -f $(TMP)/apply-mcpow/CLAUDE.md                                 && echo "[PASS] CLAUDE.md generated"        || (echo "[FAIL] CLAUDE.md missing"           && exit 1)
-	@echo ""; echo "━━━ E2E: imrule apply --backup true ━━━"
+	@echo ""; echo "━━━ E2E: imrule apply --backup (creates .bak) ━━━"
 	rm -rf $(TMP)/apply-backup && cp -r $(TEST_DIR) $(TMP)/apply-backup
 	printf "# original\n" > $(TMP)/apply-backup/CLAUDE.md
-	$(BINARY) apply --project-root $(TMP)/apply-backup --agents claude --backup true
+	$(BINARY) apply --project-root $(TMP)/apply-backup --agents claude --backup
 	@test -f $(TMP)/apply-backup/CLAUDE.md.bak                            && echo "[PASS] .bak created"              || (echo "[FAIL] .bak missing"                && exit 1)
 	@grep -q "original" $(TMP)/apply-backup/CLAUDE.md.bak                 && echo "[PASS] .bak has original content" || (echo "[FAIL] .bak content wrong"          && exit 1)
-	@echo ""; echo "━━━ E2E: imrule apply --backup false ━━━"
+	@echo ""; echo "━━━ E2E: imrule apply (no --backup, no .bak) ━━━"
 	rm -rf $(TMP)/apply-nobak && cp -r $(TEST_DIR) $(TMP)/apply-nobak
 	printf "# original\n" > $(TMP)/apply-nobak/CLAUDE.md
-	$(BINARY) apply --project-root $(TMP)/apply-nobak --agents claude --backup false
+	$(BINARY) apply --project-root $(TMP)/apply-nobak --agents claude
 	@test ! -f $(TMP)/apply-nobak/CLAUDE.md.bak                           && echo "[PASS] no .bak created"           || (echo "[FAIL] .bak should not exist"       && exit 1)
 	@echo ""; echo "━━━ E2E: imrule apply (gitignore) ━━━"
 	rm -rf $(TMP)/apply-gitignore && cp -r $(TEST_DIR) $(TMP)/apply-gitignore
 	touch $(TMP)/apply-gitignore/.gitignore
 	$(BINARY) apply --project-root $(TMP)/apply-gitignore --agents claude --verbose
 	@grep -q "ImRule Generated Files" $(TMP)/apply-gitignore/.gitignore   && echo "[PASS] .gitignore updated"        || (echo "[FAIL] .gitignore not updated"      && exit 1)
-	@echo ""; echo "━━━ E2E: imrule apply --gitignore false ━━━"
-	rm -rf $(TMP)/apply-nogitignore && cp -r $(TEST_DIR) $(TMP)/apply-nogitignore
-	printf "" > $(TMP)/apply-nogitignore/.gitignore
-	$(BINARY) apply --project-root $(TMP)/apply-nogitignore --agents claude --gitignore false
-	@grep -q "ImRule Generated Files" $(TMP)/apply-nogitignore/.gitignore && echo "[FAIL] .gitignore updated" && exit 1 || echo "[PASS] .gitignore not updated"
 	@echo ""; echo "━━━ E2E: imrule revert (basic) ━━━"
 	rm -rf $(TMP)/revert-basic && cp -r $(TEST_DIR) $(TMP)/revert-basic
 	$(BINARY) apply --project-root $(TMP)/revert-basic --agents claude
 	@test -f $(TMP)/revert-basic/CLAUDE.md                                && echo "[PASS] CLAUDE.md exists"          || (echo "[FAIL] CLAUDE.md missing"           && exit 1)
 	$(BINARY) revert --project-root $(TMP)/revert-basic --agents claude
 	@test ! -f $(TMP)/revert-basic/CLAUDE.md                              && echo "[PASS] CLAUDE.md removed"         || (echo "[FAIL] CLAUDE.md still exists"      && exit 1)
-	@echo ""; echo "━━━ E2E: imrule revert --keep-backups ━━━"
-	rm -rf $(TMP)/revert-keepbak && cp -r $(TEST_DIR) $(TMP)/revert-keepbak
-	printf "# original\n" > $(TMP)/revert-keepbak/CLAUDE.md
-	$(BINARY) apply --project-root $(TMP)/revert-keepbak --agents claude --backup true
-	$(BINARY) revert --project-root $(TMP)/revert-keepbak --agents claude --keep-backups
-	@test -f $(TMP)/revert-keepbak/CLAUDE.md.bak                          && echo "[PASS] .bak kept"                 || (echo "[FAIL] .bak removed"                && exit 1)
-	@grep -q "original" $(TMP)/revert-keepbak/CLAUDE.md.bak               && echo "[PASS] .bak has original content" || (echo "[FAIL] .bak content wrong"          && exit 1)
 	@echo ""; echo "━━━ E2E: imrule revert --dry-run ━━━"
 	rm -rf $(TMP)/revert-dryrun && cp -r $(TEST_DIR) $(TMP)/revert-dryrun
 	$(BINARY) apply --project-root $(TMP)/revert-dryrun --agents claude
 	$(BINARY) revert --project-root $(TMP)/revert-dryrun --agents claude --dry-run
 	@test -f $(TMP)/revert-dryrun/CLAUDE.md                               && echo "[PASS] file not removed on dry-run" || (echo "[FAIL] file removed on dry-run"    && exit 1)
-	@echo ""; echo "━━━ E2E: imrule apply --local-only ━━━"
-	rm -rf $(TMP)/apply-local && cp -r $(TEST_DIR) $(TMP)/apply-local
-	$(BINARY) apply --project-root $(TMP)/apply-local --agents claude --local-only --verbose
-	@test -f $(TMP)/apply-local/CLAUDE.md                                 && echo "[PASS] CLAUDE.md generated"        || (echo "[FAIL] CLAUDE.md missing"           && exit 1)
 	@echo ""; echo "━━━ E2E: error on unknown agent ━━━"
 	rm -rf $(TMP)/err-agent && cp -r $(TEST_DIR) $(TMP)/err-agent
 	$(BINARY) apply --project-root $(TMP)/err-agent --agents nonexistent 2>/dev/null && (echo "[FAIL] should have errored" && exit 1) || echo "[PASS] error on unknown agent"

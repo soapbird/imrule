@@ -183,7 +183,7 @@ const AGENT_DEFINITIONS: &[AgentDefinition] = &[
         identifier: "aider",
         name: "Aider",
         output_template: AgentOutputTemplate::Multiple(AIDER_PATHS),
-        mcp_server_key: "",
+        mcp_server_key: "mcpServers",
         capabilities: caps(true, true, false, false, false),
     },
     AgentDefinition {

@@ -143,7 +143,7 @@ fn agent_registry_matches_native_names_paths_mcp_keys_and_capabilities() {
                 ("instructions", "/project/AGENTS.md"),
                 ("config", "/project/.aider.conf.yml"),
             ]),
-            "",
+            "mcpServers",
             true,
             true,
             false,

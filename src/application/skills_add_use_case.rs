@@ -16,7 +16,6 @@ pub struct SkillsAddOptions {
     pub skill_names: Option<Vec<String>>,
     pub list_only: bool,
     pub global: bool,
-    pub verbose: bool,
 }
 
 /// Result of a skills add operation.

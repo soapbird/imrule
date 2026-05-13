@@ -111,6 +111,16 @@ impl<'a> ApplyUseCase<'a> {
             written_paths.extend(skills_paths);
         }
 
+        let subagents_enabled = config
+            .subagents
+            .as_ref()
+            .and_then(|s| s.enabled)
+            .unwrap_or(true);
+        if subagents_enabled {
+            let subagents_paths = self.apply_subagents(&options, &selected_agents)?;
+            written_paths.extend(subagents_paths);
+        }
+
         let gitignore_enabled = config
             .gitignore
             .as_ref()
@@ -164,6 +174,101 @@ impl<'a> ApplyUseCase<'a> {
             self.mcp_port.write_native_mcp(&path, &merged)?;
             written.push(path);
         }
+        Ok(written)
+    }
+
+    fn apply_subagents(
+        &self,
+        options: &ApplyOptions,
+        selected_agents: &[AgentDefinition],
+    ) -> Result<Vec<PathBuf>, ImruleError> {
+        let discovery = crate::infrastructure::subagents::discover_subagents(&options.project_root)
+            .map_err(|e| ImruleError::subagent(e.to_string()))?;
+        if discovery.subagents.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let target_map: &[(&str, &str, &str)] = &[
+            (
+                "claude",
+                crate::domain::constants::CLAUDE_SUBAGENTS_PATH,
+                "claude",
+            ),
+            (
+                "codex",
+                crate::domain::constants::CODEX_SUBAGENTS_PATH,
+                "codex",
+            ),
+            (
+                "cursor",
+                crate::domain::constants::CURSOR_SUBAGENTS_PATH,
+                "cursor",
+            ),
+            (
+                "copilot",
+                crate::domain::constants::COPILOT_SUBAGENTS_PATH,
+                "copilot",
+            ),
+        ];
+
+        let mut written = Vec::new();
+        let mut seen_targets = std::collections::BTreeSet::new();
+
+        for agent in selected_agents {
+            if !agent.capabilities.native_subagents {
+                continue;
+            }
+            let Some(&(_, target_rel, agent_type)) =
+                target_map.iter().find(|(id, _, _)| *id == agent.identifier)
+            else {
+                continue;
+            };
+
+            let target_dir = options.project_root.join(target_rel);
+            let key = target_dir.to_string_lossy().to_string();
+            if seen_targets.contains(&key) {
+                continue;
+            }
+            seen_targets.insert(key);
+
+            if options.dry_run {
+                written.push(target_dir);
+                continue;
+            }
+
+            self.fs_port
+                .ensure_dir_exists(&target_dir)
+                .map_err(|e| ImruleError::subagent(e.to_string()))?;
+
+            for sub in &discovery.subagents {
+                let content = match agent_type {
+                    "claude" => crate::domain::subagent::build_claude_file(sub),
+                    "cursor" => crate::domain::subagent::build_cursor_file(sub),
+                    "codex" => crate::domain::subagent::build_codex_file(sub),
+                    "copilot" => crate::domain::subagent::build_copilot_file(sub).content,
+                    _ => continue,
+                };
+                let dest = target_dir.join(format!("{}.md", sub.name));
+                self.fs_port.write_text(&dest, &content).map_err(|e| {
+                    ImruleError::subagent(format!("failed to write subagent '{}': {e}", sub.name))
+                })?;
+                written.push(dest);
+            }
+        }
+
+        let gitignore_paths = crate::infrastructure::subagents::get_subagents_gitignore_paths(
+            &options.project_root,
+            selected_agents,
+        )
+        .map_err(|e| {
+            ImruleError::subagent(format!("failed to get subagent gitignore paths: {e}"))
+        })?;
+        for path in gitignore_paths {
+            if !written.contains(&path) {
+                written.push(path);
+            }
+        }
+
         Ok(written)
     }
 

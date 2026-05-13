@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::application::apply_use_case::{get_agent_output_paths, resolve_selected_agents};
 use crate::application::ports::{ConfigPort, FileSystemPort, GitignorePort};
+use crate::domain::constants::GENERATED_BY_IMRULE_MARKER;
 use crate::domain::error::ImruleError;
 
 /// Runtime options for `imrule revert`.
@@ -88,6 +89,10 @@ impl<'a> RevertUseCase<'a> {
         if !self.fs_port.file_exists(file_path)
             || self.fs_port.file_exists(&self.backup_path(file_path))
         {
+            return Ok(false);
+        }
+        let content = self.fs_port.read_text(file_path)?;
+        if !content.starts_with(GENERATED_BY_IMRULE_MARKER) {
             return Ok(false);
         }
         if !dry_run {

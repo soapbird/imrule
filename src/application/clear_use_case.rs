@@ -71,13 +71,23 @@ impl<'a> ClearUseCase<'a> {
             self.remove_backup(path, options.dry_run)?;
         }
 
-        // Remove skills directories.
-        for dir in self.collect_skills_dirs(&options.project_root, &selected_agents) {
-            if self.fs_port.file_exists(&dir) {
-                if !options.dry_run {
-                    self.fs_port.remove_dir_all(&dir)?;
+        // Remove only the skill subdirectories that imrule manages (not the whole skills root).
+        let managed_skill_names: Vec<String> = {
+            crate::infrastructure::skills::discover_skills(&options.project_root)
+                .map(|d| d.skills.into_iter().map(|s| s.name).collect())
+                .unwrap_or_default()
+        };
+        if !managed_skill_names.is_empty() {
+            for skills_root in self.collect_skills_dirs(&options.project_root, &selected_agents) {
+                for skill_name in &managed_skill_names {
+                    let skill_path = skills_root.join(skill_name);
+                    if self.fs_port.file_exists(&skill_path) {
+                        if !options.dry_run {
+                            self.fs_port.remove_dir_all(&skill_path)?;
+                        }
+                        removed.push(skill_path);
+                    }
                 }
-                removed.push(dir);
             }
         }
 

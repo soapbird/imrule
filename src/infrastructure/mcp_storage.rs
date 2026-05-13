@@ -61,6 +61,9 @@ impl McpPort for JsonMcpStorage {
     }
 
     fn read_native_mcp(&self, file_path: &Path) -> Result<Value, ImruleError> {
+        if file_path.extension().and_then(|e| e.to_str()) == Some("toml") {
+            return Ok(json!({}));
+        }
         match fs::read_to_string(file_path) {
             Ok(text) => Ok(serde_json::from_str(&text).unwrap_or_else(|_| json!({}))),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
@@ -69,6 +72,9 @@ impl McpPort for JsonMcpStorage {
     }
 
     fn write_native_mcp(&self, file_path: &Path, data: &Value) -> Result<(), ImruleError> {
+        if file_path.extension().and_then(|e| e.to_str()) == Some("toml") {
+            return Ok(());
+        }
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent).map_err(|e| ImruleError::mcp(e.to_string()))?;
         }

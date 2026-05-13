@@ -87,6 +87,11 @@ fn merges_mcp_configs_with_key_translation_and_strategy() {
         merge_mcp(&base, &incoming, McpStrategy::Merge, "servers"),
         json!({
             "keep": true,
+            // mcpServers from base is preserved — not removed — when writing to a different key.
+            "mcpServers": {
+                "old": { "command": "old" },
+                "same": { "command": "base" }
+            },
             "servers": {
                 "old": { "command": "old" },
                 "same": { "command": "incoming" },

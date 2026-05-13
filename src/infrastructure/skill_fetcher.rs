@@ -1,6 +1,6 @@
 //! Concrete skill fetcher using git clone.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use crate::application::ports::SkillFetcherPort;
@@ -16,10 +16,6 @@ impl GitSkillFetcher {
         let temp_dir = tempfile::TempDir::new()
             .map_err(|e| ImruleError::skills(format!("failed to create temp dir: {e}")))?;
         Ok(Self { temp_dir })
-    }
-
-    pub fn temp_path(&self) -> &Path {
-        self.temp_dir.path()
     }
 }
 
@@ -44,7 +40,11 @@ impl SkillFetcherPort for GitSkillFetcher {
                 let clone_dir = self.temp_dir.path().join(repo);
                 git_clone_shallow(&url, &clone_dir)?;
                 Ok(if let Some(sub) = subpath {
-                    clone_dir.join(sub)
+                    let safe_sub: PathBuf = Path::new(sub)
+                        .components()
+                        .filter(|c| matches!(c, Component::Normal(_)))
+                        .collect();
+                    clone_dir.join(safe_sub)
                 } else {
                     clone_dir
                 })
