@@ -19,14 +19,8 @@ pub struct ApplyOptions {
     pub project_root: PathBuf,
     pub agents: Option<Vec<String>>,
     pub config: Option<PathBuf>,
-    pub mcp: bool,
-    pub mcp_overwrite: bool,
-    pub gitignore: Option<bool>,
-    pub gitignore_local: bool,
     pub dry_run: bool,
-    pub local_only: bool,
     pub backup: bool,
-    pub skills: bool,
 }
 
 /// Apply use case orchestrating domain logic through ports.
@@ -65,7 +59,7 @@ impl<'a> ApplyUseCase<'a> {
         let selected_agents = resolve_selected_agents(&config, options.agents.as_deref())?;
         let imrule_dir = self
             .fs_port
-            .find_imrule_dir(&options.project_root, !options.local_only)
+            .find_imrule_dir(&options.project_root, true)
             .ok_or_else(|| {
                 ImruleError::rules(format!(
                     "could not find .imrule or .ruler directory from {}",
@@ -101,51 +95,33 @@ impl<'a> ApplyUseCase<'a> {
             }
         }
 
-        if options.mcp && config.mcp.as_ref().and_then(|mcp| mcp.enabled) != Some(false) {
+        if config.mcp.as_ref().and_then(|mcp| mcp.enabled) != Some(false) {
             let mcp_paths = self.apply_mcp_configs(&options, &config, &selected_agents)?;
             written_paths.extend(mcp_paths);
         }
 
-        let skills_enabled = options.skills
-            && config
-                .skills
-                .as_ref()
-                .and_then(|s| s.enabled)
-                .unwrap_or(true);
+        let skills_enabled = config
+            .skills
+            .as_ref()
+            .and_then(|s| s.enabled)
+            .unwrap_or(true);
         if skills_enabled {
             let skills_paths =
                 self.apply_skills(&options.project_root, &selected_agents, options.dry_run)?;
             written_paths.extend(skills_paths);
         }
 
-        let gitignore_enabled = options
+        let gitignore_enabled = config
             .gitignore
-            .or_else(|| {
-                config
-                    .gitignore
-                    .as_ref()
-                    .and_then(|gitignore| gitignore.enabled)
-            })
+            .as_ref()
+            .and_then(|gitignore| gitignore.enabled)
             .unwrap_or(true);
-        if gitignore_enabled {
-            let ignore_file = if options.gitignore_local
-                || config
-                    .gitignore
-                    .as_ref()
-                    .and_then(|gitignore| gitignore.local)
-                    == Some(true)
-            {
-                ".git/info/exclude"
-            } else {
-                ".gitignore"
-            };
-            if !options.dry_run {
-                self.gitignore_port.update_gitignore(
-                    &options.project_root,
-                    &written_paths,
-                    ignore_file,
-                )?;
-            }
+        if gitignore_enabled && !options.dry_run {
+            self.gitignore_port.update_gitignore(
+                &options.project_root,
+                &written_paths,
+                ".gitignore",
+            )?;
         }
 
         Ok(written_paths)
@@ -163,15 +139,11 @@ impl<'a> ApplyUseCase<'a> {
         else {
             return Ok(Vec::new());
         };
-        let strategy = if options.mcp_overwrite {
-            McpStrategy::Overwrite
-        } else {
-            config
-                .mcp
-                .as_ref()
-                .map(|mcp| mcp.strategy)
-                .unwrap_or(McpStrategy::Merge)
-        };
+        let strategy = config
+            .mcp
+            .as_ref()
+            .map(|mcp| mcp.strategy)
+            .unwrap_or(McpStrategy::Merge);
         let mut written = Vec::new();
         for agent in selected_agents {
             let Some(filtered) = filter_mcp_config_for_agent(&imrule_mcp, agent) else {

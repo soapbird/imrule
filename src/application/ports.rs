@@ -37,6 +37,9 @@ pub trait FileSystemPort {
     /// Remove a file.
     fn remove_file(&self, path: &Path) -> Result<(), ImruleError>;
 
+    /// Recursively remove a directory and all its contents.
+    fn remove_dir_all(&self, path: &Path) -> Result<(), ImruleError>;
+
     /// Copy a file.
     fn copy_file(&self, from: &Path, to: &Path) -> Result<(), ImruleError>;
 

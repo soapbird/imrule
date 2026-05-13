@@ -342,6 +342,28 @@ fn load_config_prefers_imrule_toml_over_ruler_toml() {
 }
 
 #[test]
+fn load_config_walks_up_parent_dirs() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    let subdir = root.join("sub/nested");
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::create_dir_all(&subdir).unwrap();
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        r#"default_agents = ["codex", "claude", "kilocode"]"#,
+    )
+    .unwrap();
+
+    let loader = TomlConfigLoader::new();
+    // Load config starting from a subdirectory — should walk up and find root's config.
+    let loaded = loader.load_config(&subdir, None, None).unwrap();
+    assert_eq!(
+        loaded.default_agents.unwrap(),
+        vec!["codex", "claude", "kilocode"]
+    );
+}
+
+#[test]
 fn update_gitignore_filters_ruler_input_paths() {
     let tmp = tempdir().unwrap();
     let root = tmp.path().join("proj");

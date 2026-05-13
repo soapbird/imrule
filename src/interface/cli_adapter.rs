@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use clap::Parser;
 
 use crate::application::apply_use_case::{ApplyOptions, ApplyUseCase};
+use crate::application::clear_use_case::{ClearOptions, ClearUseCase};
 use crate::application::init_use_case::{InitOptions, InitUseCase};
 use crate::application::revert_use_case::{RevertOptions, RevertUseCase};
 use crate::application::skills_add_use_case::{SkillsAddOptions, SkillsAddUseCase};
@@ -44,7 +45,6 @@ fn run_inner() -> Result<(), CliError> {
                 .project_root
                 .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
             let agents = parse_agents(args.agents);
-            let mcp_enabled = args.mcp && !args.no_mcp;
             let agent_writer = DefaultAgentWriter::new(&fs);
             let use_case = ApplyUseCase::new(&config, &fs, &gitignore, &mcp, &agent_writer);
             let written = use_case
@@ -52,14 +52,8 @@ fn run_inner() -> Result<(), CliError> {
                     project_root,
                     agents,
                     config: args.config,
-                    mcp: mcp_enabled,
-                    mcp_overwrite: args.mcp_overwrite,
-                    gitignore: args.gitignore,
-                    gitignore_local: args.gitignore_local,
                     dry_run: args.dry_run,
-                    local_only: args.local_only,
                     backup: args.backup,
-                    skills: args.skills.unwrap_or(true),
                 })
                 .map_err(|err| CliError::new(1, err.to_string()))?;
             if args.dry_run {
@@ -93,14 +87,36 @@ fn run_inner() -> Result<(), CliError> {
                     project_root,
                     agents: parse_agents(args.agents),
                     config: args.config,
-                    keep_backups: args.keep_backups,
                     dry_run: args.dry_run,
-                    local_only: args.local_only,
                 })
                 .map_err(|err| CliError::new(1, err.to_string()))?;
             println!("ImRule revert completed successfully.");
             if args.verbose {
                 println!("Files changed: {}", changed.len());
+            }
+            Ok(())
+        }
+        Command::Clear(args) => {
+            let project_root = args
+                .project_root
+                .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            let use_case = ClearUseCase::new(&config, &fs, &gitignore, &mcp);
+            let removed = use_case
+                .execute(ClearOptions {
+                    project_root,
+                    agents: parse_agents(args.agents),
+                    config: args.config,
+                    dry_run: args.dry_run,
+                    remove_source: args.remove_source,
+                })
+                .map_err(|err| CliError::new(1, err.to_string()))?;
+            if args.dry_run {
+                println!("ImRule clear dry run completed successfully.");
+            } else {
+                println!("ImRule clear completed successfully.");
+            }
+            if args.verbose {
+                println!("Files removed: {}", removed.len());
             }
             Ok(())
         }
@@ -148,14 +164,8 @@ fn run_inner() -> Result<(), CliError> {
                             project_root: project_root_for_apply,
                             agents: None,
                             config: None,
-                            mcp: false,
-                            mcp_overwrite: false,
-                            gitignore: None,
-                            gitignore_local: false,
                             dry_run: false,
-                            local_only: false,
-                            backup: true,
-                            skills: true,
+                            backup: false,
                         })
                         .map_err(|err| CliError::new(1, err.to_string()))?;
                     println!("Skills synced to agent directories.");

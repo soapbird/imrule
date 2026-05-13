@@ -60,6 +60,14 @@ impl FileSystemPort for FsFileSystem {
             .map_err(|e| ImruleError::filesystem(format!("{}: {e}", path.display())))
     }
 
+    fn remove_dir_all(&self, path: &Path) -> Result<(), ImruleError> {
+        if path.exists() {
+            fs::remove_dir_all(path)
+                .map_err(|e| ImruleError::filesystem(format!("{}: {e}", path.display())))?;
+        }
+        Ok(())
+    }
+
     fn copy_file(&self, from: &Path, to: &Path) -> Result<(), ImruleError> {
         fs::copy(from, to).map_err(|e| ImruleError::filesystem(e.to_string()))?;
         Ok(())

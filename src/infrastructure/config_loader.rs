@@ -181,17 +181,23 @@ fn resolve_config_file(project_root: &Path, config_path: Option<&Path>) -> PathB
                 .join(config_path)
         }
     } else {
-        let local = project_root.join(".imrule/imrule.toml");
-        if local.exists() {
-            return local;
-        }
-        let legacy_toml = project_root.join(format!("{LEGACY_DIR_NAME}/{LEGACY_CONFIG_FILENAME}"));
-        if legacy_toml.exists() {
-            return legacy_toml;
-        }
-        let legacy_imrule = project_root.join(format!("{LEGACY_DIR_NAME}/imrule.toml"));
-        if legacy_imrule.exists() {
-            return legacy_imrule;
+        let mut current = project_root.to_path_buf();
+        loop {
+            let local = current.join(".imrule/imrule.toml");
+            if local.exists() {
+                return local;
+            }
+            let legacy_toml = current.join(format!("{LEGACY_DIR_NAME}/{LEGACY_CONFIG_FILENAME}"));
+            if legacy_toml.exists() {
+                return legacy_toml;
+            }
+            let legacy_imrule = current.join(format!("{LEGACY_DIR_NAME}/imrule.toml"));
+            if legacy_imrule.exists() {
+                return legacy_imrule;
+            }
+            if !current.pop() {
+                break;
+            }
         }
         xdg_config_home().join("imrule/imrule.toml")
     }

@@ -23,7 +23,7 @@ fn cli_version_and_help_are_release_ready() {
     let stdout = String::from_utf8_lossy(&help.stdout);
     assert!(stdout.contains("Apply imrule configurations to supported AI agents"));
     assert!(stdout.contains("--project-root"));
-    assert!(stdout.contains("--no-mcp"));
+    assert!(stdout.contains("--dry-run"));
     assert!(stdout.contains("agentsmd, aider, amazonqcli"));
 }
 
@@ -41,7 +41,6 @@ fn apply_and_revert_are_native_rust_commands() {
             tmp.path().to_str().unwrap(),
             "--agents",
             "claude,cline",
-            "--no-mcp",
         ])
         .assert()
         .success();
@@ -81,7 +80,6 @@ fn apply_dry_run_does_not_write_outputs() {
             tmp.path().to_str().unwrap(),
             "--agents",
             "claude",
-            "--no-mcp",
             "--dry-run",
         ])
         .assert()
@@ -149,7 +147,6 @@ fn apply_works_with_legacy_ruler_directory() {
             tmp.path().to_str().unwrap(),
             "--agents",
             "claude",
-            "--no-mcp",
         ])
         .output()
         .unwrap();
@@ -178,7 +175,6 @@ fn revert_works_with_legacy_ruler_directory() {
             tmp.path().to_str().unwrap(),
             "--agents",
             "claude",
-            "--no-mcp",
         ])
         .assert()
         .success();
@@ -216,7 +212,6 @@ fn apply_prefers_imrule_over_ruler_when_both_exist() {
             tmp.path().to_str().unwrap(),
             "--agents",
             "claude",
-            "--no-mcp",
         ])
         .output()
         .unwrap();
@@ -229,4 +224,142 @@ fn apply_prefers_imrule_over_ruler_when_both_exist() {
     // No deprecation warning when .imrule exists.
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("legacy"));
+}
+
+#[test]
+fn clear_removes_generated_files_and_preserves_imrule_dir_by_default() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "Clear test rules.").unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "apply",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "claude,cline",
+        ])
+        .assert()
+        .success();
+
+    assert!(tmp.path().join("CLAUDE.md").exists());
+    assert!(tmp.path().join(".clinerules").exists());
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "clear",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "claude,cline",
+        ])
+        .assert()
+        .success();
+
+    // Generated files removed.
+    assert!(!tmp.path().join("CLAUDE.md").exists());
+    assert!(!tmp.path().join(".clinerules").exists());
+
+    // .imrule/ preserved by default.
+    assert!(tmp.path().join(".imrule").exists());
+    assert!(tmp.path().join(".imrule/AGENTS.md").exists());
+}
+
+#[test]
+fn clear_dry_run_does_not_remove_files() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "Dry clear.").unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "apply",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "claude",
+        ])
+        .assert()
+        .success();
+
+    assert!(tmp.path().join("CLAUDE.md").exists());
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "clear",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "claude",
+            "--dry-run",
+        ])
+        .assert()
+        .success();
+
+    // File should still exist after dry run.
+    assert!(tmp.path().join("CLAUDE.md").exists());
+}
+
+#[test]
+fn clear_remove_source_also_deletes_imrule_dir() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "Remove source test.").unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "apply",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "claude",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "clear",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "claude",
+            "--remove-source",
+        ])
+        .assert()
+        .success();
+
+    assert!(!tmp.path().join("CLAUDE.md").exists());
+    assert!(!tmp.path().join(".imrule").exists());
+}
+
+#[test]
+fn clear_skips_non_generated_files() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "Safety check.").unwrap();
+    // Write a CLAUDE.md without the imrule marker — should not be removed.
+    fs::write(tmp.path().join("CLAUDE.md"), "# My own instructions\n").unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "clear",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "claude",
+        ])
+        .assert()
+        .success();
+
+    // User-owned file must survive.
+    assert!(tmp.path().join("CLAUDE.md").exists());
 }

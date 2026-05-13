@@ -12,9 +12,7 @@ pub struct RevertOptions {
     pub project_root: PathBuf,
     pub agents: Option<Vec<String>>,
     pub config: Option<PathBuf>,
-    pub keep_backups: bool,
     pub dry_run: bool,
-    pub local_only: bool,
 }
 
 /// Revert use case.
@@ -55,9 +53,7 @@ impl<'a> RevertUseCase<'a> {
             } else {
                 self.remove_generated_file(path, options.dry_run)?
             };
-            if !options.keep_backups {
-                self.remove_backup_file(path, options.dry_run)?;
-            }
+            self.remove_backup_file(path, options.dry_run)?;
             if restored || removed {
                 changed.push(path.clone());
             }
