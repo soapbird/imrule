@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.0.1] - 2026-05-13
+
+### Fixed
+
+- `revert` no longer deletes user-owned files; it now checks for the ImRule generated marker before removing
+- `clear` now removes only the skill subdirectories that ImRule manages, not entire agent skill roots
+- MCP configurations written to agent-specific keys (e.g. Copilot `servers`) no longer lose the original `mcpServers` entries
+- TOML-format MCP paths (Codex, OpenHands) are now skipped during read/write to prevent corruption
+- Aider now correctly propagates MCP servers (mcp_server_key was empty)
+- Subagent propagation to Claude, Cursor, Codex, and Copilot native directories is now wired into `apply`
+- `skills add` prints a progress notice before the implicit apply sync
+- `skills list` searches from the correct directory in global mode
+- Path traversal in GitHub skill subpaths is blocked (only `Component::Normal` segments accepted)
+- Symlink traversal outside the project root is blocked in markdown discovery
+
+### Changed
+
+- CI workflow added for Rust: `cargo fmt`, `cargo clippy`, `cargo test`, and release build on push/PR
+
+### Removed
+
+- Unused `PACKAGE_NAME`, `VERSION`, and `ERROR_PREFIX` constants
+- Unused `verbose` field from `SkillsAddOptions`
+- Unused `anyhow` dependency from `Cargo.toml`
+
 ## [0.1.0.0] - 2026-05-13
 
 ### Added

@@ -363,3 +363,227 @@ fn clear_skips_non_generated_files() {
     // User-owned file must survive.
     assert!(tmp.path().join("CLAUDE.md").exists());
 }
+
+#[test]
+fn apply_skips_agent_when_disabled_in_config() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "Disabled agent test.").unwrap();
+    fs::write(
+        tmp.path().join(".imrule/imrule.toml"),
+        "[agents.claude]\nenabled = false\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "apply",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "claude",
+        ])
+        .assert()
+        .success();
+
+    assert!(!tmp.path().join("CLAUDE.md").exists());
+}
+
+#[test]
+fn apply_propagates_subagents_to_native_dirs() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule/agents")).unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "Subagent test.").unwrap();
+    fs::write(
+        tmp.path().join(".imrule/agents/coder.md"),
+        "---\nname: coder\ndescription: Helps with coding\n---\n\nCode assistant instructions.\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "apply",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "claude,cursor,codex,copilot",
+        ])
+        .assert()
+        .success();
+
+    assert!(tmp.path().join(".claude/agents/coder.md").exists());
+    assert!(tmp.path().join(".cursor/agents/coder.md").exists());
+    assert!(tmp.path().join(".codex/agents/coder.md").exists());
+    assert!(tmp.path().join(".github/agents/coder.md").exists());
+}
+
+#[test]
+fn clear_removes_managed_skills_from_agent_dirs() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule/skills/my-skill")).unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "Skills clear test.").unwrap();
+    fs::write(
+        tmp.path().join(".imrule/skills/my-skill/SKILL.md"),
+        "# My skill",
+    )
+    .unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "apply",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "claude",
+        ])
+        .assert()
+        .success();
+
+    assert!(tmp.path().join(".claude/skills/my-skill/SKILL.md").exists());
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "clear",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "claude",
+        ])
+        .assert()
+        .success();
+
+    assert!(!tmp.path().join(".claude/skills/my-skill").exists());
+    assert!(tmp.path().join(".imrule/skills/my-skill").exists());
+}
+
+#[test]
+fn clear_removes_imrule_mcp_keys_from_native_config() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
+    fs::create_dir_all(tmp.path().join(".cursor")).unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "MCP clear test.").unwrap();
+    fs::write(
+        tmp.path().join(".imrule/mcp.json"),
+        r#"{"mcpServers":{"imrule-tool":{"command":"node"}}}"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join(".cursor/mcp.json"),
+        r#"{"mcpServers":{"other-tool":{"command":"python"}}}"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "apply",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "cursor",
+        ])
+        .assert()
+        .success();
+
+    let after_apply: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(tmp.path().join(".cursor/mcp.json")).unwrap())
+            .unwrap();
+    assert!(after_apply["mcpServers"]["imrule-tool"].is_object());
+    assert!(after_apply["mcpServers"]["other-tool"].is_object());
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "clear",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "cursor",
+        ])
+        .assert()
+        .success();
+
+    let after_clear: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(tmp.path().join(".cursor/mcp.json")).unwrap())
+            .unwrap();
+    assert!(after_clear["mcpServers"].get("imrule-tool").is_none());
+    assert!(after_clear["mcpServers"]["other-tool"].is_object());
+}
+
+#[test]
+fn skills_list_shows_installed_skills() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule/skills/my-skill")).unwrap();
+    fs::write(
+        tmp.path().join(".imrule/skills/my-skill/SKILL.md"),
+        "# My skill",
+    )
+    .unwrap();
+
+    let output = Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "skills",
+            "list",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("my-skill"));
+}
+
+#[test]
+fn apply_errors_on_unknown_agent() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "Error test.").unwrap();
+
+    let output = Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "apply",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "nonexistent-agent",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+}
+
+#[test]
+fn apply_uses_global_imrule_dir_as_fallback() {
+    let xdg_home = tempdir().unwrap();
+    let project = tempdir().unwrap();
+
+    fs::create_dir_all(xdg_home.path().join("imrule")).unwrap();
+    fs::write(
+        xdg_home.path().join("imrule/AGENTS.md"),
+        "Global fallback rules.",
+    )
+    .unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", xdg_home.path())
+        .args([
+            "apply",
+            "--project-root",
+            project.path().to_str().unwrap(),
+            "--agents",
+            "claude",
+        ])
+        .assert()
+        .success();
+
+    let claude = fs::read_to_string(project.path().join("CLAUDE.md")).unwrap();
+    assert!(claude.contains("Global fallback rules."));
+}
