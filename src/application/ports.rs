@@ -7,6 +7,7 @@ use serde_json::Value;
 use crate::domain::agent::AgentDefinition;
 use crate::domain::config::{AgentConfig, LoadedConfig};
 use crate::domain::error::ImruleError;
+use crate::domain::skills::RemoteSkillSource;
 
 /// Loads and parses ImRule configuration.
 pub trait ConfigPort {
@@ -94,4 +95,11 @@ pub trait AgentWriterPort {
         backup: bool,
         dry_run: bool,
     ) -> Result<Option<PathBuf>, ImruleError>;
+}
+
+/// Fetches skill sources to a local directory.
+pub trait SkillFetcherPort {
+    /// Fetches a remote skill source to a temporary directory.
+    /// Returns the path to the directory containing skill files.
+    fn fetch_to_temp(&self, source: &RemoteSkillSource) -> Result<PathBuf, ImruleError>;
 }

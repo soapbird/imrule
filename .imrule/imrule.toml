@@ -1,0 +1,22 @@
+# ImRule Configuration File
+# See https://github.com/soapbird/imrule for documentation.
+
+# To specify which agents are active by default when --agents is not used,
+# uncomment and populate the following line. If omitted, all agents are active.
+default_agents = ["codex", "claude"]
+
+# Enable nested rule loading from nested .imrule directories
+# nested = false
+
+[gitignore]
+enabled = true
+# local = false
+
+# [agents.aider]
+# enabled = true
+# output_path_instructions = "AGENTS.md"
+# output_path_config = ".aider.conf.yml"
+
+# [mcp_servers.example_stdio]
+# command = "your-mcp-server"
+# args = ["--stdio"]

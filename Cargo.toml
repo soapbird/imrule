@@ -28,10 +28,10 @@ serde_norway = "0.9.42"
 toml = "0.8"
 anyhow = "1"
 thiserror = "1"
+tempfile = "3"
 
 [dev-dependencies]
 assert_cmd = "2"
-tempfile = "3"
 
 [package.metadata.imrule]
 release-channel = "native-rust"

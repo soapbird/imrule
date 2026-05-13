@@ -25,6 +25,54 @@ pub enum Command {
     Init(InitArgs),
     /// Revert imrule configurations from supported AI agents.
     Revert(RevertArgs),
+    /// Manage agent skills.
+    Skills(SkillsArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SkillsCommand {
+    /// Install skills from a remote repository or local path.
+    Add(SkillsAddArgs),
+    /// List installed skills.
+    #[command(alias = "ls")]
+    List(SkillsListArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SkillsArgs {
+    #[command(subcommand)]
+    pub command: SkillsCommand,
+}
+
+#[derive(Debug, Args)]
+pub struct SkillsAddArgs {
+    /// Skill source: org/repo, GitHub URL, GitLab URL, git SSH URL, or local path.
+    pub source: String,
+    /// Install specific skills by name (use '*' for all).
+    #[arg(long, short = 's', value_name = "NAME")]
+    pub skill: Option<Vec<String>>,
+    /// List available skills without installing.
+    #[arg(long, short = 'l', default_value_t = false)]
+    pub list: bool,
+    /// Install to global config directory instead of project.
+    #[arg(long, short = 'g', default_value_t = false)]
+    pub global: bool,
+    /// Project root directory.
+    #[arg(long = "project-root", value_name = "DIR")]
+    pub project_root: Option<PathBuf>,
+    /// Enable verbose logging.
+    #[arg(long, short = 'v', default_value_t = false)]
+    pub verbose: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct SkillsListArgs {
+    /// List global skills instead of project skills.
+    #[arg(long, short = 'g', default_value_t = false)]
+    pub global: bool,
+    /// Project root directory.
+    #[arg(long = "project-root", value_name = "DIR")]
+    pub project_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

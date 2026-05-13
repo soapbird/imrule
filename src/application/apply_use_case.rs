@@ -10,6 +10,8 @@ use crate::domain::config::{AgentConfig, LoadedConfig, McpStrategy};
 use crate::domain::error::ImruleError;
 use crate::domain::mcp::{filter_mcp_config_for_agent, merge_mcp};
 use crate::domain::rules::concatenate_rules;
+use crate::domain::skills::get_skills_gitignore_paths;
+use crate::infrastructure::skills::{copy_skills_directory, discover_skills};
 
 /// Runtime options for `imrule apply`.
 #[derive(Debug, Clone)]
@@ -24,6 +26,7 @@ pub struct ApplyOptions {
     pub dry_run: bool,
     pub local_only: bool,
     pub backup: bool,
+    pub skills: bool,
 }
 
 /// Apply use case orchestrating domain logic through ports.
@@ -103,6 +106,18 @@ impl<'a> ApplyUseCase<'a> {
             written_paths.extend(mcp_paths);
         }
 
+        let skills_enabled = options.skills
+            && config
+                .skills
+                .as_ref()
+                .and_then(|s| s.enabled)
+                .unwrap_or(true);
+        if skills_enabled {
+            let skills_paths =
+                self.apply_skills(&options.project_root, &selected_agents, options.dry_run)?;
+            written_paths.extend(skills_paths);
+        }
+
         let gitignore_enabled = options
             .gitignore
             .or_else(|| {
@@ -142,7 +157,10 @@ impl<'a> ApplyUseCase<'a> {
         config: &LoadedConfig,
         selected_agents: &[AgentDefinition],
     ) -> Result<Vec<PathBuf>, ImruleError> {
-        let Some(imrule_mcp) = self.mcp_port.read_imrule_mcp_config(&options.project_root)? else {
+        let Some(imrule_mcp) = self
+            .mcp_port
+            .read_imrule_mcp_config(&options.project_root)?
+        else {
             return Ok(Vec::new());
         };
         let strategy = if options.mcp_overwrite {
@@ -174,6 +192,90 @@ impl<'a> ApplyUseCase<'a> {
             self.mcp_port.write_native_mcp(&path, &merged)?;
             written.push(path);
         }
+        Ok(written)
+    }
+
+    fn apply_skills(
+        &self,
+        project_root: &Path,
+        selected_agents: &[AgentDefinition],
+        dry_run: bool,
+    ) -> Result<Vec<PathBuf>, ImruleError> {
+        let imrule_skills_dir = project_root.join(crate::domain::constants::IMRULE_SKILLS_PATH);
+        if !imrule_skills_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let discovery =
+            discover_skills(project_root).map_err(|e| ImruleError::skills(e.to_string()))?;
+        if discovery.skills.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let agent_skill_paths: &[(&str, &str)] = &[
+            ("claude", crate::domain::constants::CLAUDE_SKILLS_PATH),
+            ("copilot", crate::domain::constants::CLAUDE_SKILLS_PATH),
+            ("kilocode", crate::domain::constants::CLAUDE_SKILLS_PATH),
+            ("codex", crate::domain::constants::CODEX_SKILLS_PATH),
+            ("opencode", crate::domain::constants::OPENCODE_SKILLS_PATH),
+            ("pi", crate::domain::constants::PI_SKILLS_PATH),
+            ("goose", crate::domain::constants::GOOSE_SKILLS_PATH),
+            ("amp", crate::domain::constants::GOOSE_SKILLS_PATH),
+            ("mistral", crate::domain::constants::VIBE_SKILLS_PATH),
+            ("roo", crate::domain::constants::ROO_SKILLS_PATH),
+            ("gemini-cli", crate::domain::constants::GEMINI_SKILLS_PATH),
+            ("junie", crate::domain::constants::JUNIE_SKILLS_PATH),
+            ("cursor", crate::domain::constants::CURSOR_SKILLS_PATH),
+            ("windsurf", crate::domain::constants::WINDSURF_SKILLS_PATH),
+            ("factory", crate::domain::constants::FACTORY_SKILLS_PATH),
+            (
+                "antigravity",
+                crate::domain::constants::ANTIGRAVITY_SKILLS_PATH,
+            ),
+        ];
+
+        let mut written = Vec::new();
+        let mut seen_targets = std::collections::BTreeSet::new();
+
+        for agent in selected_agents {
+            if !agent.capabilities.native_skills {
+                continue;
+            }
+            let Some(&target_rel) = agent_skill_paths
+                .iter()
+                .find(|(id, _)| id == &agent.identifier)
+                .map(|(_, path)| path)
+            else {
+                continue;
+            };
+
+            let target_dir = project_root.join(target_rel);
+            let target_key = target_dir.to_string_lossy().to_string();
+            if seen_targets.contains(&target_key) {
+                continue;
+            }
+            seen_targets.insert(target_key.clone());
+
+            if dry_run {
+                written.push(target_dir);
+                continue;
+            }
+
+            for skill in &discovery.skills {
+                let dest = target_dir.join(&skill.name);
+                copy_skills_directory(&skill.path, &dest)
+                    .map_err(|e| ImruleError::skills(e.to_string()))?;
+            }
+            written.push(target_dir);
+        }
+
+        let gitignore_skill_paths = get_skills_gitignore_paths(project_root, selected_agents);
+        for path in gitignore_skill_paths {
+            if !written.contains(&path) {
+                written.push(path);
+            }
+        }
+
         Ok(written)
     }
 }

@@ -6,6 +6,126 @@ use std::path::{Path, PathBuf};
 use crate::domain::agent::AgentDefinition;
 use crate::domain::config::SkillInfo;
 use crate::domain::constants::*;
+use crate::domain::error::ImruleError;
+
+/// Parsed source for skill installation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteSkillSource {
+    Github {
+        owner: String,
+        repo: String,
+        subpath: Option<String>,
+    },
+    Gitlab {
+        url: String,
+    },
+    GitSsh {
+        url: String,
+    },
+    Local {
+        path: PathBuf,
+    },
+}
+
+/// Parses a skill source string into a `RemoteSkillSource`.
+///
+/// Supported formats:
+/// - `org/repo` shorthand
+/// - `https://github.com/org/repo`
+/// - `https://github.com/org/repo/tree/<branch>/<path>`
+/// - `https://gitlab.com/org/repo`
+/// - `git@github.com:org/repo.git`
+/// - `./local/path` or `/abs/path`
+pub fn parse_skill_source(source: &str) -> Result<RemoteSkillSource, ImruleError> {
+    let trimmed = source.trim();
+
+    // Local path: starts with . or / or has a path separator on non-URL
+    if trimmed.starts_with("./")
+        || trimmed.starts_with('/')
+        || trimmed.starts_with("../")
+        || (Path::new(trimmed).exists() && !trimmed.contains("://"))
+    {
+        let path = PathBuf::from(trimmed);
+        return Ok(RemoteSkillSource::Local {
+            path: if path.is_absolute() {
+                path
+            } else {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join(path)
+            },
+        });
+    }
+
+    // Git SSH: git@host:org/repo.git
+    if trimmed.starts_with("git@") {
+        return Ok(RemoteSkillSource::GitSsh {
+            url: trimmed.to_string(),
+        });
+    }
+
+    // GitHub URL: https://github.com/org/repo or https://github.com/org/repo/tree/branch/path
+    if trimmed.starts_with("https://github.com/") {
+        let rest = trimmed.strip_prefix("https://github.com/").unwrap_or("");
+        let parts: Vec<&str> = rest.splitn(2, '/').collect();
+        if parts.len() < 2 || parts[0].is_empty() || parts[1].is_empty() {
+            return Err(ImruleError::skills(format!("invalid GitHub URL: {source}")));
+        }
+        let owner = parts[0].to_string();
+        let remainder = parts[1];
+
+        // Check for /tree/<branch>/<subpath>
+        let subpath = if let Some(tree_idx) = remainder.find("/tree/") {
+            let after_tree = &remainder[tree_idx + "/tree/".len()..];
+            // Skip the branch name (first segment after /tree/)
+            after_tree
+                .find('/')
+                .map(|slash_idx| after_tree[slash_idx + 1..].to_string())
+        } else {
+            None
+        };
+
+        // Repo name: strip .git suffix and /tree/... suffix
+        let repo = remainder
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .trim_end_matches(".git")
+            .to_string();
+
+        if repo.is_empty() {
+            return Err(ImruleError::skills(format!("invalid GitHub URL: {source}")));
+        }
+
+        return Ok(RemoteSkillSource::Github {
+            owner,
+            repo,
+            subpath,
+        });
+    }
+
+    // GitLab URL
+    if trimmed.starts_with("https://gitlab.com/") {
+        return Ok(RemoteSkillSource::Gitlab {
+            url: trimmed.to_string(),
+        });
+    }
+
+    // org/repo shorthand: must be exactly two segments with no path separators
+    let parts: Vec<&str> = trimmed.split('/').collect();
+    if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+        let repo = parts[1].trim_end_matches(".git").to_string();
+        return Ok(RemoteSkillSource::Github {
+            owner: parts[0].to_string(),
+            repo,
+            subpath: None,
+        });
+    }
+
+    Err(ImruleError::skills(format!(
+        "unrecognized skill source format: {source}"
+    )))
+}
 
 /// Skills discovery result.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

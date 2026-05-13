@@ -4,7 +4,9 @@ use imrule::application::apply_use_case::get_agent_output_paths;
 use imrule::application::ports::FileSystemPort;
 use imrule::domain::agent::all_agents;
 use imrule::domain::config::SubagentFrontmatter;
-use imrule::domain::skills::{format_validation_warnings, get_skills_gitignore_paths};
+use imrule::domain::skills::{
+    format_validation_warnings, get_skills_gitignore_paths, parse_skill_source, RemoteSkillSource,
+};
 use imrule::domain::subagent::{
     build_claude_file, build_codex_file, build_copilot_file, build_cursor_file,
     map_tools_for_copilot, parse_frontmatter, validate_frontmatter,
@@ -206,4 +208,270 @@ fn apply_path_collection_and_revert_file_operations_match_contract() {
     assert_eq!(fs::read_to_string(&file).unwrap(), "backup");
     fs.remove_file(&root.join("RULES.md.bak")).unwrap();
     assert!(!root.join("RULES.md.bak").exists());
+}
+
+#[test]
+fn parses_github_shorthand_source() {
+    let source = parse_skill_source("vercel-labs/agent-skills").unwrap();
+    assert_eq!(
+        source,
+        RemoteSkillSource::Github {
+            owner: "vercel-labs".into(),
+            repo: "agent-skills".into(),
+            subpath: None,
+        }
+    );
+}
+
+#[test]
+fn parses_github_url_source() {
+    let source = parse_skill_source("https://github.com/vercel-labs/agent-skills").unwrap();
+    assert_eq!(
+        source,
+        RemoteSkillSource::Github {
+            owner: "vercel-labs".into(),
+            repo: "agent-skills".into(),
+            subpath: None,
+        }
+    );
+}
+
+#[test]
+fn parses_github_url_with_subpath_source() {
+    let source =
+        parse_skill_source("https://github.com/vercel-labs/agent-skills/tree/main/skills/design")
+            .unwrap();
+    assert_eq!(
+        source,
+        RemoteSkillSource::Github {
+            owner: "vercel-labs".into(),
+            repo: "agent-skills".into(),
+            subpath: Some("skills/design".into()),
+        }
+    );
+}
+
+#[test]
+fn parses_gitlab_url_source() {
+    let source = parse_skill_source("https://gitlab.com/org/repo").unwrap();
+    assert_eq!(
+        source,
+        RemoteSkillSource::Gitlab {
+            url: "https://gitlab.com/org/repo".into(),
+        }
+    );
+}
+
+#[test]
+fn parses_git_ssh_source() {
+    let source = parse_skill_source("git@github.com:vercel-labs/agent-skills.git").unwrap();
+    assert_eq!(
+        source,
+        RemoteSkillSource::GitSsh {
+            url: "git@github.com:vercel-labs/agent-skills.git".into(),
+        }
+    );
+}
+
+#[test]
+fn parses_local_path_source() {
+    let tmp = tempdir().unwrap();
+    let local_path = tmp.path().join("my-skills");
+    fs::create_dir_all(&local_path).unwrap();
+    let source = parse_skill_source(local_path.to_str().unwrap()).unwrap();
+    match source {
+        RemoteSkillSource::Local { path } => {
+            assert_eq!(path, local_path);
+        }
+        _ => panic!("expected Local variant"),
+    }
+}
+
+#[test]
+fn parses_relative_path_source() {
+    let source = parse_skill_source("./my-skills").unwrap();
+    match source {
+        RemoteSkillSource::Local { path } => {
+            assert!(path.is_absolute());
+            assert!(path.to_string_lossy().contains("my-skills"));
+        }
+        _ => panic!("expected Local variant"),
+    }
+}
+
+#[test]
+fn rejects_invalid_source() {
+    assert!(parse_skill_source("invalid-no-slash").is_err());
+}
+
+#[test]
+fn installs_skills_from_local_source_to_imrule_skills_dir() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+
+    // Set up a local source with a skill.
+    let source_dir = root.join("source-repo");
+    let skill_dir = source_dir.join("my-skill");
+    fs::create_dir_all(&skill_dir).unwrap();
+    fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: my-skill\ndescription: Test\n---\n# My Skill\n",
+    )
+    .unwrap();
+
+    // Set up .imrule directory.
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(root.join(".imrule/AGENTS.md"), "# Rules\n").unwrap();
+
+    // Create a simple fetcher that returns the local path.
+    struct LocalFetcher;
+    impl imrule::application::ports::SkillFetcherPort for LocalFetcher {
+        fn fetch_to_temp(
+            &self,
+            source: &RemoteSkillSource,
+        ) -> Result<std::path::PathBuf, imrule::domain::error::ImruleError> {
+            match source {
+                RemoteSkillSource::Local { path } => Ok(path.clone()),
+                _ => panic!("expected local source"),
+            }
+        }
+    }
+
+    let fs_port = FsFileSystem::new();
+    let fetcher = LocalFetcher;
+    let use_case =
+        imrule::application::skills_add_use_case::SkillsAddUseCase::new(&fetcher, &fs_port);
+
+    let result = use_case
+        .execute(imrule::application::skills_add_use_case::SkillsAddOptions {
+            project_root: root.to_path_buf(),
+            source: source_dir.to_string_lossy().to_string(),
+            skill_names: None,
+            list_only: false,
+            global: false,
+            verbose: false,
+        })
+        .unwrap();
+
+    assert_eq!(result.installed, vec!["my-skill"]);
+    assert!(root.join(".imrule/skills/my-skill/SKILL.md").exists());
+    assert_eq!(
+        fs::read_to_string(root.join(".imrule/skills/my-skill/SKILL.md")).unwrap(),
+        "---\nname: my-skill\ndescription: Test\n---\n# My Skill\n"
+    );
+}
+
+#[test]
+fn lists_skills_without_installing() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+
+    let source_dir = root.join("source-repo");
+    let skill_a = source_dir.join("skill-a");
+    let skill_b = source_dir.join("skill-b");
+    fs::create_dir_all(&skill_a).unwrap();
+    fs::create_dir_all(&skill_b).unwrap();
+    fs::write(
+        skill_a.join("SKILL.md"),
+        "---\nname: skill-a\ndescription: A\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        skill_b.join("SKILL.md"),
+        "---\nname: skill-b\ndescription: B\n---\n",
+    )
+    .unwrap();
+
+    struct LocalFetcher;
+    impl imrule::application::ports::SkillFetcherPort for LocalFetcher {
+        fn fetch_to_temp(
+            &self,
+            source: &RemoteSkillSource,
+        ) -> Result<std::path::PathBuf, imrule::domain::error::ImruleError> {
+            match source {
+                RemoteSkillSource::Local { path } => Ok(path.clone()),
+                _ => panic!("expected local source"),
+            }
+        }
+    }
+
+    let fs_port = FsFileSystem::new();
+    let fetcher = LocalFetcher;
+    let use_case =
+        imrule::application::skills_add_use_case::SkillsAddUseCase::new(&fetcher, &fs_port);
+
+    let result = use_case
+        .execute(imrule::application::skills_add_use_case::SkillsAddOptions {
+            project_root: root.to_path_buf(),
+            source: source_dir.to_string_lossy().to_string(),
+            skill_names: None,
+            list_only: true,
+            global: false,
+            verbose: false,
+        })
+        .unwrap();
+
+    assert!(result.installed.is_empty());
+    assert_eq!(result.listed.len(), 2);
+    let names: Vec<_> = result.listed.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"skill-a"));
+    assert!(names.contains(&"skill-b"));
+}
+
+#[test]
+fn filters_skills_by_name_when_adding() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+
+    let source_dir = root.join("source-repo");
+    let skill_a = source_dir.join("skill-a");
+    let skill_b = source_dir.join("skill-b");
+    fs::create_dir_all(&skill_a).unwrap();
+    fs::create_dir_all(&skill_b).unwrap();
+    fs::write(
+        skill_a.join("SKILL.md"),
+        "---\nname: skill-a\ndescription: A\n---\n",
+    )
+    .unwrap();
+    fs::write(
+        skill_b.join("SKILL.md"),
+        "---\nname: skill-b\ndescription: B\n---\n",
+    )
+    .unwrap();
+
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(root.join(".imrule/AGENTS.md"), "# Rules\n").unwrap();
+
+    struct LocalFetcher;
+    impl imrule::application::ports::SkillFetcherPort for LocalFetcher {
+        fn fetch_to_temp(
+            &self,
+            source: &RemoteSkillSource,
+        ) -> Result<std::path::PathBuf, imrule::domain::error::ImruleError> {
+            match source {
+                RemoteSkillSource::Local { path } => Ok(path.clone()),
+                _ => panic!("expected local source"),
+            }
+        }
+    }
+
+    let fs_port = FsFileSystem::new();
+    let fetcher = LocalFetcher;
+    let use_case =
+        imrule::application::skills_add_use_case::SkillsAddUseCase::new(&fetcher, &fs_port);
+
+    let result = use_case
+        .execute(imrule::application::skills_add_use_case::SkillsAddOptions {
+            project_root: root.to_path_buf(),
+            source: source_dir.to_string_lossy().to_string(),
+            skill_names: Some(vec!["skill-a".into()]),
+            list_only: false,
+            global: false,
+            verbose: false,
+        })
+        .unwrap();
+
+    assert_eq!(result.installed, vec!["skill-a"]);
+    assert!(root.join(".imrule/skills/skill-a/SKILL.md").exists());
+    assert!(!root.join(".imrule/skills/skill-b").exists());
 }

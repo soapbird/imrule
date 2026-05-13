@@ -103,24 +103,38 @@ imrule revert --keep-backups              # keep .bak files
 
 ## Supported Agents
 
-| Identifier | Agent | Identifier | Agent |
-|---|---|---|---|
-| `agentsmd` | AgentsMd | `copilot` | GitHub Copilot |
-| `claude` | Claude Code | `codex` | OpenAI Codex CLI |
-| `cursor` | Cursor | `windsurf` | Windsurf |
-| `cline` | Cline | `aider` | Aider |
-| `firebase` | Firebase Studio | `openhands` | Open Hands |
-| `gemini-cli` | Gemini CLI | `jules` | Jules |
-| `junie` | Junie | `augmentcode` | AugmentCode |
-| `kilocode` | Kilo Code | `opencode` | OpenCode |
-| `goose` | Goose | `crush` | Crush |
-| `amp` | Amp | `zed` | Zed |
-| `qwen` | Qwen Code | `kiro` | Kiro |
-| `warp` | Warp | `roo` | RooCode |
-| `trae` | Trae AI | `amazonqcli` | Amazon Q CLI |
-| `firebender` | Firebender | `factory` | Factory Droid |
-| `antigravity` | Antigravity | `mistral` | Mistral |
-| `pi` | Pi Coding Agent | `jetbrains-ai` | JetBrains AI Assistant |
+- `agentsmd`: AgentsMd
+- `copilot`: GitHub Copilot
+- `claude`: Claude Code
+- `codex`: OpenAI Codex CLI
+- `cursor`: Cursor
+- `windsurf`: Windsurf
+- `cline`: Cline
+- `aider`: Aider
+- `firebase`: Firebase Studio
+- `openhands`: Open Hands
+- `gemini-cli`: Gemini CLI
+- `jules`: Jules
+- `junie`: Junie
+- `augmentcode`: AugmentCode
+- `kilocode`: Kilo Code
+- `opencode`: OpenCode
+- `goose`: Goose
+- `crush`: Crush
+- `amp`: Amp
+- `zed`: Zed
+- `qwen`: Qwen Code
+- `kiro`: Kiro
+- `warp`: Warp
+- `roo`: RooCode
+- `trae`: Trae AI
+- `amazonqcli`: Amazon Q CLI
+- `firebender`: Firebender
+- `factory`: Factory Droid
+- `antigravity`: Antigravity
+- `mistral`: Mistral
+- `pi`: Pi Coding Agent
+- `jetbrains-ai`: JetBrains AI Assistant
 
 ## Configuration
 
