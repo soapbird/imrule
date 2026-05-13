@@ -12,7 +12,7 @@ use crate::domain::config::{
     AgentConfig, GitignoreConfig, LoadedConfig, McpConfig, McpStrategy, SkillsConfig,
     SubagentsConfig,
 };
-use crate::domain::constants::xdg_config_home;
+use crate::domain::constants::{xdg_config_home, LEGACY_CONFIG_FILENAME, LEGACY_DIR_NAME};
 use crate::domain::error::ImruleError;
 
 const SUBAGENT_RESERVED_KEYS: &[&str] = &["enabled", "include_in_rules"];
@@ -183,10 +183,17 @@ fn resolve_config_file(project_root: &Path, config_path: Option<&Path>) -> PathB
     } else {
         let local = project_root.join(".imrule/imrule.toml");
         if local.exists() {
-            local
-        } else {
-            xdg_config_home().join("imrule/imrule.toml")
+            return local;
         }
+        let legacy_toml = project_root.join(format!("{LEGACY_DIR_NAME}/{LEGACY_CONFIG_FILENAME}"));
+        if legacy_toml.exists() {
+            return legacy_toml;
+        }
+        let legacy_imrule = project_root.join(format!("{LEGACY_DIR_NAME}/imrule.toml"));
+        if legacy_imrule.exists() {
+            return legacy_imrule;
+        }
+        xdg_config_home().join("imrule/imrule.toml")
     }
 }
 

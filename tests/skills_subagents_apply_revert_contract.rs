@@ -36,8 +36,8 @@ fn discovers_skills_groupings_warnings_copies_and_gitignore_targets() {
         .map(|skill| skill.name.as_str())
         .collect();
     assert_eq!(names, vec!["nested", "solo"]);
-    assert_eq!(discovered.warnings, vec!["Directory 'stray' in .imrule/skills has no SKILL.md and contains no sub-skills. It may be malformed or stray."]);
-    assert_eq!(format_validation_warnings(&discovered.warnings), "  - Directory 'stray' in .imrule/skills has no SKILL.md and contains no sub-skills. It may be malformed or stray.");
+    assert_eq!(discovered.warnings, vec!["Directory 'stray' in skills has no SKILL.md and contains no sub-skills. It may be malformed or stray."]);
+    assert_eq!(format_validation_warnings(&discovered.warnings), "  - Directory 'stray' in skills has no SKILL.md and contains no sub-skills. It may be malformed or stray.");
 
     copy_skills_directory(&root.join(".imrule/skills"), &root.join(".claude/skills")).unwrap();
     assert_eq!(
@@ -474,4 +474,70 @@ fn filters_skills_by_name_when_adding() {
     assert_eq!(result.installed, vec!["skill-a"]);
     assert!(root.join(".imrule/skills/skill-a/SKILL.md").exists());
     assert!(!root.join(".imrule/skills/skill-b").exists());
+}
+
+// --- Legacy .ruler/ fallback tests ---
+
+#[test]
+fn discover_skills_falls_back_to_ruler_dir() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".ruler/skills/demo")).unwrap();
+    fs::write(root.join(".ruler/skills/demo/SKILL.md"), "legacy skill").unwrap();
+
+    let discovered = discover_skills(root).unwrap();
+    assert_eq!(discovered.skills.len(), 1);
+    assert_eq!(discovered.skills[0].name, "demo");
+}
+
+#[test]
+fn discover_skills_prefers_imrule_over_ruler() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule/skills/primary")).unwrap();
+    fs::create_dir_all(root.join(".ruler/skills/legacy")).unwrap();
+    fs::write(root.join(".imrule/skills/primary/SKILL.md"), "new").unwrap();
+    fs::write(root.join(".ruler/skills/legacy/SKILL.md"), "old").unwrap();
+
+    let discovered = discover_skills(root).unwrap();
+    assert_eq!(discovered.skills.len(), 1);
+    assert_eq!(discovered.skills[0].name, "primary");
+}
+
+#[test]
+fn discover_subagents_falls_back_to_ruler_dir() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".ruler/agents")).unwrap();
+    fs::write(
+        root.join(".ruler/agents/worker.md"),
+        "---\nname: worker\nmodel: inherit\ndescription: test worker\n---\nDo work.\n",
+    )
+    .unwrap();
+
+    let discovered = discover_subagents(root).unwrap();
+    assert_eq!(discovered.subagents.len(), 1);
+    assert_eq!(discovered.subagents[0].name, "worker");
+}
+
+#[test]
+fn discover_subagents_prefers_imrule_over_ruler() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule/agents")).unwrap();
+    fs::create_dir_all(root.join(".ruler/agents")).unwrap();
+    fs::write(
+        root.join(".imrule/agents/primary.md"),
+        "---\nname: primary\nmodel: inherit\ndescription: primary\n---\nPrimary.\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".ruler/agents/legacy.md"),
+        "---\nname: legacy\nmodel: inherit\ndescription: legacy\n---\nLegacy.\n",
+    )
+    .unwrap();
+
+    let discovered = discover_subagents(root).unwrap();
+    assert_eq!(discovered.subagents.len(), 1);
+    assert_eq!(discovered.subagents[0].name, "primary");
 }

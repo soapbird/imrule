@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 
 use crate::application::ports::McpPort;
+use crate::domain::constants::LEGACY_DIR_NAME;
 use crate::domain::error::ImruleError;
 
 pub struct JsonMcpStorage;
@@ -25,22 +26,38 @@ impl Default for JsonMcpStorage {
 impl McpPort for JsonMcpStorage {
     fn read_imrule_mcp_config(&self, project_root: &Path) -> Result<Option<Value>, ImruleError> {
         let path = project_root.join(".imrule/mcp.json");
-        if !path.exists() {
-            return Ok(None);
+        if path.exists() {
+            let text = fs::read_to_string(&path).map_err(|e| {
+                ImruleError::mcp(format!(
+                    "could not read MCP config at {}: {e}",
+                    path.display()
+                ))
+            })?;
+            let parsed = serde_json::from_str(&text).map_err(|e| {
+                ImruleError::mcp(format!(
+                    "could not parse MCP config at {}: {e}",
+                    path.display()
+                ))
+            })?;
+            return Ok(Some(parsed));
         }
-        let text = fs::read_to_string(&path).map_err(|e| {
-            ImruleError::mcp(format!(
-                "could not read MCP config at {}: {e}",
-                path.display()
-            ))
-        })?;
-        let parsed = serde_json::from_str(&text).map_err(|e| {
-            ImruleError::mcp(format!(
-                "could not parse MCP config at {}: {e}",
-                path.display()
-            ))
-        })?;
-        Ok(Some(parsed))
+        let legacy_path = project_root.join(format!("{LEGACY_DIR_NAME}/mcp.json"));
+        if legacy_path.exists() {
+            let text = fs::read_to_string(&legacy_path).map_err(|e| {
+                ImruleError::mcp(format!(
+                    "could not read MCP config at {}: {e}",
+                    legacy_path.display()
+                ))
+            })?;
+            let parsed = serde_json::from_str(&text).map_err(|e| {
+                ImruleError::mcp(format!(
+                    "could not parse MCP config at {}: {e}",
+                    legacy_path.display()
+                ))
+            })?;
+            return Ok(Some(parsed));
+        }
+        Ok(None)
     }
 
     fn read_native_mcp(&self, file_path: &Path) -> Result<Value, ImruleError> {

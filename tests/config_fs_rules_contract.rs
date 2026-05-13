@@ -228,3 +228,163 @@ fn write_generated_file_creates_parent_directories() {
 
     assert_eq!(fs::read_to_string(target).unwrap(), "generated");
 }
+
+// --- Legacy .ruler/ fallback tests ---
+
+#[test]
+fn find_imrule_dir_falls_back_to_ruler_dir() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".ruler")).unwrap();
+    fs::write(root.join(".ruler/AGENTS.md"), "legacy rules").unwrap();
+
+    let fs = FsFileSystem::new();
+    let found = fs.find_imrule_dir(root, false);
+    assert_eq!(found, Some(root.join(".ruler")));
+}
+
+#[test]
+fn find_imrule_dir_prefers_imrule_over_ruler() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::create_dir_all(root.join(".ruler")).unwrap();
+
+    let fs = FsFileSystem::new();
+    let found = fs.find_imrule_dir(root, false);
+    assert_eq!(found, Some(root.join(".imrule")));
+}
+
+#[test]
+fn read_markdown_files_works_with_ruler_dir() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    let ruler_dir = root.join(".ruler");
+    fs::create_dir_all(&ruler_dir).unwrap();
+    fs::write(ruler_dir.join("AGENTS.md"), "legacy primary").unwrap();
+    fs::write(ruler_dir.join("extra.md"), "legacy extra").unwrap();
+
+    let fs = FsFileSystem::new();
+    let files = fs.read_markdown_files(&ruler_dir, false).unwrap();
+    let rels: Vec<_> = files
+        .iter()
+        .map(|(path, _)| {
+            path.strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect();
+
+    assert_eq!(rels, vec![".ruler/AGENTS.md", ".ruler/extra.md"]);
+}
+
+#[test]
+fn load_config_falls_back_to_ruler_toml() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".ruler")).unwrap();
+    fs::write(
+        root.join(".ruler/ruler.toml"),
+        r#"
+default_agents = ["claude"]
+
+[mcp]
+enabled = false
+"#,
+    )
+    .unwrap();
+
+    let loader = TomlConfigLoader::new();
+    let loaded = loader.load_config(root, None, None).unwrap();
+    assert_eq!(loaded.default_agents.unwrap(), vec!["claude"]);
+    assert_eq!(loaded.mcp.unwrap().enabled, Some(false));
+}
+
+#[test]
+fn load_config_falls_back_to_ruler_dir_with_imrule_toml() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".ruler")).unwrap();
+    fs::write(
+        root.join(".ruler/imrule.toml"),
+        r#"
+default_agents = ["copilot"]
+"#,
+    )
+    .unwrap();
+
+    let loader = TomlConfigLoader::new();
+    let loaded = loader.load_config(root, None, None).unwrap();
+    assert_eq!(loaded.default_agents.unwrap(), vec!["copilot"]);
+}
+
+#[test]
+fn load_config_prefers_imrule_toml_over_ruler_toml() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::create_dir_all(root.join(".ruler")).unwrap();
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        r#"default_agents = ["claude"]"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join(".ruler/ruler.toml"),
+        r#"default_agents = ["copilot"]"#,
+    )
+    .unwrap();
+
+    let loader = TomlConfigLoader::new();
+    let loaded = loader.load_config(root, None, None).unwrap();
+    assert_eq!(loaded.default_agents.unwrap(), vec!["claude"]);
+}
+
+#[test]
+fn update_gitignore_filters_ruler_input_paths() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path().join("proj");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join(".gitignore"), "").unwrap();
+
+    let gitignore = GitignoreUpdater::new();
+    gitignore
+        .update_gitignore(
+            &root,
+            &[
+                PathBuf::from(".ruler/AGENTS.md"),
+                PathBuf::from(".ruler/rules.md"),
+                PathBuf::from("CLAUDE.md"),
+            ],
+            ".gitignore",
+        )
+        .unwrap();
+
+    let content = fs::read_to_string(root.join(".gitignore")).unwrap();
+    assert!(!content.contains(".ruler/"));
+    assert!(content.contains("/CLAUDE.md"));
+}
+
+#[test]
+fn find_all_imrule_dirs_discovers_ruler_dirs() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".ruler")).unwrap();
+    fs::create_dir_all(root.join("subdir/.imrule")).unwrap();
+
+    let fs = FsFileSystem::new();
+    let found = fs.find_all_imrule_dirs(root);
+    let rels: Vec<_> = found
+        .iter()
+        .map(|p| {
+            p.strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect();
+
+    assert!(rels.contains(&".ruler".to_string()));
+    assert!(rels.contains(&"subdir/.imrule".to_string()));
+}

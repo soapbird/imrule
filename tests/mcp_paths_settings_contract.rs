@@ -194,3 +194,47 @@ fn vscode_augment_settings_transform_and_merge_match_native_contract() {
         std::path::PathBuf::from("/project/.vscode/settings.json")
     );
 }
+
+#[test]
+fn read_imrule_mcp_config_falls_back_to_ruler_dir() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".ruler")).unwrap();
+    fs::write(
+        root.join(".ruler/mcp.json"),
+        r#"{"mcpServers":{"demo":{"command":"node","args":["demo.js"]}}}"#,
+    )
+    .unwrap();
+
+    let mcp = JsonMcpStorage::new();
+    let config = mcp.read_imrule_mcp_config(root).unwrap();
+    assert!(config.is_some());
+    let config = config.unwrap();
+    assert_eq!(
+        config["mcpServers"]["demo"]["command"],
+        serde_json::Value::String("node".to_string())
+    );
+}
+
+#[test]
+fn read_imrule_mcp_config_prefers_imrule_over_ruler() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::create_dir_all(root.join(".ruler")).unwrap();
+    fs::write(
+        root.join(".imrule/mcp.json"),
+        r#"{"mcpServers":{"primary":{"command":"imrule"}}}"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join(".ruler/mcp.json"),
+        r#"{"mcpServers":{"legacy":{"command":"ruler"}}}"#,
+    )
+    .unwrap();
+
+    let mcp = JsonMcpStorage::new();
+    let config = mcp.read_imrule_mcp_config(root).unwrap().unwrap();
+    assert!(config["mcpServers"].get("primary").is_some());
+    assert!(config["mcpServers"].get("legacy").is_none());
+}

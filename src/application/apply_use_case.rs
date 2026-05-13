@@ -68,7 +68,7 @@ impl<'a> ApplyUseCase<'a> {
             .find_imrule_dir(&options.project_root, !options.local_only)
             .ok_or_else(|| {
                 ImruleError::rules(format!(
-                    "could not find .imrule directory from {}",
+                    "could not find .imrule or .ruler directory from {}",
                     options.project_root.display()
                 ))
             })?;
@@ -202,7 +202,8 @@ impl<'a> ApplyUseCase<'a> {
         dry_run: bool,
     ) -> Result<Vec<PathBuf>, ImruleError> {
         let imrule_skills_dir = project_root.join(crate::domain::constants::IMRULE_SKILLS_PATH);
-        if !imrule_skills_dir.exists() {
+        let legacy_skills_dir = project_root.join(crate::domain::constants::LEGACY_SKILLS_PATH);
+        if !imrule_skills_dir.exists() && !legacy_skills_dir.exists() {
             return Ok(Vec::new());
         }
 

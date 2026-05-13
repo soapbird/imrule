@@ -166,12 +166,18 @@ fn run_inner() -> Result<(), CliError> {
                 let project_root = args
                     .project_root
                     .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+                let imrule_skills = project_root.join(".imrule").join("skills");
+                let legacy_skills = project_root.join(".ruler").join("skills");
                 let skills_dir = if args.global {
                     crate::domain::constants::xdg_config_home()
                         .join("imrule")
                         .join("skills")
+                } else if imrule_skills.exists() {
+                    imrule_skills
+                } else if legacy_skills.exists() {
+                    legacy_skills
                 } else {
-                    project_root.join(".imrule").join("skills")
+                    imrule_skills
                 };
                 let discovery = discover_skills(&if args.global {
                     crate::domain::constants::xdg_config_home().join("imrule")

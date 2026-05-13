@@ -29,6 +29,12 @@ pub const FACTORY_SKILLS_PATH: &str = ".factory/skills";
 pub const ANTIGRAVITY_SKILLS_PATH: &str = ".agent/skills";
 pub const SKILL_MD_FILENAME: &str = "SKILL.md";
 
+/// Legacy directory name from the pre-rebrand era (ruler → imrule).
+pub const LEGACY_DIR_NAME: &str = ".ruler";
+pub const LEGACY_CONFIG_FILENAME: &str = "ruler.toml";
+pub const LEGACY_SKILLS_PATH: &str = ".ruler/skills";
+pub const LEGACY_SUBAGENTS_PATH: &str = ".ruler/agents";
+
 pub const IMRULE_SUBAGENTS_PATH: &str = ".imrule/agents";
 pub const CLAUDE_SUBAGENTS_PATH: &str = ".claude/agents";
 pub const CURSOR_SUBAGENTS_PATH: &str = ".cursor/agents";

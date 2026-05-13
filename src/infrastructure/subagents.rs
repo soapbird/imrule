@@ -51,12 +51,20 @@ pub fn load_subagent_file(file_path: &Path) -> io::Result<SubagentInfo> {
     }
 }
 
-/// Discovers valid subagents from `.imrule/agents`.
+/// Discovers valid subagents from `.imrule/agents` (falls back to `.ruler/agents`).
 pub fn discover_subagents(project_root: &Path) -> io::Result<SubagentsDiscovery> {
     let dir = project_root.join(IMRULE_SUBAGENTS_PATH);
-    if !dir.exists() {
-        return Ok(SubagentsDiscovery::default());
+    if dir.exists() {
+        return discover_subagents_from_dir(&dir);
     }
+    let legacy_dir = project_root.join(LEGACY_SUBAGENTS_PATH);
+    if legacy_dir.exists() {
+        return discover_subagents_from_dir(&legacy_dir);
+    }
+    Ok(SubagentsDiscovery::default())
+}
+
+fn discover_subagents_from_dir(dir: &Path) -> io::Result<SubagentsDiscovery> {
     let mut entries: Vec<_> = fs::read_dir(dir)?.collect::<Result<_, _>>()?;
     entries.sort_by_key(|entry| entry.path());
     let mut result = SubagentsDiscovery::default();
@@ -79,7 +87,9 @@ pub fn get_subagents_gitignore_paths(
     project_root: &Path,
     agents: &[AgentDefinition],
 ) -> io::Result<Vec<PathBuf>> {
-    if !project_root.join(IMRULE_SUBAGENTS_PATH).exists() {
+    if !project_root.join(IMRULE_SUBAGENTS_PATH).exists()
+        && !project_root.join(LEGACY_SUBAGENTS_PATH).exists()
+    {
         return Ok(Vec::new());
     }
     let selected: std::collections::BTreeSet<_> = agents

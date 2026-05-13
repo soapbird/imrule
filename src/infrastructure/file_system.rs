@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 
 use crate::application::ports::FileSystemPort;
 use crate::domain::constants::{
-    normalize_path_separators, xdg_config_home, GENERATED_BY_IMRULE_MARKER, SKILLS_DIR,
+    normalize_path_separators, xdg_config_home, GENERATED_BY_IMRULE_MARKER, LEGACY_DIR_NAME,
+    SKILLS_DIR,
 };
 use crate::domain::error::ImruleError;
 const SUBAGENTS_DIR_NAME: &str = "agents";
@@ -75,6 +76,14 @@ impl FileSystemPort for FsFileSystem {
             if candidate.is_dir() {
                 return Some(candidate);
             }
+            let legacy = current.join(LEGACY_DIR_NAME);
+            if legacy.is_dir() {
+                eprintln!(
+                    "[imrule] Warning: using legacy '{LEGACY_DIR_NAME}/' directory. \
+                     Run 'imrule init' to create '.imrule/' and migrate."
+                );
+                return Some(legacy);
+            }
             if !current.pop() {
                 break;
             }
@@ -139,7 +148,8 @@ impl FileSystemPort for FsFileSystem {
                 let is_generated = content.starts_with(GENERATED_BY_IMRULE_MARKER);
                 let has_imrule_files = !ordered.is_empty() || saw_excluded_agents;
                 let contains_imrule_sources = content.contains("<!-- Source: .imrule/")
-                    || content.contains("<!-- Source: imrule/");
+                    || content.contains("<!-- Source: imrule/")
+                    || content.contains("<!-- Source: .ruler/");
                 let is_probably_generated =
                     is_generated || (contains_imrule_sources && has_imrule_files);
                 if !is_probably_generated || !has_imrule_files {
@@ -234,7 +244,7 @@ fn find_all_imrule_dirs_inner(dir: &Path, root: &Path, found: &mut Vec<PathBuf>)
         if !file_type.is_dir() {
             continue;
         }
-        if entry.file_name() == ".imrule" {
+        if entry.file_name() == ".imrule" || entry.file_name() == LEGACY_DIR_NAME {
             found.push(path);
         } else if !entry.file_name().to_string_lossy().starts_with('.') {
             let git_dir = path.join(".git");

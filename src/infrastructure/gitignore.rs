@@ -93,7 +93,10 @@ fn normalize_output_path(project_root: &Path, path: &Path) -> String {
 }
 
 fn is_imrule_input_path(path: &str) -> bool {
-    path.contains("/.imrule/") || path.starts_with(".imrule/")
+    path.contains("/.imrule/")
+        || path.starts_with(".imrule/")
+        || path.contains("/.ruler/")
+        || path.starts_with(".ruler/")
 }
 
 fn get_existing_paths_excluding_imrule_block(content: &str) -> Vec<String> {
