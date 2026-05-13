@@ -4,7 +4,7 @@ use thiserror::Error;
 
 /// Errors that can originate from domain logic.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
-pub enum RulerError {
+pub enum ImruleError {
     #[error("unknown agent identifier: {0}")]
     UnknownAgent(String),
 
@@ -30,7 +30,7 @@ pub enum RulerError {
     Gitignore(String),
 }
 
-impl RulerError {
+impl ImruleError {
     pub fn unknown_agent(id: impl Into<String>) -> Self {
         Self::UnknownAgent(id.into())
     }

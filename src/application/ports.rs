@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::domain::agent::AgentDefinition;
 use crate::domain::config::{AgentConfig, LoadedConfig};
-use crate::domain::error::RulerError;
+use crate::domain::error::ImruleError;
 
 /// Loads and parses Ruler configuration.
 pub trait ConfigPort {
@@ -16,28 +16,28 @@ pub trait ConfigPort {
         project_root: &Path,
         config_path: Option<&Path>,
         cli_agents: Option<Vec<String>>,
-    ) -> Result<LoadedConfig, RulerError>;
+    ) -> Result<LoadedConfig, ImruleError>;
 }
 
 /// Abstracts filesystem operations so use cases remain testable.
 pub trait FileSystemPort {
     /// Read a text file.
-    fn read_text(&self, path: &Path) -> Result<String, RulerError>;
+    fn read_text(&self, path: &Path) -> Result<String, ImruleError>;
 
     /// Write text to a file, creating parent directories.
-    fn write_text(&self, path: &Path, content: &str) -> Result<(), RulerError>;
+    fn write_text(&self, path: &Path, content: &str) -> Result<(), ImruleError>;
 
     /// Backup an existing file to `<file>.bak`.
-    fn backup_file(&self, path: &Path) -> Result<(), RulerError>;
+    fn backup_file(&self, path: &Path) -> Result<(), ImruleError>;
 
     /// Ensure a directory exists.
-    fn ensure_dir_exists(&self, path: &Path) -> Result<(), RulerError>;
+    fn ensure_dir_exists(&self, path: &Path) -> Result<(), ImruleError>;
 
     /// Remove a file.
-    fn remove_file(&self, path: &Path) -> Result<(), RulerError>;
+    fn remove_file(&self, path: &Path) -> Result<(), ImruleError>;
 
     /// Copy a file.
-    fn copy_file(&self, from: &Path, to: &Path) -> Result<(), RulerError>;
+    fn copy_file(&self, from: &Path, to: &Path) -> Result<(), ImruleError>;
 
     /// Check whether a path exists as a file.
     fn file_exists(&self, path: &Path) -> bool;
@@ -50,7 +50,7 @@ pub trait FileSystemPort {
         &self,
         ruler_dir: &Path,
         include_agents: bool,
-    ) -> Result<Vec<(PathBuf, String)>, RulerError>;
+    ) -> Result<Vec<(PathBuf, String)>, ImruleError>;
 
     /// Finds all `.ruler` directories below `start_path`, deepest first.
     fn find_all_ruler_dirs(&self, start_path: &Path) -> Vec<PathBuf>;
@@ -58,25 +58,25 @@ pub trait FileSystemPort {
 
 /// Updates ignore files with generated paths.
 pub trait GitignorePort {
-    /// Updates an ignore file with a Ruler-managed block.
+    /// Updates an ignore file with a Imrule-managed block.
     fn update_gitignore(
         &self,
         project_root: &Path,
         paths: &[PathBuf],
         ignore_file: &str,
-    ) -> Result<(), RulerError>;
+    ) -> Result<(), ImruleError>;
 }
 
 /// Reads and writes MCP configuration files.
 pub trait McpPort {
     /// Reads `.ruler/mcp.json` when present.
-    fn read_ruler_mcp_config(&self, project_root: &Path) -> Result<Option<Value>, RulerError>;
+    fn read_ruler_mcp_config(&self, project_root: &Path) -> Result<Option<Value>, ImruleError>;
 
     /// Reads a native JSON MCP config, returning `{}` when missing or invalid.
-    fn read_native_mcp(&self, path: &Path) -> Result<Value, RulerError>;
+    fn read_native_mcp(&self, path: &Path) -> Result<Value, ImruleError>;
 
     /// Writes native JSON MCP config.
-    fn write_native_mcp(&self, path: &Path, data: &Value) -> Result<(), RulerError>;
+    fn write_native_mcp(&self, path: &Path, data: &Value) -> Result<(), ImruleError>;
 
     /// Determines the native MCP config path for a given adapter display name.
     fn get_native_mcp_path(&self, adapter_name: &str, project_root: &Path) -> Option<PathBuf>;
@@ -93,5 +93,5 @@ pub trait AgentWriterPort {
         agent_config: Option<&AgentConfig>,
         backup: bool,
         dry_run: bool,
-    ) -> Result<Option<PathBuf>, RulerError>;
+    ) -> Result<Option<PathBuf>, ImruleError>;
 }

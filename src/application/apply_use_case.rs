@@ -7,11 +7,11 @@ use crate::application::ports::{
 };
 use crate::domain::agent::{all_agents, AgentDefinition, AgentOutputPaths};
 use crate::domain::config::{AgentConfig, LoadedConfig, McpStrategy};
-use crate::domain::error::RulerError;
+use crate::domain::error::ImruleError;
 use crate::domain::mcp::{filter_mcp_config_for_agent, merge_mcp};
 use crate::domain::rules::concatenate_rules;
 
-/// Runtime options for `ruler apply`.
+/// Runtime options for `imrule apply`.
 #[derive(Debug, Clone)]
 pub struct ApplyOptions {
     pub project_root: PathBuf,
@@ -52,8 +52,8 @@ impl<'a> ApplyUseCase<'a> {
         }
     }
 
-    /// Applies Ruler rules using the Rust-native engine.
-    pub fn execute(&self, options: ApplyOptions) -> Result<Vec<PathBuf>, RulerError> {
+    /// Applies Imrule rules using the Rust-native engine.
+    pub fn execute(&self, options: ApplyOptions) -> Result<Vec<PathBuf>, ImruleError> {
         let config = self.config_port.load_config(
             &options.project_root,
             options.config.as_deref(),
@@ -64,7 +64,7 @@ impl<'a> ApplyUseCase<'a> {
             .fs_port
             .find_ruler_dir(&options.project_root, !options.local_only)
             .ok_or_else(|| {
-                RulerError::rules(format!(
+                ImruleError::rules(format!(
                     "could not find .ruler directory from {}",
                     options.project_root.display()
                 ))
@@ -141,7 +141,7 @@ impl<'a> ApplyUseCase<'a> {
         options: &ApplyOptions,
         config: &LoadedConfig,
         selected_agents: &[AgentDefinition],
-    ) -> Result<Vec<PathBuf>, RulerError> {
+    ) -> Result<Vec<PathBuf>, ImruleError> {
         let Some(ruler_mcp) = self.mcp_port.read_ruler_mcp_config(&options.project_root)? else {
             return Ok(Vec::new());
         };
@@ -195,7 +195,7 @@ pub fn get_agent_output_paths(project_root: &Path, agents: &[AgentDefinition]) -
 pub fn resolve_selected_agents(
     config: &LoadedConfig,
     cli_agents: Option<&[String]>,
-) -> Result<Vec<AgentDefinition>, RulerError> {
+) -> Result<Vec<AgentDefinition>, ImruleError> {
     let requested = cli_agents
         .map(|agents| agents.to_vec())
         .or_else(|| config.default_agents.clone());
@@ -211,7 +211,7 @@ pub fn resolve_selected_agents(
             continue;
         }
         let Some(agent) = all.iter().find(|agent| agent.identifier == id) else {
-            return Err(RulerError::unknown_agent(id));
+            return Err(ImruleError::unknown_agent(id));
         };
         selected.push(*agent);
     }

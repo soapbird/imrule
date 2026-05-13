@@ -11,7 +11,7 @@ mod interface;
 
 use std::process::ExitCode;
 
-/// Run the CLI. Called by the `ruler` binary.
+/// Run the CLI. Called by the `imrule` binary.
 pub fn run_cli() -> ExitCode {
     interface::cli_adapter::run()
 }

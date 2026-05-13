@@ -1,5 +1,5 @@
-use ruler::domain::agent::AgentCapabilities;
-use ruler::domain::config::{McpConfig, McpStrategy, SubagentFrontmatter};
+use imrule::domain::agent::AgentCapabilities;
+use imrule::domain::config::{McpConfig, McpStrategy, SubagentFrontmatter};
 
 #[test]
 fn mcp_strategy_defaults_to_merge() {
@@ -29,13 +29,13 @@ fn subagent_frontmatter_requires_name_and_description_shape() {
 
 #[test]
 fn agent_definition_exposes_identifier_name_paths_and_capabilities() {
-    let agents = ruler::domain::agent::all_agents();
+    let agents = imrule::domain::agent::all_agents();
     let agentsmd = agents.iter().find(|a| a.identifier == "agentsmd").unwrap();
     assert_eq!(agentsmd.identifier, "agentsmd");
     assert_eq!(agentsmd.name, "AgentsMd");
     assert_eq!(
         agentsmd.default_output_paths(std::path::Path::new("/tmp/project")),
-        ruler::domain::agent::AgentOutputPaths::single("/tmp/project/AGENTS.md")
+        imrule::domain::agent::AgentOutputPaths::single("/tmp/project/AGENTS.md")
     );
     assert_eq!(agentsmd.capabilities, AgentCapabilities::default());
 }

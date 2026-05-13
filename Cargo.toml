@@ -1,8 +1,8 @@
 [package]
-name = "intellectronica-ruler"
+name = "imrule"
 version = "0.4.0"
 edition = "2021"
-description = "Ruler — apply the same rules to all coding agents"
+description = "Imrule — apply the same rules to all coding agents"
 license = "MIT"
 repository = "https://github.com/soapbird/imrule"
 homepage = "https://github.com/soapbird/imrule"
@@ -13,11 +13,11 @@ categories = ["command-line-utilities", "development-tools"]
 include = ["/src/**/*.rs", "/tests/**/*.rs", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE"]
 
 [[bin]]
-name = "ruler"
+name = "imrule"
 path = "src/main.rs"
 
 [lib]
-name = "ruler"
+name = "imrule"
 path = "src/lib.rs"
 
 [dependencies]

@@ -7,10 +7,10 @@ use clap::{ArgAction, Args, Parser, Subcommand};
 const AGENT_IDENTIFIERS: &str = "agentsmd, aider, amazonqcli, amp, antigravity, augmentcode, claude, cline, codex, copilot, crush, cursor, factory, firebase, firebender, gemini-cli, goose, jetbrains-ai, jules, junie, kilocode, kiro, mistral, opencode, openhands, pi, qwen, roo, trae, warp, windsurf, zed";
 
 #[derive(Debug, Parser)]
-#[command(name = "ruler")]
+#[command(name = "imrule")]
 #[command(version)]
-#[command(about = "Ruler — apply the same rules to all coding agents")]
-#[command(override_usage = "ruler <command> [options]")]
+#[command(about = "Imrule — apply the same rules to all coding agents")]
+#[command(override_usage = "imrule <command> [options]")]
 #[command(subcommand_required = true, arg_required_else_help = true)]
 pub struct Cli {
     #[command(subcommand)]
@@ -19,11 +19,11 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Apply ruler configurations to supported AI agents.
+    /// Apply imrule configurations to supported AI agents.
     Apply(ApplyArgs),
     /// Scaffold a .ruler directory with default files.
     Init(InitArgs),
-    /// Revert ruler configurations from supported AI agents.
+    /// Revert imrule configurations from supported AI agents.
     Revert(RevertArgs),
 }
 

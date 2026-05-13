@@ -3,5 +3,5 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    ruler::run_cli()
+    imrule::run_cli()
 }

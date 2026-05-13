@@ -21,7 +21,7 @@ pub fn run() -> ExitCode {
     match run_inner() {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError { code, message }) => {
-            eprintln!("[ruler] {message}");
+            eprintln!("[imrule] {message}");
             ExitCode::from(code)
         }
     }
@@ -59,9 +59,9 @@ fn run_inner() -> Result<(), CliError> {
                 })
                 .map_err(|err| CliError::new(1, err.to_string()))?;
             if args.dry_run {
-                println!("Ruler apply dry run completed successfully.");
+                println!("Imrule apply dry run completed successfully.");
             } else {
-                println!("Ruler apply completed successfully.");
+                println!("Imrule apply completed successfully.");
             }
             if args.verbose {
                 println!("Files considered: {}", written.len());
@@ -76,7 +76,7 @@ fn run_inner() -> Result<(), CliError> {
                     global: args.global,
                 })
                 .map_err(|err| CliError::new(1, err.to_string()))?;
-            println!("Ruler initialized at {}", root.display());
+            println!("Imrule initialized at {}", root.display());
             Ok(())
         }
         Command::Revert(args) => {
@@ -94,7 +94,7 @@ fn run_inner() -> Result<(), CliError> {
                     local_only: args.local_only,
                 })
                 .map_err(|err| CliError::new(1, err.to_string()))?;
-            println!("Ruler revert completed successfully.");
+            println!("Imrule revert completed successfully.");
             if args.verbose {
                 println!("Files changed: {}", changed.len());
             }

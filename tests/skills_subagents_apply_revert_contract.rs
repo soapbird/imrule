@@ -1,17 +1,17 @@
 use std::fs;
 
-use ruler::application::apply_use_case::get_agent_output_paths;
-use ruler::application::ports::FileSystemPort;
-use ruler::domain::agent::all_agents;
-use ruler::domain::config::SubagentFrontmatter;
-use ruler::domain::skills::{format_validation_warnings, get_skills_gitignore_paths};
-use ruler::domain::subagent::{
+use imrule::application::apply_use_case::get_agent_output_paths;
+use imrule::application::ports::FileSystemPort;
+use imrule::domain::agent::all_agents;
+use imrule::domain::config::SubagentFrontmatter;
+use imrule::domain::skills::{format_validation_warnings, get_skills_gitignore_paths};
+use imrule::domain::subagent::{
     build_claude_file, build_codex_file, build_copilot_file, build_cursor_file,
     map_tools_for_copilot, parse_frontmatter, validate_frontmatter,
 };
-use ruler::infrastructure::file_system::FsFileSystem;
-use ruler::infrastructure::skills::{copy_skills_directory, discover_skills};
-use ruler::infrastructure::subagents::{
+use imrule::infrastructure::file_system::FsFileSystem;
+use imrule::infrastructure::skills::{copy_skills_directory, discover_skills};
+use imrule::infrastructure::subagents::{
     discover_subagents, get_subagents_gitignore_paths, load_subagent_file,
 };
 use serde_json::json;
@@ -97,7 +97,7 @@ fn parses_validates_and_loads_subagent_frontmatter() {
 
 #[test]
 fn transforms_subagents_for_claude_cursor_codex_and_copilot() {
-    let sub = ruler::domain::config::SubagentInfo {
+    let sub = imrule::domain::config::SubagentInfo {
         name: "helper".to_string(),
         path: std::path::PathBuf::from("helper.md"),
         frontmatter: Some(SubagentFrontmatter {

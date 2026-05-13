@@ -13,7 +13,7 @@ use crate::domain::config::{
     SubagentsConfig,
 };
 use crate::domain::constants::xdg_config_home;
-use crate::domain::error::RulerError;
+use crate::domain::error::ImruleError;
 
 const SUBAGENT_RESERVED_KEYS: &[&str] = &["enabled", "include_in_rules"];
 
@@ -37,12 +37,12 @@ impl ConfigPort for TomlConfigLoader {
         project_root: &Path,
         config_path: Option<&Path>,
         cli_agents: Option<Vec<String>>,
-    ) -> Result<LoadedConfig, RulerError> {
+    ) -> Result<LoadedConfig, ImruleError> {
         let config_file = resolve_config_file(project_root, config_path);
         let raw = match fs::read_to_string(&config_file) {
             Ok(text) if text.trim().is_empty() => Value::Table(Default::default()),
             Ok(text) => text.parse::<Value>().map_err(|e| {
-                RulerError::config(format!(
+                ImruleError::config(format!(
                     "could not parse config file at {}: {e}",
                     config_file.display()
                 ))
@@ -51,7 +51,7 @@ impl ConfigPort for TomlConfigLoader {
                 Value::Table(Default::default())
             }
             Err(err) => {
-                return Err(RulerError::config(format!(
+                return Err(ImruleError::config(format!(
                     "could not read config file at {}: {err}",
                     config_file.display()
                 )));

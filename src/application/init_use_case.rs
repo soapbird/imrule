@@ -1,12 +1,12 @@
-//! Init use case for creating Ruler configuration scaffolds.
+//! Init use case for creating Imrule configuration scaffolds.
 
 use std::path::PathBuf;
 
 use crate::application::ports::FileSystemPort;
 use crate::domain::constants::xdg_config_home;
-use crate::domain::error::RulerError;
+use crate::domain::error::ImruleError;
 
-/// Runtime options for `ruler init`.
+/// Runtime options for `imrule init`.
 #[derive(Debug, Clone)]
 pub struct InitOptions {
     pub project_root: Option<PathBuf>,
@@ -23,8 +23,8 @@ impl<'a> InitUseCase<'a> {
         Self { fs_port }
     }
 
-    /// Creates `.ruler` or global Ruler config files without overwriting existing files.
-    pub fn execute(&self, options: InitOptions) -> Result<PathBuf, RulerError> {
+    /// Creates `.ruler` or global Imrule config files without overwriting existing files.
+    pub fn execute(&self, options: InitOptions) -> Result<PathBuf, ImruleError> {
         let root = if options.global {
             xdg_config_home().join("ruler")
         } else {
@@ -40,7 +40,7 @@ impl<'a> InitUseCase<'a> {
         Ok(root)
     }
 
-    fn write_if_missing(&self, path: PathBuf, content: &str) -> Result<(), RulerError> {
+    fn write_if_missing(&self, path: PathBuf, content: &str) -> Result<(), ImruleError> {
         if self.fs_port.file_exists(&path) {
             return Ok(());
         }
@@ -48,9 +48,9 @@ impl<'a> InitUseCase<'a> {
     }
 }
 
-const DEFAULT_INSTRUCTIONS: &str = "# AGENTS.md\n\nCentralised AI agent instructions. Add coding guidelines, style guides, and project context here.\n\nRuler concatenates all .md files in this directory (and subdirectories), starting with AGENTS.md (if present), then remaining files in sorted order.\n";
+const DEFAULT_INSTRUCTIONS: &str = "# AGENTS.md\n\nCentralised AI agent instructions. Add coding guidelines, style guides, and project context here.\n\nImrule concatenates all .md files in this directory (and subdirectories), starting with AGENTS.md (if present), then remaining files in sorted order.\n";
 
-const DEFAULT_TOML: &str = r#"# Ruler Configuration File
+const DEFAULT_TOML: &str = r#"# Imrule Configuration File
 # See https://github.com/soapbird/imrule for documentation.
 
 # To specify which agents are active by default when --agents is not used,

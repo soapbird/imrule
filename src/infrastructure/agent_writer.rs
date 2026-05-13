@@ -7,7 +7,7 @@ use crate::application::ports::{AgentWriterPort, FileSystemPort};
 use crate::domain::agent::AgentDefinition;
 use crate::domain::config::AgentConfig;
 use crate::domain::constants::GENERATED_BY_RULER_MARKER;
-use crate::domain::error::RulerError;
+use crate::domain::error::ImruleError;
 
 pub struct DefaultAgentWriter<'a> {
     fs: &'a dyn FileSystemPort,
@@ -28,7 +28,7 @@ impl<'a> AgentWriterPort for DefaultAgentWriter<'a> {
         agent_config: Option<&AgentConfig>,
         backup: bool,
         dry_run: bool,
-    ) -> Result<Option<PathBuf>, RulerError> {
+    ) -> Result<Option<PathBuf>, ImruleError> {
         let Some(path) = instruction_output_path(project_root, agent, agent_config) else {
             return Ok(None);
         };

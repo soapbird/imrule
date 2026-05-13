@@ -1,8 +1,8 @@
-# Ruler
+# Imrule
 
 **Apply the same rules to all coding agents.**
 
-Ruler lets you write project instructions, MCP server configurations, skills, and subagent definitions once in a `.ruler/` directory, then propagates them to every supported AI coding agent with a single command.
+Imrule lets you write project instructions, MCP server configurations, skills, and subagent definitions once in a `.ruler/` directory, then propagates them to every supported AI coding agent with a single command.
 
 ## Features
 
@@ -11,7 +11,7 @@ Ruler lets you write project instructions, MCP server configurations, skills, an
 - **Skills propagation** — sync `.ruler/skills/` to agent-specific skill directories
 - **Subagent propagation** — transform `.ruler/agents/` definitions to agent-native formats
 - **Gitignore management** — automatically update `.gitignore` with generated paths
-- **Backup & revert** — `.bak` files on apply, clean rollback with `ruler revert`
+- **Backup & revert** — `.bak` files on apply, clean rollback with `imrule revert`
 - **Dry-run mode** — preview all changes without writing files
 - **Global config** — `~/.config/ruler/` for shared rules across projects
 - **Nested projects** — discover `.ruler/` in parent directories
@@ -23,10 +23,9 @@ Ruler lets you write project instructions, MCP server configurations, skills, an
 ```bash
 git clone https://github.com/soapbird/imrule.git
 cd imrule
-make build        # or: cargo build --release
+make build
+sudo make install     # copies binary to /usr/local/bin/imrule
 ```
-
-The binary is at `target/release/ruler`.
 
 ### With Cargo
 
@@ -34,60 +33,72 @@ The binary is at `target/release/ruler`.
 cargo install --path .
 ```
 
+### Custom install prefix
+
+```bash
+make install PREFIX=~/.local    # installs to ~/.local/bin/imrule
+```
+
+### Uninstall
+
+```bash
+sudo make uninstall             # removes /usr/local/bin/imrule
+```
+
 ## Quick Start
 
 ```bash
 # 1. Initialize a .ruler directory
-ruler init
+imrule init
 
 # 2. Edit your instructions
 vim .ruler/AGENTS.md
 
 # 3. Apply to all agents
-ruler apply
+imrule apply
 
 # 4. Revert when needed
-ruler revert
+imrule revert
 ```
 
 ## Usage
 
-### `ruler init`
+### `imrule init`
 
 Scaffold a `.ruler/` directory with default files (`AGENTS.md`, `ruler.toml`).
 
 ```bash
-ruler init                          # local .ruler/ in current directory
-ruler init --global                 # ~/.config/ruler/
-ruler init --project-root ~/myproj  # specify a different project
+imrule init                          # local .ruler/ in current directory
+imrule init --global                 # ~/.config/ruler/
+imrule init --project-root ~/myproj  # specify a different project
 ```
 
-### `ruler apply`
+### `imrule apply`
 
 Read `.ruler/` contents and write to each agent's native config files.
 
 ```bash
-ruler apply                              # all agents, current directory
-ruler apply --agents claude,copilot      # specific agents only
-ruler apply --dry-run                    # preview without writing
-ruler apply --no-mcp                     # skip MCP config
-ruler apply --mcp-overwrite              # replace (not merge) MCP config
-ruler apply --verbose                    # show file counts
-ruler apply --local-only                 # ignore global config
-ruler apply --backup false               # disable .bak files
-ruler apply --project-root ~/myproj      # specify project root
-ruler apply --config custom.toml         # use custom config file
+imrule apply                              # all agents, current directory
+imrule apply --agents claude,copilot      # specific agents only
+imrule apply --dry-run                    # preview without writing
+imrule apply --no-mcp                     # skip MCP config
+imrule apply --mcp-overwrite              # replace (not merge) MCP config
+imrule apply --verbose                    # show file counts
+imrule apply --local-only                 # ignore global config
+imrule apply --backup false               # disable .bak files
+imrule apply --project-root ~/myproj      # specify project root
+imrule apply --config custom.toml         # use custom config file
 ```
 
-### `ruler revert`
+### `imrule revert`
 
 Restore agent config files from backups and remove generated content.
 
 ```bash
-ruler revert                             # revert all agents
-ruler revert --agents claude             # revert specific agent
-ruler revert --dry-run                   # preview revert
-ruler revert --keep-backups              # keep .bak files
+imrule revert                             # revert all agents
+imrule revert --agents claude             # revert specific agent
+imrule revert --dry-run                   # preview revert
+imrule revert --keep-backups              # keep .bak files
 ```
 
 ## Supported Agents
@@ -179,12 +190,13 @@ make              # fmt + lint + test + build
 make build        # cargo build --release
 make test         # cargo test
 make test-e2e     # end-to-end tests against test-e2e/ fixtures
+make install      # copy binary to /usr/local/bin/imrule (needs sudo)
+make uninstall    # remove /usr/local/bin/imrule
 make check        # fast compile check
 make lint         # cargo clippy
 make fmt          # check formatting
 make fmt-fix      # auto-format
 make clean        # cargo clean
-make install      # install to ~/.cargo/bin
 ```
 
 ## Architecture

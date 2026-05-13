@@ -1,13 +1,13 @@
 use std::fs;
 
-use ruler::application::ports::McpPort;
-use ruler::domain::agent::all_agents;
-use ruler::domain::config::McpStrategy;
-use ruler::domain::mcp::{
+use imrule::application::ports::McpPort;
+use imrule::domain::agent::all_agents;
+use imrule::domain::config::McpStrategy;
+use imrule::domain::mcp::{
     agent_supports_mcp, filter_mcp_config_for_agent, get_agent_mcp_capabilities, merge_mcp,
 };
-use ruler::infrastructure::mcp_storage::JsonMcpStorage;
-use ruler::infrastructure::vscode_settings::{
+use imrule::infrastructure::mcp_storage::JsonMcpStorage;
+use imrule::infrastructure::vscode_settings::{
     get_vscode_settings_path, merge_augment_mcp_servers, transform_ruler_to_augment_mcp,
 };
 use serde_json::json;

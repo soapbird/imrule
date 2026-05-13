@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 
 use crate::application::ports::GitignorePort;
 use crate::domain::constants::normalize_path_separators;
-use crate::domain::error::RulerError;
+use crate::domain::error::ImruleError;
 
-const RULER_START_MARKER: &str = "# START Ruler Generated Files";
-const RULER_END_MARKER: &str = "# END Ruler Generated Files";
+const IMRULE_START_MARKER: &str = "# START Imrule Generated Files";
+const IMRULE_END_MARKER: &str = "# END Imrule Generated Files";
 
 pub struct GitignoreUpdater;
 
@@ -31,12 +31,12 @@ impl GitignorePort for GitignoreUpdater {
         project_root: &Path,
         paths: &[PathBuf],
         ignore_file: &str,
-    ) -> Result<(), RulerError> {
+    ) -> Result<(), ImruleError> {
         let gitignore_path = project_root.join(ignore_file);
         let existing_content = match fs::read_to_string(&gitignore_path) {
             Ok(content) => content,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(err) => return Err(RulerError::gitignore(err.to_string())),
+            Err(err) => return Err(ImruleError::gitignore(err.to_string())),
         };
 
         let existing_paths = get_existing_paths_excluding_ruler_block(&existing_content);
@@ -61,9 +61,9 @@ impl GitignorePort for GitignoreUpdater {
         let new_content = update_gitignore_content(&existing_content, &ruler_paths);
 
         if let Some(parent) = gitignore_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| RulerError::gitignore(e.to_string()))?;
+            fs::create_dir_all(parent).map_err(|e| ImruleError::gitignore(e.to_string()))?;
         }
-        fs::write(gitignore_path, new_content).map_err(|e| RulerError::gitignore(e.to_string()))
+        fs::write(gitignore_path, new_content).map_err(|e| ImruleError::gitignore(e.to_string()))
     }
 }
 
@@ -102,11 +102,11 @@ fn get_existing_paths_excluding_ruler_block(content: &str) -> Vec<String> {
 
     for line in content.split('\n') {
         let trimmed = line.trim();
-        if trimmed == RULER_START_MARKER {
+        if trimmed == IMRULE_START_MARKER {
             in_ruler_block = true;
             continue;
         }
-        if trimmed == RULER_END_MARKER {
+        if trimmed == IMRULE_END_MARKER {
             in_ruler_block = false;
             continue;
         }
@@ -127,14 +127,14 @@ fn update_gitignore_content(existing_content: &str, ruler_paths: &[String]) -> S
 
     for line in lines {
         let trimmed = line.trim();
-        if trimmed == RULER_START_MARKER && !processed_first_block {
+        if trimmed == IMRULE_START_MARKER && !processed_first_block {
             in_first_ruler_block = true;
             has_ruler_block = true;
             new_lines.push(line.to_string());
             new_lines.extend(ruler_paths.iter().cloned());
             continue;
         }
-        if trimmed == RULER_END_MARKER && in_first_ruler_block {
+        if trimmed == IMRULE_END_MARKER && in_first_ruler_block {
             in_first_ruler_block = false;
             processed_first_block = true;
             new_lines.push(line.to_string());
@@ -149,9 +149,9 @@ fn update_gitignore_content(existing_content: &str, ruler_paths: &[String]) -> S
         if !existing_content.trim().is_empty() && !existing_content.ends_with("\n\n") {
             new_lines.push(String::new());
         }
-        new_lines.push(RULER_START_MARKER.to_string());
+        new_lines.push(IMRULE_START_MARKER.to_string());
         new_lines.extend(ruler_paths.iter().cloned());
-        new_lines.push(RULER_END_MARKER.to_string());
+        new_lines.push(IMRULE_END_MARKER.to_string());
     }
 
     let mut result = new_lines.join("\n");

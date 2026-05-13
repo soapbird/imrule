@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 
 use crate::application::ports::McpPort;
-use crate::domain::error::RulerError;
+use crate::domain::error::ImruleError;
 
 pub struct JsonMcpStorage;
 
@@ -23,19 +23,19 @@ impl Default for JsonMcpStorage {
 }
 
 impl McpPort for JsonMcpStorage {
-    fn read_ruler_mcp_config(&self, project_root: &Path) -> Result<Option<Value>, RulerError> {
+    fn read_ruler_mcp_config(&self, project_root: &Path) -> Result<Option<Value>, ImruleError> {
         let path = project_root.join(".ruler/mcp.json");
         if !path.exists() {
             return Ok(None);
         }
         let text = fs::read_to_string(&path).map_err(|e| {
-            RulerError::mcp(format!(
+            ImruleError::mcp(format!(
                 "could not read MCP config at {}: {e}",
                 path.display()
             ))
         })?;
         let parsed = serde_json::from_str(&text).map_err(|e| {
-            RulerError::mcp(format!(
+            ImruleError::mcp(format!(
                 "could not parse MCP config at {}: {e}",
                 path.display()
             ))
@@ -43,20 +43,20 @@ impl McpPort for JsonMcpStorage {
         Ok(Some(parsed))
     }
 
-    fn read_native_mcp(&self, file_path: &Path) -> Result<Value, RulerError> {
+    fn read_native_mcp(&self, file_path: &Path) -> Result<Value, ImruleError> {
         match fs::read_to_string(file_path) {
             Ok(text) => Ok(serde_json::from_str(&text).unwrap_or_else(|_| json!({}))),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
-            Err(err) => Err(RulerError::mcp(err.to_string())),
+            Err(err) => Err(ImruleError::mcp(err.to_string())),
         }
     }
 
-    fn write_native_mcp(&self, file_path: &Path, data: &Value) -> Result<(), RulerError> {
+    fn write_native_mcp(&self, file_path: &Path, data: &Value) -> Result<(), ImruleError> {
         if let Some(parent) = file_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| RulerError::mcp(e.to_string()))?;
+            fs::create_dir_all(parent).map_err(|e| ImruleError::mcp(e.to_string()))?;
         }
         let text = serde_json::to_string_pretty(data).expect("serializable JSON value") + "\n";
-        fs::write(file_path, text).map_err(|e| RulerError::mcp(e.to_string()))
+        fs::write(file_path, text).map_err(|e| ImruleError::mcp(e.to_string()))
     }
 
     fn get_native_mcp_path(&self, adapter_name: &str, project_root: &Path) -> Option<PathBuf> {

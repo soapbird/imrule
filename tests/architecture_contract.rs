@@ -3,9 +3,9 @@ use std::fs;
 #[test]
 fn cli_depends_on_application_use_cases_not_core_engines() {
     let main = fs::read_to_string("src/main.rs").unwrap();
-    assert!(main.contains("ruler::run_cli()"));
-    assert!(!main.contains("ruler::domain::"));
-    assert!(!main.contains("ruler::infrastructure::"));
+    assert!(main.contains("imrule::run_cli()"));
+    assert!(!main.contains("imrule::domain::"));
+    assert!(!main.contains("imrule::infrastructure::"));
     assert!(!main.contains("std::fs"));
 }
 

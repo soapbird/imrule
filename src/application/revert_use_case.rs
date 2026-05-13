@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 
 use crate::application::apply_use_case::{get_agent_output_paths, resolve_selected_agents};
 use crate::application::ports::{ConfigPort, FileSystemPort, GitignorePort};
-use crate::domain::error::RulerError;
+use crate::domain::error::ImruleError;
 
-/// Runtime options for `ruler revert`.
+/// Runtime options for `imrule revert`.
 #[derive(Debug, Clone)]
 pub struct RevertOptions {
     pub project_root: PathBuf,
@@ -38,7 +38,7 @@ impl<'a> RevertUseCase<'a> {
     }
 
     /// Reverts generated files for selected agents.
-    pub fn execute(&self, options: RevertOptions) -> Result<Vec<PathBuf>, RulerError> {
+    pub fn execute(&self, options: RevertOptions) -> Result<Vec<PathBuf>, ImruleError> {
         let config = self.config_port.load_config(
             &options.project_root,
             options.config.as_deref(),
@@ -77,7 +77,7 @@ impl<'a> RevertUseCase<'a> {
         PathBuf::from(backup)
     }
 
-    fn restore_from_backup(&self, file_path: &Path, dry_run: bool) -> Result<bool, RulerError> {
+    fn restore_from_backup(&self, file_path: &Path, dry_run: bool) -> Result<bool, ImruleError> {
         let backup = self.backup_path(file_path);
         if !self.fs_port.file_exists(&backup) {
             return Ok(false);
@@ -88,7 +88,7 @@ impl<'a> RevertUseCase<'a> {
         Ok(true)
     }
 
-    fn remove_generated_file(&self, file_path: &Path, dry_run: bool) -> Result<bool, RulerError> {
+    fn remove_generated_file(&self, file_path: &Path, dry_run: bool) -> Result<bool, ImruleError> {
         if !self.fs_port.file_exists(file_path)
             || self.fs_port.file_exists(&self.backup_path(file_path))
         {
@@ -100,7 +100,7 @@ impl<'a> RevertUseCase<'a> {
         Ok(true)
     }
 
-    fn remove_backup_file(&self, file_path: &Path, dry_run: bool) -> Result<bool, RulerError> {
+    fn remove_backup_file(&self, file_path: &Path, dry_run: bool) -> Result<bool, ImruleError> {
         let backup = self.backup_path(file_path);
         if !self.fs_port.file_exists(&backup) {
             return Ok(false);

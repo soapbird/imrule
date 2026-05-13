@@ -7,7 +7,7 @@ use crate::application::ports::FileSystemPort;
 use crate::domain::constants::{
     normalize_path_separators, xdg_config_home, GENERATED_BY_RULER_MARKER, SKILLS_DIR,
 };
-use crate::domain::error::RulerError;
+use crate::domain::error::ImruleError;
 const SUBAGENTS_DIR_NAME: &str = "agents";
 
 pub struct FsFileSystem;
@@ -25,42 +25,42 @@ impl Default for FsFileSystem {
 }
 
 impl FileSystemPort for FsFileSystem {
-    fn read_text(&self, path: &Path) -> Result<String, RulerError> {
+    fn read_text(&self, path: &Path) -> Result<String, ImruleError> {
         fs::read_to_string(path)
-            .map_err(|e| RulerError::filesystem(format!("{}: {e}", path.display())))
+            .map_err(|e| ImruleError::filesystem(format!("{}: {e}", path.display())))
     }
 
-    fn write_text(&self, path: &Path, content: &str) -> Result<(), RulerError> {
+    fn write_text(&self, path: &Path, content: &str) -> Result<(), ImruleError> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
-                .map_err(|e| RulerError::filesystem(format!("{}: {e}", parent.display())))?;
+                .map_err(|e| ImruleError::filesystem(format!("{}: {e}", parent.display())))?;
         }
         fs::write(path, content)
-            .map_err(|e| RulerError::filesystem(format!("{}: {e}", path.display())))
+            .map_err(|e| ImruleError::filesystem(format!("{}: {e}", path.display())))
     }
 
-    fn backup_file(&self, path: &Path) -> Result<(), RulerError> {
+    fn backup_file(&self, path: &Path) -> Result<(), ImruleError> {
         if path.exists() {
             let mut backup = path.as_os_str().to_os_string();
             backup.push(".bak");
             fs::copy(path, PathBuf::from(backup))
-                .map_err(|e| RulerError::filesystem(e.to_string()))?;
+                .map_err(|e| ImruleError::filesystem(e.to_string()))?;
         }
         Ok(())
     }
 
-    fn ensure_dir_exists(&self, path: &Path) -> Result<(), RulerError> {
+    fn ensure_dir_exists(&self, path: &Path) -> Result<(), ImruleError> {
         fs::create_dir_all(path)
-            .map_err(|e| RulerError::filesystem(format!("{}: {e}", path.display())))
+            .map_err(|e| ImruleError::filesystem(format!("{}: {e}", path.display())))
     }
 
-    fn remove_file(&self, path: &Path) -> Result<(), RulerError> {
+    fn remove_file(&self, path: &Path) -> Result<(), ImruleError> {
         fs::remove_file(path)
-            .map_err(|e| RulerError::filesystem(format!("{}: {e}", path.display())))
+            .map_err(|e| ImruleError::filesystem(format!("{}: {e}", path.display())))
     }
 
-    fn copy_file(&self, from: &Path, to: &Path) -> Result<(), RulerError> {
-        fs::copy(from, to).map_err(|e| RulerError::filesystem(e.to_string()))?;
+    fn copy_file(&self, from: &Path, to: &Path) -> Result<(), ImruleError> {
+        fs::copy(from, to).map_err(|e| ImruleError::filesystem(e.to_string()))?;
         Ok(())
     }
 
@@ -94,7 +94,7 @@ impl FileSystemPort for FsFileSystem {
         &self,
         ruler_dir: &Path,
         include_agents: bool,
-    ) -> Result<Vec<(PathBuf, String)>, RulerError> {
+    ) -> Result<Vec<(PathBuf, String)>, ImruleError> {
         let mut md_files = Vec::new();
         let mut saw_excluded_agents = false;
         walk_markdown(
@@ -104,7 +104,7 @@ impl FileSystemPort for FsFileSystem {
             &mut saw_excluded_agents,
             &mut md_files,
         )
-        .map_err(|e| RulerError::filesystem(e.to_string()))?;
+        .map_err(|e| ImruleError::filesystem(e.to_string()))?;
 
         let top_level_agents = ruler_dir.join("AGENTS.md");
         let top_level_legacy = ruler_dir.join("instructions.md");
