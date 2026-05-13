@@ -91,7 +91,7 @@ fn apply_dry_run_does_not_write_outputs() {
 }
 
 #[test]
-fn init_scaffolds_ruler_files_without_overwriting_existing_content() {
+fn init_scaffolds_imrule_files_without_overwriting_existing_content() {
     let tmp = tempdir().unwrap();
 
     let init = Command::cargo_bin("imrule")

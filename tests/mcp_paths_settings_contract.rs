@@ -144,13 +144,13 @@ fn native_mcp_paths_match_agent_candidates_and_io_contract() {
 
 #[test]
 fn vscode_augment_settings_transform_and_merge_match_native_contract() {
-    let ruler = json!({
+    let mcp_json = json!({
         "mcpServers": {
             "one": { "command": "node", "args": ["one.js"], "env": { "A": "B" } },
             "two": { "command": "python" }
         }
     });
-    let servers = transform_ruler_to_augment_mcp(&ruler);
+    let servers = transform_ruler_to_augment_mcp(&mcp_json);
     assert_eq!(
         serde_json::to_value(&servers).unwrap(),
         json!([

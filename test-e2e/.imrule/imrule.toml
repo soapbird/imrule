@@ -1,5 +1,5 @@
 # ImRule Configuration File
-# See https://ai.intellectronica.net/ruler for documentation.
+# See https://github.com/soapbird/imrule for documentation.
 
 # To specify which agents are active by default when --agents is not used,
 # uncomment and populate the following line. If omitted, all agents are active.

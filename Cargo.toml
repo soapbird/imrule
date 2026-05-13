@@ -33,6 +33,6 @@ thiserror = "1"
 assert_cmd = "2"
 tempfile = "3"
 
-[package.metadata.ruler]
+[package.metadata.imrule]
 release-channel = "native-rust"
 breaking-change = "typescript-npm-runtime-removed"
