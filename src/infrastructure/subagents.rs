@@ -51,7 +51,7 @@ pub fn load_subagent_file(file_path: &Path) -> io::Result<SubagentInfo> {
     }
 }
 
-/// Discovers valid subagents from `.ruler/agents`.
+/// Discovers valid subagents from `.imrule/agents`.
 pub fn discover_subagents(project_root: &Path) -> io::Result<SubagentsDiscovery> {
     let dir = project_root.join(RULER_SUBAGENTS_PATH);
     if !dir.exists() {

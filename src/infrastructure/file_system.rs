@@ -71,7 +71,7 @@ impl FileSystemPort for FsFileSystem {
     fn find_ruler_dir(&self, start_path: &Path, check_global: bool) -> Option<PathBuf> {
         let mut current = start_path.to_path_buf();
         loop {
-            let candidate = current.join(".ruler");
+            let candidate = current.join(".imrule");
             if candidate.is_dir() {
                 return Some(candidate);
             }
@@ -81,7 +81,7 @@ impl FileSystemPort for FsFileSystem {
         }
 
         if check_global {
-            let global = xdg_config_home().join("ruler");
+            let global = xdg_config_home().join("imrule");
             if global.is_dir() {
                 return Some(global);
             }
@@ -138,8 +138,8 @@ impl FileSystemPort for FsFileSystem {
             if let Ok(content) = fs::read_to_string(&root_agents) {
                 let is_generated = content.starts_with(GENERATED_BY_RULER_MARKER);
                 let has_ruler_files = !ordered.is_empty() || saw_excluded_agents;
-                let contains_ruler_sources = content.contains("<!-- Source: .ruler/")
-                    || content.contains("<!-- Source: ruler/");
+                let contains_ruler_sources = content.contains("<!-- Source: .imrule/")
+                    || content.contains("<!-- Source: imrule/");
                 let is_probably_generated =
                     is_generated || (contains_ruler_sources && has_ruler_files);
                 if !is_probably_generated || !has_ruler_files {
@@ -234,7 +234,7 @@ fn find_all_ruler_dirs_inner(dir: &Path, root: &Path, found: &mut Vec<PathBuf>) 
         if !file_type.is_dir() {
             continue;
         }
-        if entry.file_name() == ".ruler" {
+        if entry.file_name() == ".imrule" {
             found.push(path);
         } else if !entry.file_name().to_string_lossy().starts_with('.') {
             let git_dir = path.join(".git");

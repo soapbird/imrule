@@ -8,7 +8,7 @@ use crate::domain::config::SkillInfo;
 use crate::domain::constants::{normalize_path_separators, *};
 use crate::domain::skills::SkillsDiscovery;
 
-/// Discovers skills in `.ruler/skills`.
+/// Discovers skills in `.imrule/skills`.
 pub fn discover_skills(project_root: &Path) -> io::Result<SkillsDiscovery> {
     let skills_dir = project_root.join(RULER_SKILLS_PATH);
     if !skills_dir.exists() {
@@ -51,7 +51,7 @@ fn walk(current_path: &Path, relative_path: &Path, result: &mut SkillsDiscovery)
             walk(&entry_path, &entry_relative, result)?;
         } else {
             result.warnings.push(format!(
-                "Directory '{}' in .ruler/skills has no SKILL.md and contains no sub-skills. It may be malformed or stray.",
+                "Directory '{}' in .imrule/skills has no SKILL.md and contains no sub-skills. It may be malformed or stray.",
                 normalize_path_separators(&entry_relative.to_string_lossy())
             ));
         }

@@ -52,7 +52,7 @@ impl<'a> ApplyUseCase<'a> {
         }
     }
 
-    /// Applies Imrule rules using the Rust-native engine.
+    /// Applies ImRule rules using the Rust-native engine.
     pub fn execute(&self, options: ApplyOptions) -> Result<Vec<PathBuf>, ImruleError> {
         let config = self.config_port.load_config(
             &options.project_root,
@@ -65,7 +65,7 @@ impl<'a> ApplyUseCase<'a> {
             .find_ruler_dir(&options.project_root, !options.local_only)
             .ok_or_else(|| {
                 ImruleError::rules(format!(
-                    "could not find .ruler directory from {}",
+                    "could not find .imrule directory from {}",
                     options.project_root.display()
                 ))
             })?;

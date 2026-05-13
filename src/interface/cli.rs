@@ -9,7 +9,7 @@ const AGENT_IDENTIFIERS: &str = "agentsmd, aider, amazonqcli, amp, antigravity, 
 #[derive(Debug, Parser)]
 #[command(name = "imrule")]
 #[command(version)]
-#[command(about = "Imrule — apply the same rules to all coding agents")]
+#[command(about = "ImRule — apply the same rules to all coding agents")]
 #[command(override_usage = "imrule <command> [options]")]
 #[command(subcommand_required = true, arg_required_else_help = true)]
 pub struct Cli {
@@ -21,7 +21,7 @@ pub struct Cli {
 pub enum Command {
     /// Apply imrule configurations to supported AI agents.
     Apply(ApplyArgs),
-    /// Scaffold a .ruler directory with default files.
+    /// Scaffold a .imrule directory with default files.
     Init(InitArgs),
     /// Revert imrule configurations from supported AI agents.
     Revert(RevertArgs),
@@ -60,7 +60,7 @@ pub struct ApplyArgs {
     /// Preview changes without writing files.
     #[arg(long = "dry-run", default_value_t = false)]
     pub dry_run: bool,
-    /// Only search for local .ruler directories, ignore global config.
+    /// Only search for local .imrule directories, ignore global config.
     #[arg(long = "local-only", default_value_t = false)]
     pub local_only: bool,
     /// Enable/disable creation of .bak backup files.
@@ -79,7 +79,7 @@ pub struct InitArgs {
     /// Project root directory.
     #[arg(long = "project-root", value_name = "DIR")]
     pub project_root: Option<PathBuf>,
-    /// Initialize in global config directory (XDG_CONFIG_HOME/ruler).
+    /// Initialize in global config directory (XDG_CONFIG_HOME/imrule).
     #[arg(long = "global", default_value_t = false)]
     pub global: bool,
 }
@@ -105,7 +105,7 @@ pub struct RevertArgs {
     /// Preview changes without writing files.
     #[arg(long = "dry-run", default_value_t = false)]
     pub dry_run: bool,
-    /// Only search for local .ruler directories, ignore global config.
+    /// Only search for local .imrule directories, ignore global config.
     #[arg(long = "local-only", default_value_t = false)]
     pub local_only: bool,
 }

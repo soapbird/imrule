@@ -1,20 +1,20 @@
-# Imrule
+# ImRule
 
 **Apply the same rules to all coding agents.**
 
-Imrule lets you write project instructions, MCP server configurations, skills, and subagent definitions once in a `.ruler/` directory, then propagates them to every supported AI coding agent with a single command.
+ImRule lets you write project instructions, MCP server configurations, skills, and subagent definitions once in a `.imrule/` directory, then propagates them to every supported AI coding agent with a single command.
 
 ## Features
 
 - **30+ supported agents** — Copilot, Claude Code, Codex, Cursor, Windsurf, Cline, Aider, Gemini CLI, and many more
 - **MCP server config** — merge or overwrite `mcp.json` into each agent's native format
-- **Skills propagation** — sync `.ruler/skills/` to agent-specific skill directories
-- **Subagent propagation** — transform `.ruler/agents/` definitions to agent-native formats
+- **Skills propagation** — sync `.imrule/skills/` to agent-specific skill directories
+- **Subagent propagation** — transform `.imrule/agents/` definitions to agent-native formats
 - **Gitignore management** — automatically update `.gitignore` with generated paths
 - **Backup & revert** — `.bak` files on apply, clean rollback with `imrule revert`
 - **Dry-run mode** — preview all changes without writing files
-- **Global config** — `~/.config/ruler/` for shared rules across projects
-- **Nested projects** — discover `.ruler/` in parent directories
+- **Global config** — `~/.config/imrule/` for shared rules across projects
+- **Nested projects** — discover `.imrule/` in parent directories
 
 ## Installation
 
@@ -48,11 +48,11 @@ sudo make uninstall             # removes /usr/local/bin/imrule
 ## Quick Start
 
 ```bash
-# 1. Initialize a .ruler directory
+# 1. Initialize a .imrule directory
 imrule init
 
 # 2. Edit your instructions
-vim .ruler/AGENTS.md
+vim .imrule/AGENTS.md
 
 # 3. Apply to all agents
 imrule apply
@@ -65,17 +65,17 @@ imrule revert
 
 ### `imrule init`
 
-Scaffold a `.ruler/` directory with default files (`AGENTS.md`, `ruler.toml`).
+Scaffold a `.imrule/` directory with default files (`AGENTS.md`, `imrule.toml`).
 
 ```bash
-imrule init                          # local .ruler/ in current directory
-imrule init --global                 # ~/.config/ruler/
+imrule init                          # local .imrule/ in current directory
+imrule init --global                 # ~/.config/imrule/
 imrule init --project-root ~/myproj  # specify a different project
 ```
 
 ### `imrule apply`
 
-Read `.ruler/` contents and write to each agent's native config files.
+Read `.imrule/` contents and write to each agent's native config files.
 
 ```bash
 imrule apply                              # all agents, current directory
@@ -124,11 +124,11 @@ imrule revert --keep-backups              # keep .bak files
 
 ## Configuration
 
-### `.ruler/AGENTS.md`
+### `.imrule/AGENTS.md`
 
-Central markdown file for your coding guidelines, style guides, and project context. All `.md` files in `.ruler/` (including subdirectories) are concatenated, starting with `AGENTS.md` (if present), then remaining files in sorted order.
+Central markdown file for your coding guidelines, style guides, and project context. All `.md` files in `.imrule/` (including subdirectories) are concatenated, starting with `AGENTS.md` (if present), then remaining files in sorted order.
 
-### `.ruler/ruler.toml`
+### `.imrule/imrule.toml`
 
 ```toml
 # Default agents when --agents is not specified
@@ -158,7 +158,7 @@ Central markdown file for your coding guidelines, style guides, and project cont
 # include_in_rules = false
 ```
 
-### `.ruler/mcp.json`
+### `.imrule/mcp.json`
 
 MCP server definitions in standard format:
 
@@ -173,11 +173,11 @@ MCP server definitions in standard format:
 }
 ```
 
-### `.ruler/skills/`
+### `.imrule/skills/`
 
 Place skill directories here. Each skill needs a `SKILL.md` file.
 
-### `.ruler/agents/`
+### `.imrule/agents/`
 
 Place subagent definitions here as markdown files with YAML frontmatter.
 

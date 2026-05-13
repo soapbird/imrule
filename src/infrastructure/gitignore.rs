@@ -8,8 +8,8 @@ use crate::application::ports::GitignorePort;
 use crate::domain::constants::normalize_path_separators;
 use crate::domain::error::ImruleError;
 
-const IMRULE_START_MARKER: &str = "# START Imrule Generated Files";
-const IMRULE_END_MARKER: &str = "# END Imrule Generated Files";
+const IMRULE_START_MARKER: &str = "# START ImRule Generated Files";
+const IMRULE_END_MARKER: &str = "# END ImRule Generated Files";
 
 pub struct GitignoreUpdater;
 
@@ -93,7 +93,7 @@ fn normalize_output_path(project_root: &Path, path: &Path) -> String {
 }
 
 fn is_ruler_input_path(path: &str) -> bool {
-    path.contains("/.ruler/") || path.starts_with(".ruler/")
+    path.contains("/.imrule/") || path.starts_with(".imrule/")
 }
 
 fn get_existing_paths_excluding_ruler_block(content: &str) -> Vec<String> {

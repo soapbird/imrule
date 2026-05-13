@@ -59,9 +59,9 @@ fn run_inner() -> Result<(), CliError> {
                 })
                 .map_err(|err| CliError::new(1, err.to_string()))?;
             if args.dry_run {
-                println!("Imrule apply dry run completed successfully.");
+                println!("ImRule apply dry run completed successfully.");
             } else {
-                println!("Imrule apply completed successfully.");
+                println!("ImRule apply completed successfully.");
             }
             if args.verbose {
                 println!("Files considered: {}", written.len());
@@ -76,7 +76,7 @@ fn run_inner() -> Result<(), CliError> {
                     global: args.global,
                 })
                 .map_err(|err| CliError::new(1, err.to_string()))?;
-            println!("Imrule initialized at {}", root.display());
+            println!("ImRule initialized at {}", root.display());
             Ok(())
         }
         Command::Revert(args) => {
@@ -94,7 +94,7 @@ fn run_inner() -> Result<(), CliError> {
                     local_only: args.local_only,
                 })
                 .map_err(|err| CliError::new(1, err.to_string()))?;
-            println!("Imrule revert completed successfully.");
+            println!("ImRule revert completed successfully.");
             if args.verbose {
                 println!("Files changed: {}", changed.len());
             }

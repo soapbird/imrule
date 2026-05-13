@@ -21,11 +21,11 @@ use tempfile::tempdir;
 fn discovers_skills_groupings_warnings_copies_and_gitignore_targets() {
     let tmp = tempdir().unwrap();
     let root = tmp.path();
-    fs::create_dir_all(root.join(".ruler/skills/group/nested")).unwrap();
-    fs::create_dir_all(root.join(".ruler/skills/solo")).unwrap();
-    fs::create_dir_all(root.join(".ruler/skills/stray/empty")).unwrap();
-    fs::write(root.join(".ruler/skills/group/nested/SKILL.md"), "nested").unwrap();
-    fs::write(root.join(".ruler/skills/solo/SKILL.md"), "solo").unwrap();
+    fs::create_dir_all(root.join(".imrule/skills/group/nested")).unwrap();
+    fs::create_dir_all(root.join(".imrule/skills/solo")).unwrap();
+    fs::create_dir_all(root.join(".imrule/skills/stray/empty")).unwrap();
+    fs::write(root.join(".imrule/skills/group/nested/SKILL.md"), "nested").unwrap();
+    fs::write(root.join(".imrule/skills/solo/SKILL.md"), "solo").unwrap();
 
     let discovered = discover_skills(root).unwrap();
     let names: Vec<_> = discovered
@@ -34,10 +34,10 @@ fn discovers_skills_groupings_warnings_copies_and_gitignore_targets() {
         .map(|skill| skill.name.as_str())
         .collect();
     assert_eq!(names, vec!["nested", "solo"]);
-    assert_eq!(discovered.warnings, vec!["Directory 'stray' in .ruler/skills has no SKILL.md and contains no sub-skills. It may be malformed or stray."]);
-    assert_eq!(format_validation_warnings(&discovered.warnings), "  - Directory 'stray' in .ruler/skills has no SKILL.md and contains no sub-skills. It may be malformed or stray.");
+    assert_eq!(discovered.warnings, vec!["Directory 'stray' in .imrule/skills has no SKILL.md and contains no sub-skills. It may be malformed or stray."]);
+    assert_eq!(format_validation_warnings(&discovered.warnings), "  - Directory 'stray' in .imrule/skills has no SKILL.md and contains no sub-skills. It may be malformed or stray.");
 
-    copy_skills_directory(&root.join(".ruler/skills"), &root.join(".claude/skills")).unwrap();
+    copy_skills_directory(&root.join(".imrule/skills"), &root.join(".claude/skills")).unwrap();
     assert_eq!(
         fs::read_to_string(root.join(".claude/skills/solo/SKILL.md")).unwrap(),
         "solo"
@@ -138,10 +138,10 @@ fn transforms_subagents_for_claude_cursor_codex_and_copilot() {
 fn discovers_subagents_and_computes_gitignore_targets() {
     let tmp = tempdir().unwrap();
     let root = tmp.path();
-    fs::create_dir_all(root.join(".ruler/agents")).unwrap();
-    fs::write(root.join(".ruler/agents/bad.md"), "no frontmatter").unwrap();
+    fs::create_dir_all(root.join(".imrule/agents")).unwrap();
+    fs::write(root.join(".imrule/agents/bad.md"), "no frontmatter").unwrap();
     fs::write(
-        root.join(".ruler/agents/good.md"),
+        root.join(".imrule/agents/good.md"),
         "---\nname: good\ndescription: Good\n---\nBody\n",
     )
     .unwrap();

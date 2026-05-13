@@ -1,4 +1,4 @@
-//! Init use case for creating Imrule configuration scaffolds.
+//! Init use case for creating ImRule configuration scaffolds.
 
 use std::path::PathBuf;
 
@@ -23,20 +23,20 @@ impl<'a> InitUseCase<'a> {
         Self { fs_port }
     }
 
-    /// Creates `.ruler` or global Imrule config files without overwriting existing files.
+    /// Creates `.imrule` or global ImRule config files without overwriting existing files.
     pub fn execute(&self, options: InitOptions) -> Result<PathBuf, ImruleError> {
         let root = if options.global {
-            xdg_config_home().join("ruler")
+            xdg_config_home().join("imrule")
         } else {
             options
                 .project_root
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
-                .join(".ruler")
+                .join(".imrule")
         };
 
         self.fs_port.ensure_dir_exists(&root)?;
         self.write_if_missing(root.join("AGENTS.md"), DEFAULT_INSTRUCTIONS)?;
-        self.write_if_missing(root.join("ruler.toml"), DEFAULT_TOML)?;
+        self.write_if_missing(root.join("imrule.toml"), DEFAULT_TOML)?;
         Ok(root)
     }
 
@@ -48,16 +48,16 @@ impl<'a> InitUseCase<'a> {
     }
 }
 
-const DEFAULT_INSTRUCTIONS: &str = "# AGENTS.md\n\nCentralised AI agent instructions. Add coding guidelines, style guides, and project context here.\n\nImrule concatenates all .md files in this directory (and subdirectories), starting with AGENTS.md (if present), then remaining files in sorted order.\n";
+const DEFAULT_INSTRUCTIONS: &str = "# AGENTS.md\n\nCentralised AI agent instructions. Add coding guidelines, style guides, and project context here.\n\nImRule concatenates all .md files in this directory (and subdirectories), starting with AGENTS.md (if present), then remaining files in sorted order.\n";
 
-const DEFAULT_TOML: &str = r#"# Imrule Configuration File
+const DEFAULT_TOML: &str = r#"# ImRule Configuration File
 # See https://github.com/soapbird/imrule for documentation.
 
 # To specify which agents are active by default when --agents is not used,
 # uncomment and populate the following line. If omitted, all agents are active.
 # default_agents = ["copilot", "claude"]
 
-# Enable nested rule loading from nested .ruler directories
+# Enable nested rule loading from nested .imrule directories
 # nested = false
 
 # [gitignore]

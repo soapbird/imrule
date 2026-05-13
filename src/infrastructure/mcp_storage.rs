@@ -24,7 +24,7 @@ impl Default for JsonMcpStorage {
 
 impl McpPort for JsonMcpStorage {
     fn read_ruler_mcp_config(&self, project_root: &Path) -> Result<Option<Value>, ImruleError> {
-        let path = project_root.join(".ruler/mcp.json");
+        let path = project_root.join(".imrule/mcp.json");
         if !path.exists() {
             return Ok(None);
         }

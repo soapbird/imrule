@@ -181,11 +181,11 @@ fn resolve_config_file(project_root: &Path, config_path: Option<&Path>) -> PathB
                 .join(config_path)
         }
     } else {
-        let local = project_root.join(".ruler/ruler.toml");
+        let local = project_root.join(".imrule/imrule.toml");
         if local.exists() {
             local
         } else {
-            xdg_config_home().join("ruler/ruler.toml")
+            xdg_config_home().join("imrule/imrule.toml")
         }
     }
 }

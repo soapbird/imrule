@@ -18,7 +18,7 @@ pub struct AugmentMcpServer {
     pub env: Option<std::collections::BTreeMap<String, String>>,
 }
 
-/// Transforms standard Imrule MCP JSON into Augment's array format.
+/// Transforms standard ImRule MCP JSON into Augment's array format.
 pub fn transform_ruler_to_augment_mcp(ruler_mcp_json: &Value) -> Vec<AugmentMcpServer> {
     let mut servers = Vec::new();
     let Some(mcp_servers) = ruler_mcp_json.get("mcpServers").and_then(Value::as_object) else {
