@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.1.0] - 2026-05-22
+
+### Fixed
+
+- `clear` now removes subagent directories (`.claude/agents/`, `.cursor/agents/`, `.codex/agents/`, `.github/agents/`) that were previously left behind
+- `clear` now removes entire skills directories (`.claude/skills/`, `.codex/skills/`, etc.) instead of only individual skill subdirectories, and works even when `.imrule/skills/` source no longer exists
+- `clear` now removes empty MCP config files after removing imrule-managed keys
+- `clear` now removes empty parent directories left after file deletion (`.agent/`, `.claude/`, `.codex/`, `.cursor/`, etc.)
+- `clear` now respects custom `output_path` overrides from `imrule.toml` agent configs, so files written to non-default locations are properly cleaned up
+
 ## [0.1.0.1] - 2026-05-13
 
 ### Fixed

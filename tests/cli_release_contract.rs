@@ -461,6 +461,210 @@ fn clear_removes_managed_skills_from_agent_dirs() {
 }
 
 #[test]
+fn clear_prunes_empty_parent_directories() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "Prune dirs test.").unwrap();
+
+    // Apply to agents that write into nested directories.
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "apply",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "antigravity,jetbrains-ai,amazonqcli",
+        ])
+        .assert()
+        .success();
+
+    // Verify nested dirs were created.
+    assert!(tmp.path().join(".agent/rules/imrule.md").exists());
+    assert!(tmp.path().join(".aiassistant/rules/AGENTS.md").exists());
+    assert!(tmp.path().join(".amazonq/rules/imrule_q_rules.md").exists());
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "clear",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "antigravity,jetbrains-ai,amazonqcli",
+        ])
+        .assert()
+        .success();
+
+    // Generated files removed.
+    assert!(!tmp.path().join(".agent/rules/imrule.md").exists());
+    assert!(!tmp.path().join(".aiassistant/rules/AGENTS.md").exists());
+    assert!(!tmp.path().join(".amazonq/rules/imrule_q_rules.md").exists());
+
+    // Empty parent directories must also be pruned.
+    assert!(!tmp.path().join(".agent").exists());
+    assert!(!tmp.path().join(".aiassistant").exists());
+    assert!(!tmp.path().join(".amazonq").exists());
+}
+
+#[test]
+fn clear_removes_entire_skills_directory() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule/skills/openai")).unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "Skills dir clear.").unwrap();
+    fs::write(
+        tmp.path().join(".imrule/skills/openai/SKILL.md"),
+        "# openai skill",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join(".imrule/skills/openai/openai.yaml"),
+        "name: openai",
+    )
+    .unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "apply",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "claude,codex",
+        ])
+        .assert()
+        .success();
+
+    // Skills propagated to agent dirs.
+    assert!(tmp.path().join(".claude/skills/openai/SKILL.md").exists());
+    assert!(tmp
+        .path()
+        .join(".claude/skills/openai/openai.yaml")
+        .exists());
+    assert!(tmp.path().join(".codex/skills/openai/SKILL.md").exists());
+    assert!(tmp.path().join(".codex/skills/openai/openai.yaml").exists());
+
+    // Remove .imrule/skills so discover_skills won't find names.
+    fs::remove_dir_all(tmp.path().join(".imrule/skills")).unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "clear",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "claude,codex",
+        ])
+        .assert()
+        .success();
+
+    // Skills directories must be fully removed even though .imrule/skills no longer exists.
+    assert!(!tmp.path().join(".claude/skills").exists());
+    assert!(!tmp.path().join(".codex/skills").exists());
+    assert!(!tmp.path().join(".claude").exists());
+    assert!(!tmp.path().join(".codex").exists());
+}
+
+#[test]
+fn clear_removes_subagent_directories_and_prunes_parents() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule/agents")).unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "Subagent clear test.").unwrap();
+    fs::write(
+        tmp.path().join(".imrule/agents/coder.md"),
+        "---\nname: coder\ndescription: Helps with coding\n---\n\nCode assistant.\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "apply",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "claude,cursor,codex,copilot",
+        ])
+        .assert()
+        .success();
+
+    // Subagents were propagated.
+    assert!(tmp.path().join(".claude/agents/coder.md").exists());
+    assert!(tmp.path().join(".cursor/agents/coder.md").exists());
+    assert!(tmp.path().join(".codex/agents/coder.md").exists());
+    assert!(tmp.path().join(".github/agents/coder.md").exists());
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "clear",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "claude,cursor,codex,copilot",
+        ])
+        .assert()
+        .success();
+
+    // Subagent directories removed.
+    assert!(!tmp.path().join(".claude/agents").exists());
+    assert!(!tmp.path().join(".cursor/agents").exists());
+    assert!(!tmp.path().join(".codex/agents").exists());
+    assert!(!tmp.path().join(".github/agents").exists());
+
+    // Empty parent directories pruned.
+    assert!(!tmp.path().join(".claude").exists());
+    assert!(!tmp.path().join(".cursor").exists());
+    assert!(!tmp.path().join(".codex").exists());
+    assert!(!tmp.path().join(".github").exists());
+}
+
+#[test]
+fn clear_removes_empty_mcp_config_and_prunes_parents() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "MCP prune test.").unwrap();
+    fs::write(
+        tmp.path().join(".imrule/mcp.json"),
+        r#"{"mcpServers":{"my-tool":{"command":"node"}}}"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "apply",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "cursor",
+        ])
+        .assert()
+        .success();
+
+    // Cursor MCP config was created.
+    assert!(tmp.path().join(".cursor/mcp.json").exists());
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "clear",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "cursor",
+        ])
+        .assert()
+        .success();
+
+    // MCP config file removed (was only imrule keys).
+    assert!(!tmp.path().join(".cursor/mcp.json").exists());
+    // Empty .cursor directory pruned.
+    assert!(!tmp.path().join(".cursor").exists());
+}
+
+#[test]
 fn clear_removes_imrule_mcp_keys_from_native_config() {
     let tmp = tempdir().unwrap();
     fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
@@ -586,4 +790,53 @@ fn apply_uses_global_imrule_dir_as_fallback() {
 
     let claude = fs::read_to_string(project.path().join("CLAUDE.md")).unwrap();
     assert!(claude.contains("Global fallback rules."));
+}
+
+#[test]
+fn clear_removes_custom_output_path_from_config() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
+    fs::write(
+        tmp.path().join(".imrule/AGENTS.md"),
+        "Custom output path clear test.",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join(".imrule/imrule.toml"),
+        "[agents.claude]\noutput_path = \"rules/MY_CLAUDE.md\"\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "apply",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "claude",
+        ])
+        .assert()
+        .success();
+
+    // Custom output path was used, not default CLAUDE.md.
+    assert!(!tmp.path().join("CLAUDE.md").exists());
+    assert!(tmp.path().join("rules/MY_CLAUDE.md").exists());
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "clear",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "claude",
+        ])
+        .assert()
+        .success();
+
+    // Custom output path file removed.
+    assert!(!tmp.path().join("rules/MY_CLAUDE.md").exists());
+    // Empty parent directories pruned.
+    assert!(!tmp.path().join("rules").exists());
 }
