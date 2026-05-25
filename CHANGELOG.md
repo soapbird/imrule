@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.2.0] - 2026-05-26
+
+### Changed
+
+- **MSRV bumped from 1.80 to 1.85.** Required because the upstream dependency graph (`indexmap`, `getrandom`, `tempfile`, `assert_cmd`, and others) now uses Rust `edition2024`, which is only stabilized in 1.85+. Trying to keep MSRV at 1.80 forced manual lockfile pinning of nearly every transitive dep, which is not sustainable. Users on Rust 1.80–1.84 must upgrade their toolchain to build from source.
+- CI matrix updated: the `Test (MSRV 1.85)` job now runs on Rust 1.85, and the release build job uses 1.85 as well. The `Test (stable)` job continues to run on the latest stable toolchain.
+
+### Fixed
+
+- Two clippy lints surfaced by the 1.85 upgrade are addressed: `clippy::unnecessary_map_or` (replaced `map_or(true, ...)` with `is_none_or(...)`) and `clippy::needless_lifetimes` (elided `'a` lifetime on `impl AgentWriterPort for DefaultAgentWriter<'_>`). No behavior changes.
+
 ## [0.1.1.1] - 2026-05-26
 
 ### Fixed
