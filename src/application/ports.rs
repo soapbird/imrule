@@ -40,6 +40,10 @@ pub trait FileSystemPort {
     /// Recursively remove a directory and all its contents.
     fn remove_dir_all(&self, path: &Path) -> Result<(), ImruleError>;
 
+    /// Remove a directory only if it is empty.
+    /// Returns `true` if the directory was removed, `false` if it was not empty or didn't exist.
+    fn remove_dir_if_empty(&self, path: &Path) -> Result<bool, ImruleError>;
+
     /// Copy a file.
     fn copy_file(&self, from: &Path, to: &Path) -> Result<(), ImruleError>;
 

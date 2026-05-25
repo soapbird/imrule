@@ -202,8 +202,9 @@ merge_strategy = "merge"
 #[test]
 fn load_config_without_file_returns_empty_native_sections() {
     let tmp = tempdir().unwrap();
+    let xdg_home = tempdir().unwrap();
 
-    let loader = TomlConfigLoader::new();
+    let loader = TomlConfigLoader::new().with_xdg_home(xdg_home.path().to_path_buf());
     let loaded = loader.load_config(tmp.path(), None, None).unwrap();
 
     assert!(loaded.default_agents.is_none());
@@ -216,6 +217,24 @@ fn load_config_without_file_returns_empty_native_sections() {
     assert_eq!(loaded.subagents.unwrap().enabled, None);
     assert!(!loaded.nested);
     assert!(!loaded.nested_defined);
+}
+
+#[test]
+fn load_config_falls_back_to_overridden_xdg_home() {
+    let tmp = tempdir().unwrap();
+    let xdg_home = tempdir().unwrap();
+
+    fs::create_dir_all(xdg_home.path().join("imrule")).unwrap();
+    fs::write(
+        xdg_home.path().join("imrule/imrule.toml"),
+        r#"default_agents = ["claude", "codex"]"#,
+    )
+    .unwrap();
+
+    let loader = TomlConfigLoader::new().with_xdg_home(xdg_home.path().to_path_buf());
+    let loaded = loader.load_config(tmp.path(), None, None).unwrap();
+
+    assert_eq!(loaded.default_agents.unwrap(), vec!["claude", "codex"]);
 }
 
 #[test]

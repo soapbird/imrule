@@ -17,17 +17,28 @@ use crate::domain::error::ImruleError;
 
 const SUBAGENT_RESERVED_KEYS: &[&str] = &["enabled", "include_in_rules"];
 
-pub struct TomlConfigLoader;
+#[derive(Default)]
+pub struct TomlConfigLoader {
+    xdg_home_override: Option<PathBuf>,
+}
 
 impl TomlConfigLoader {
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
-}
 
-impl Default for TomlConfigLoader {
-    fn default() -> Self {
-        Self::new()
+    /// Overrides the XDG config home directory used for the global config
+    /// fallback. Useful in tests that need to isolate themselves from the
+    /// caller's `~/.config/imrule/imrule.toml`.
+    pub fn with_xdg_home(mut self, xdg_home: PathBuf) -> Self {
+        self.xdg_home_override = Some(xdg_home);
+        self
+    }
+
+    fn resolve_xdg_home(&self) -> PathBuf {
+        self.xdg_home_override
+            .clone()
+            .unwrap_or_else(xdg_config_home)
     }
 }
 
@@ -38,7 +49,7 @@ impl ConfigPort for TomlConfigLoader {
         config_path: Option<&Path>,
         cli_agents: Option<Vec<String>>,
     ) -> Result<LoadedConfig, ImruleError> {
-        let config_file = resolve_config_file(project_root, config_path);
+        let config_file = resolve_config_file(project_root, config_path, &self.resolve_xdg_home());
         let raw = match fs::read_to_string(&config_file) {
             Ok(text) if text.trim().is_empty() => Value::Table(Default::default()),
             Ok(text) => text.parse::<Value>().map_err(|e| {
@@ -171,7 +182,11 @@ impl ConfigPort for TomlConfigLoader {
     }
 }
 
-fn resolve_config_file(project_root: &Path, config_path: Option<&Path>) -> PathBuf {
+fn resolve_config_file(
+    project_root: &Path,
+    config_path: Option<&Path>,
+    xdg_home: &Path,
+) -> PathBuf {
     if let Some(config_path) = config_path {
         if config_path.is_absolute() {
             config_path.to_path_buf()
@@ -199,7 +214,7 @@ fn resolve_config_file(project_root: &Path, config_path: Option<&Path>) -> PathB
                 break;
             }
         }
-        xdg_config_home().join("imrule/imrule.toml")
+        xdg_home.join("imrule/imrule.toml")
     }
 }
 

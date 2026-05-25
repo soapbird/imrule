@@ -2,10 +2,14 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::application::apply_use_case::{get_agent_output_paths, resolve_selected_agents};
+use crate::application::apply_use_case::{instruction_output_path, resolve_selected_agents};
 use crate::application::ports::{ConfigPort, FileSystemPort, GitignorePort, McpPort};
 use crate::domain::agent::{all_agents, AgentDefinition};
-use crate::domain::constants::{GENERATED_BY_IMRULE_MARKER, LEGACY_DIR_NAME};
+use crate::domain::config::LoadedConfig;
+use crate::domain::constants::{
+    CLAUDE_SUBAGENTS_PATH, CODEX_SUBAGENTS_PATH, COPILOT_SUBAGENTS_PATH, CURSOR_SUBAGENTS_PATH,
+    GENERATED_BY_IMRULE_MARKER, LEGACY_DIR_NAME,
+};
 use crate::domain::error::ImruleError;
 use crate::domain::mcp::agent_supports_mcp;
 
@@ -60,7 +64,9 @@ impl<'a> ClearUseCase<'a> {
         // Collect MCP keys before any deletion so native configs can be cleaned.
         let imrule_mcp_keys = self.collect_mcp_keys(&options.project_root)?;
 
-        let output_paths = get_agent_output_paths(&options.project_root, &selected_agents);
+        // Resolve output paths using the same logic as apply (respects custom output_path from config).
+        let output_paths =
+            get_resolved_output_paths(&options.project_root, &selected_agents, &config);
         let mut removed = Vec::new();
 
         // Remove generated rule files and their backups.
@@ -71,43 +77,20 @@ impl<'a> ClearUseCase<'a> {
             self.remove_backup(path, options.dry_run)?;
         }
 
-        // Remove only the skill subdirectories that imrule manages (not the whole skills root).
-        let managed_skill_names: Vec<String> = {
-            crate::infrastructure::skills::discover_skills(&options.project_root)
-                .map(|d| d.skills.into_iter().map(|s| s.name).collect())
-                .unwrap_or_default()
-        };
-        if !managed_skill_names.is_empty() {
-            for skills_root in self.collect_skills_dirs(&options.project_root, &selected_agents) {
-                for skill_name in &managed_skill_names {
-                    let skill_path = skills_root.join(skill_name);
-                    if self.fs_port.file_exists(&skill_path) {
-                        if !options.dry_run {
-                            self.fs_port.remove_dir_all(&skill_path)?;
-                        }
-                        removed.push(skill_path);
-                    }
-                }
-            }
-        }
+        // Remove subagent directories created by imrule apply.
+        self.clear_subagents(&options, &selected_agents, &mut removed)?;
 
-        // Remove imrule-managed keys from native MCP configs.
-        if !imrule_mcp_keys.is_empty() {
-            for agent in &selected_agents {
-                if !agent_supports_mcp(agent) {
-                    continue;
-                }
-                let Some(native_path) = self
-                    .mcp_port
-                    .get_native_mcp_path(agent.name, &options.project_root)
-                else {
-                    continue;
-                };
-                if !self.fs_port.file_exists(&native_path) {
-                    continue;
-                }
-                if !options.dry_run {
-                    self.remove_mcp_keys(&native_path, agent.mcp_server_key, &imrule_mcp_keys)?;
+        // Remove entire agent skills root directories (created by imrule apply).
+        self.clear_skills(&options, &selected_agents, &mut removed)?;
+
+        // Remove imrule-managed keys from native MCP configs and delete empty ones.
+        self.clear_mcp_configs(&options, &selected_agents, &imrule_mcp_keys, &mut removed)?;
+
+        // Prune empty parent directories left after all file removals.
+        if !options.dry_run {
+            for path in &output_paths {
+                if let Some(parent) = path.parent() {
+                    self.prune_empty_parents(parent, &options.project_root)?;
                 }
             }
         }
@@ -134,6 +117,106 @@ impl<'a> ClearUseCase<'a> {
         Ok(removed)
     }
 
+    fn clear_subagents(
+        &self,
+        options: &ClearOptions,
+        selected_agents: &[AgentDefinition],
+        removed: &mut Vec<PathBuf>,
+    ) -> Result<(), ImruleError> {
+        let subagent_targets: &[(&str, &str)] = &[
+            ("claude", CLAUDE_SUBAGENTS_PATH),
+            ("cursor", CURSOR_SUBAGENTS_PATH),
+            ("codex", CODEX_SUBAGENTS_PATH),
+            ("copilot", COPILOT_SUBAGENTS_PATH),
+        ];
+
+        let selected_ids: std::collections::BTreeSet<&str> = selected_agents
+            .iter()
+            .filter(|a| a.capabilities.native_subagents)
+            .map(|a| a.identifier)
+            .collect();
+
+        let mut seen = std::collections::BTreeSet::new();
+        for (id, rel_path) in subagent_targets {
+            if !selected_ids.contains(id) {
+                continue;
+            }
+            let dir = options.project_root.join(rel_path);
+            let key = dir.to_string_lossy().to_string();
+            if !seen.insert(key) {
+                continue;
+            }
+            if self.fs_port.file_exists(&dir) {
+                if !options.dry_run {
+                    self.fs_port.remove_dir_all(&dir)?;
+                    if let Some(parent) = dir.parent() {
+                        self.prune_empty_parents(parent, &options.project_root)?;
+                    }
+                }
+                removed.push(dir);
+            }
+        }
+        Ok(())
+    }
+
+    fn clear_skills(
+        &self,
+        options: &ClearOptions,
+        selected_agents: &[AgentDefinition],
+        removed: &mut Vec<PathBuf>,
+    ) -> Result<(), ImruleError> {
+        for skills_root in self.collect_skills_dirs(&options.project_root, selected_agents) {
+            if self.fs_port.file_exists(&skills_root) {
+                if !options.dry_run {
+                    self.fs_port.remove_dir_all(&skills_root)?;
+                    self.prune_empty_parents(
+                        skills_root.parent().unwrap_or(&skills_root),
+                        &options.project_root,
+                    )?;
+                }
+                removed.push(skills_root);
+            }
+        }
+        Ok(())
+    }
+
+    fn clear_mcp_configs(
+        &self,
+        options: &ClearOptions,
+        selected_agents: &[AgentDefinition],
+        imrule_mcp_keys: &[String],
+        removed: &mut Vec<PathBuf>,
+    ) -> Result<(), ImruleError> {
+        if imrule_mcp_keys.is_empty() {
+            return Ok(());
+        }
+        for agent in selected_agents {
+            if !agent_supports_mcp(agent) {
+                continue;
+            }
+            let Some(native_path) = self
+                .mcp_port
+                .get_native_mcp_path(agent.name, &options.project_root)
+            else {
+                continue;
+            };
+            if !self.fs_port.file_exists(&native_path) {
+                continue;
+            }
+            if options.dry_run {
+                removed.push(native_path);
+                continue;
+            }
+            self.remove_mcp_keys(&native_path, agent.mcp_server_key, imrule_mcp_keys)?;
+            self.remove_mcp_file_if_empty(&native_path)?;
+            removed.push(native_path.clone());
+            if let Some(parent) = native_path.parent() {
+                self.prune_empty_parents(parent, &options.project_root)?;
+            }
+        }
+        Ok(())
+    }
+
     fn remove_if_generated(&self, path: &Path, dry_run: bool) -> Result<bool, ImruleError> {
         if !self.fs_port.file_exists(path) {
             return Ok(false);
@@ -154,6 +237,20 @@ impl<'a> ClearUseCase<'a> {
         let bak_path = PathBuf::from(bak);
         if self.fs_port.file_exists(&bak_path) && !dry_run {
             self.fs_port.remove_file(&bak_path)?;
+        }
+        Ok(())
+    }
+
+    /// Removes empty directories starting from `path` and walking up to (but not including) `stop_at`.
+    fn prune_empty_parents(&self, path: &Path, stop_at: &Path) -> Result<(), ImruleError> {
+        let mut dir = path.to_path_buf();
+        while dir != stop_at && dir.starts_with(stop_at) {
+            if !self.fs_port.remove_dir_if_empty(&dir)? {
+                break;
+            }
+            if !dir.pop() {
+                break;
+            }
         }
         Ok(())
     }
@@ -234,4 +331,47 @@ impl<'a> ClearUseCase<'a> {
         }
         self.mcp_port.write_native_mcp(native_path, &config)
     }
+
+    /// Removes a native MCP config file if it contains only empty objects/arrays.
+    fn remove_mcp_file_if_empty(&self, native_path: &Path) -> Result<(), ImruleError> {
+        if !self.fs_port.file_exists(native_path) {
+            return Ok(());
+        }
+        let content = self.fs_port.read_text(native_path)?;
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+            if is_json_effectively_empty(&val) {
+                self.fs_port.remove_file(native_path)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Returns true if a JSON value contains no meaningful data (only empty objects/arrays/nulls).
+fn is_json_effectively_empty(val: &serde_json::Value) -> bool {
+    match val {
+        serde_json::Value::Null => true,
+        serde_json::Value::Object(map) => {
+            map.is_empty() || map.values().all(is_json_effectively_empty)
+        }
+        serde_json::Value::Array(arr) => arr.is_empty(),
+        _ => false,
+    }
+}
+
+/// Resolves output paths for all agents, respecting custom output_path from imrule.toml config.
+/// Uses the same `instruction_output_path` function as apply to ensure custom paths are covered.
+fn get_resolved_output_paths(
+    project_root: &Path,
+    agents: &[AgentDefinition],
+    config: &LoadedConfig,
+) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for agent in agents {
+        let agent_config = config.agent_configs.get(agent.identifier);
+        if let Some(path) = instruction_output_path(project_root, agent, agent_config) {
+            paths.push(path);
+        }
+    }
+    paths
 }

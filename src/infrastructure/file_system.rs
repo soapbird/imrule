@@ -68,6 +68,16 @@ impl FileSystemPort for FsFileSystem {
         Ok(())
     }
 
+    fn remove_dir_if_empty(&self, path: &Path) -> Result<bool, ImruleError> {
+        if !path.is_dir() {
+            return Ok(false);
+        }
+        match fs::remove_dir(path) {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
     fn copy_file(&self, from: &Path, to: &Path) -> Result<(), ImruleError> {
         fs::copy(from, to).map_err(|e| ImruleError::filesystem(e.to_string()))?;
         Ok(())
