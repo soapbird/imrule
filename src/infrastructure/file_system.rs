@@ -149,7 +149,7 @@ impl FileSystemPort for FsFileSystem {
 
         let mut others: Vec<(PathBuf, String)> = md_files
             .into_iter()
-            .filter(|(path, _)| primary.as_ref().map_or(true, |(p, _)| !same_path(path, p)))
+            .filter(|(path, _)| primary.as_ref().is_none_or(|(p, _)| !same_path(path, p)))
             .collect();
         others.sort_by(|a, b| a.0.to_string_lossy().cmp(&b.0.to_string_lossy()));
 

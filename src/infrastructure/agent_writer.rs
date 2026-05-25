@@ -19,7 +19,7 @@ impl<'a> DefaultAgentWriter<'a> {
     }
 }
 
-impl<'a> AgentWriterPort for DefaultAgentWriter<'a> {
+impl AgentWriterPort for DefaultAgentWriter<'_> {
     fn write_agent_rules(
         &self,
         agent: &AgentDefinition,
