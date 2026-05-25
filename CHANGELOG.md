@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.1.1] - 2026-05-26
+
+### Fixed
+
+- `TomlConfigLoader` no longer pulls in the caller's global `~/.config/imrule/imrule.toml` during in-process library tests. A new `TomlConfigLoader::with_xdg_home(...)` builder lets callers (currently tests) override the XDG config home that the loader falls back to when no project-local `imrule.toml` is found. Production CLI behavior is unchanged.
+
 ## [0.1.1.0] - 2026-05-22
 
 ### Fixed
