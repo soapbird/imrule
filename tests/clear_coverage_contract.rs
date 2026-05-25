@@ -47,11 +47,7 @@ fn clear_without_agents_flag_targets_all_agents() {
     // Clear WITHOUT --agents — should target all agents.
     Command::cargo_bin("imrule")
         .unwrap()
-        .args([
-            "clear",
-            "--project-root",
-            tmp.path().to_str().unwrap(),
-        ])
+        .args(["clear", "--project-root", tmp.path().to_str().unwrap()])
         .assert()
         .success();
 
@@ -67,11 +63,7 @@ fn clear_without_agents_flag_targets_all_agents() {
 fn clear_when_no_generated_files_is_a_noop() {
     let tmp = tempdir().unwrap();
     fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
-    fs::write(
-        tmp.path().join(".imrule/AGENTS.md"),
-        "Nothing to clear.",
-    )
-    .unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "Nothing to clear.").unwrap();
 
     // Do NOT apply. Clear on a project with no generated files.
     Command::cargo_bin("imrule")
@@ -288,17 +280,9 @@ fn clear_dry_run_preserves_mcp_config() {
 fn clear_with_empty_mcp_json_skips_mcp_cleanup() {
     let tmp = tempdir().unwrap();
     fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
-    fs::write(
-        tmp.path().join(".imrule/AGENTS.md"),
-        "Empty MCP test.",
-    )
-    .unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "Empty MCP test.").unwrap();
     // mcp.json exists but has no mcpServers — collect_mcp_keys returns empty vec.
-    fs::write(
-        tmp.path().join(".imrule/mcp.json"),
-        r#"{"other":"data"}"#,
-    )
-    .unwrap();
+    fs::write(tmp.path().join(".imrule/mcp.json"), r#"{"other":"data"}"#).unwrap();
 
     Command::cargo_bin("imrule")
         .unwrap()
@@ -332,11 +316,7 @@ fn clear_with_empty_mcp_json_skips_mcp_cleanup() {
 fn clear_removes_backup_files_alongside_generated() {
     let tmp = tempdir().unwrap();
     fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
-    fs::write(
-        tmp.path().join(".imrule/AGENTS.md"),
-        "Backup removal test.",
-    )
-    .unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "Backup removal test.").unwrap();
 
     // Create a pre-existing CLAUDE.md (user-owned) so apply creates a .bak.
     fs::write(tmp.path().join("CLAUDE.md"), "User content").unwrap();
@@ -381,16 +361,8 @@ fn clear_removes_both_imrule_and_ruler_with_remove_source() {
     // Create BOTH .imrule and .ruler — only .imrule is used by apply.
     fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
     fs::create_dir_all(tmp.path().join(".ruler")).unwrap();
-    fs::write(
-        tmp.path().join(".imrule/AGENTS.md"),
-        "Both dirs test.",
-    )
-    .unwrap();
-    fs::write(
-        tmp.path().join(".ruler/AGENTS.md"),
-        "Legacy content.",
-    )
-    .unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "Both dirs test.").unwrap();
+    fs::write(tmp.path().join(".ruler/AGENTS.md"), "Legacy content.").unwrap();
 
     Command::cargo_bin("imrule")
         .unwrap()
