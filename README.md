@@ -249,7 +249,7 @@ Place subagent definitions here as markdown files with YAML frontmatter.
 
 ## Development
 
-Requires Rust 1.80+.
+Requires Rust 1.85+.
 
 ```bash
 make              # fmt + lint + test + build
