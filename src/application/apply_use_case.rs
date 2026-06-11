@@ -8,7 +8,7 @@ use crate::application::ports::{
 use crate::domain::agent::{all_agents, AgentDefinition, AgentOutputPaths};
 use crate::domain::config::{AgentConfig, LoadedConfig, McpStrategy};
 use crate::domain::error::ImruleError;
-use crate::domain::mcp::{filter_mcp_config_for_agent, merge_mcp};
+use crate::domain::mcp::{build_imrule_mcp_config, filter_mcp_config_for_agent, merge_mcp};
 use crate::domain::rules::concatenate_rules;
 use crate::domain::skills::get_skills_gitignore_paths;
 use crate::infrastructure::skills::{copy_skills_directory, discover_skills};
@@ -143,9 +143,10 @@ impl<'a> ApplyUseCase<'a> {
         config: &LoadedConfig,
         selected_agents: &[AgentDefinition],
     ) -> Result<Vec<PathBuf>, ImruleError> {
-        let Some(imrule_mcp) = self
+        let json_mcp = self
             .mcp_port
-            .read_imrule_mcp_config(&options.project_root)?
+            .read_imrule_mcp_config(&options.project_root)?;
+        let Some(imrule_mcp) = build_imrule_mcp_config(json_mcp.as_ref(), &config.mcp_servers)
         else {
             return Ok(Vec::new());
         };

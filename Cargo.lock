@@ -228,6 +228,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml",
+ "toml_edit",
 ]
 
 [[package]]

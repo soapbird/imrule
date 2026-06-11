@@ -20,6 +20,17 @@ pub trait ConfigPort {
     ) -> Result<LoadedConfig, ImruleError>;
 }
 
+/// Persists ImRule configuration back to the resolved TOML file.
+pub trait ConfigWritePort {
+    /// Saves the given configuration to the resolved config file.
+    fn save_config(
+        &self,
+        project_root: &Path,
+        config_path: Option<&Path>,
+        config: &LoadedConfig,
+    ) -> Result<(), ImruleError>;
+}
+
 /// Abstracts filesystem operations so use cases remain testable.
 pub trait FileSystemPort {
     /// Read a text file.

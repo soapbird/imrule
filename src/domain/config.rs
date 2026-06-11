@@ -14,6 +14,59 @@ pub enum McpStrategy {
     Overwrite,
 }
 
+/// MCP transport types recognised by ImRule.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum McpTransport {
+    #[default]
+    Stdio,
+    Http,
+    Sse,
+}
+
+/// A single MCP server definition stored in imrule.toml under `[mcp_servers.<name>]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpServerDefinition {
+    pub transport: McpTransport,
+    /// URL for remote transports (`http`, `sse`).
+    pub url: Option<String>,
+    /// Command for `stdio` transport.
+    pub command: Option<String>,
+    /// Arguments for `stdio` transport.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    /// Environment variables for `stdio` transport.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    /// Optional headers for remote transports.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
+}
+
+impl McpServerDefinition {
+    pub fn stdio(command: impl Into<String>, args: Vec<String>) -> Self {
+        Self {
+            transport: McpTransport::Stdio,
+            url: None,
+            command: Some(command.into()),
+            args,
+            env: BTreeMap::new(),
+            headers: BTreeMap::new(),
+        }
+    }
+
+    pub fn remote(transport: McpTransport, url: impl Into<String>) -> Self {
+        Self {
+            transport,
+            url: Some(url.into()),
+            command: None,
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            headers: BTreeMap::new(),
+        }
+    }
+}
+
 /// MCP configuration for global or agent-specific settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpConfig {
@@ -113,6 +166,7 @@ pub struct LoadedConfig {
     pub agent_configs: BTreeMap<String, AgentConfig>,
     pub cli_agents: Option<Vec<String>>,
     pub mcp: Option<McpConfig>,
+    pub mcp_servers: BTreeMap<String, McpServerDefinition>,
     pub gitignore: Option<GitignoreConfig>,
     pub skills: Option<SkillsConfig>,
     pub subagents: Option<SubagentsConfig>,

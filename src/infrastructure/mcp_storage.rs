@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 use crate::application::ports::McpPort;
 use crate::domain::constants::LEGACY_DIR_NAME;
 use crate::domain::error::ImruleError;
+use crate::infrastructure::mcp_storage_toml::{is_toml_mcp_path, read_toml_mcp, write_toml_mcp};
 
 pub struct JsonMcpStorage;
 
@@ -61,8 +62,8 @@ impl McpPort for JsonMcpStorage {
     }
 
     fn read_native_mcp(&self, file_path: &Path) -> Result<Value, ImruleError> {
-        if file_path.extension().and_then(|e| e.to_str()) == Some("toml") {
-            return Ok(json!({}));
+        if is_toml_mcp_path(file_path) {
+            return read_toml_mcp(file_path);
         }
         match fs::read_to_string(file_path) {
             Ok(text) => Ok(serde_json::from_str(&text).unwrap_or_else(|_| json!({}))),
@@ -72,8 +73,8 @@ impl McpPort for JsonMcpStorage {
     }
 
     fn write_native_mcp(&self, file_path: &Path, data: &Value) -> Result<(), ImruleError> {
-        if file_path.extension().and_then(|e| e.to_str()) == Some("toml") {
-            return Ok(());
+        if is_toml_mcp_path(file_path) {
+            return write_toml_mcp(file_path, data);
         }
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent).map_err(|e| ImruleError::mcp(e.to_string()))?;
@@ -104,6 +105,7 @@ impl McpPort for JsonMcpStorage {
             "Firebase Studio" => vec![project_root.join(".idx/mcp.json")],
             "Factory Droid" => vec![project_root.join(".factory/mcp.json")],
             "Zed" => vec![project_root.join(".zed/settings.json")],
+            "Mistral" => vec![project_root.join(".vibe/config.toml")],
             _ => return None,
         };
 
