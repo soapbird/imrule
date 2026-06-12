@@ -217,6 +217,51 @@ fn load_config_without_file_returns_empty_native_sections() {
     assert_eq!(loaded.subagents.unwrap().enabled, None);
     assert!(!loaded.nested);
     assert!(!loaded.nested_defined);
+    assert!(loaded.mcp_servers.is_empty());
+}
+
+#[test]
+fn load_config_parses_mcp_servers_section() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        r#"
+[mcp_servers.linear]
+transport = "http"
+url = "https://mcp.linear.app/mcp"
+
+[mcp_servers.github]
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+env = { GITHUB_TOKEN = "xxx" }
+"#,
+    )
+    .unwrap();
+
+    let loader = TomlConfigLoader::new();
+    let loaded = loader.load_config(root, None, None).unwrap();
+
+    let linear = loaded.mcp_servers.get("linear").unwrap();
+    assert_eq!(linear.transport, imrule::domain::config::McpTransport::Http);
+    assert_eq!(linear.url.as_deref(), Some("https://mcp.linear.app/mcp"));
+
+    let github = loaded.mcp_servers.get("github").unwrap();
+    assert_eq!(
+        github.transport,
+        imrule::domain::config::McpTransport::Stdio
+    );
+    assert_eq!(github.command.as_deref(), Some("npx"));
+    assert_eq!(
+        github.args,
+        vec!["-y", "@modelcontextprotocol/server-github"]
+    );
+    assert_eq!(
+        github.env.get("GITHUB_TOKEN").map(String::as_str),
+        Some("xxx")
+    );
 }
 
 #[test]

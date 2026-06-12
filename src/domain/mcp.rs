@@ -1,9 +1,11 @@
 //! Capability-based MCP config filtering and merge helpers.
 
+use std::collections::BTreeMap;
+
 use serde_json::{json, Map, Value};
 
 use crate::domain::agent::AgentDefinition;
-use crate::domain::config::McpStrategy;
+use crate::domain::config::{McpServerDefinition, McpStrategy, McpTransport};
 
 /// MCP transport capabilities for an agent.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -53,6 +55,7 @@ pub fn filter_mcp_config_for_agent(mcp_config: &Value, agent: &AgentDefinition) 
                 continue;
             };
             let mut transformed = Map::new();
+            transformed.insert("type".to_string(), json!("stdio"));
             transformed.insert("command".to_string(), json!("npx"));
             transformed.insert("args".to_string(), json!(["-y", "mcp-remote@latest", url]));
             for (key, value) in config {
@@ -102,4 +105,83 @@ fn extract_servers(config: &Value, server_key: &str) -> Map<String, Value> {
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default()
+}
+
+/// Converts an ImRule MCP server definition to the JSON shape expected by agent configs.
+pub fn mcp_server_definition_to_json(def: &McpServerDefinition) -> Value {
+    match def.transport {
+        McpTransport::Stdio => {
+            let mut obj = Map::new();
+            obj.insert("type".to_string(), Value::String("stdio".to_string()));
+            if let Some(command) = &def.command {
+                obj.insert("command".to_string(), Value::String(command.clone()));
+            }
+            if !def.args.is_empty() {
+                obj.insert(
+                    "args".to_string(),
+                    Value::Array(def.args.iter().cloned().map(Value::String).collect()),
+                );
+            }
+            if !def.env.is_empty() {
+                let env_map: Map<String, Value> = def
+                    .env
+                    .iter()
+                    .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+                    .collect();
+                obj.insert("env".to_string(), Value::Object(env_map));
+            }
+            Value::Object(obj)
+        }
+        McpTransport::Http | McpTransport::Sse => {
+            let mut obj = Map::new();
+            let type_value = match def.transport {
+                McpTransport::Http => "http",
+                McpTransport::Sse => "sse",
+                McpTransport::Stdio => unreachable!(),
+            };
+            obj.insert("type".to_string(), Value::String(type_value.to_string()));
+            if let Some(url) = &def.url {
+                obj.insert("url".to_string(), Value::String(url.clone()));
+            }
+            if !def.headers.is_empty() {
+                let header_map: Map<String, Value> = def
+                    .headers
+                    .iter()
+                    .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+                    .collect();
+                obj.insert("headers".to_string(), Value::Object(header_map));
+            }
+            Value::Object(obj)
+        }
+    }
+}
+
+/// Builds the effective ImRule MCP configuration by combining an optional JSON config
+/// (usually from `.imrule/mcp.json`) with TOML-managed `[mcp_servers]` definitions.
+/// TOML-managed servers take precedence over JSON-managed servers with the same name.
+pub fn build_imrule_mcp_config(
+    json_config: Option<&Value>,
+    toml_servers: &BTreeMap<String, McpServerDefinition>,
+) -> Option<Value> {
+    if json_config.is_none() && toml_servers.is_empty() {
+        return None;
+    }
+
+    let mut servers = Map::new();
+
+    if let Some(json_config) = json_config {
+        if let Some(existing) = json_config.get("mcpServers").and_then(Value::as_object) {
+            for (key, value) in existing {
+                servers.insert(key.clone(), value.clone());
+            }
+        }
+    }
+
+    for (name, def) in toml_servers {
+        servers.insert(name.clone(), mcp_server_definition_to_json(def));
+    }
+
+    let mut result = Map::new();
+    result.insert("mcpServers".to_string(), Value::Object(servers));
+    Some(Value::Object(result))
 }

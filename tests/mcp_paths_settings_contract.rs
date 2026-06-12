@@ -48,6 +48,7 @@ fn filters_mcp_by_agent_capabilities_and_transforms_remote_to_stdio_when_needed(
         Some(json!({
             "mcpServers": {
                 "remote": {
+                    "type": "stdio",
                     "args": ["-y", "mcp-remote@latest", "https://example.test/mcp"],
                     "command": "npx",
                     "headers": { "Authorization": "Bearer token" }

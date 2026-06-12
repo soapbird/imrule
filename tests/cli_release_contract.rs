@@ -840,3 +840,126 @@ fn clear_removes_custom_output_path_from_config() {
     // Empty parent directories pruned.
     assert!(!tmp.path().join("rules").exists());
 }
+
+#[test]
+fn mcp_add_and_remove_persist_to_imrule_toml() {
+    let tmp = tempdir().unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args(["init", "--project-root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "mcp",
+            "add",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--transport",
+            "http",
+            "linear",
+            "https://mcp.linear.app/mcp",
+        ])
+        .assert()
+        .success();
+
+    let toml = fs::read_to_string(tmp.path().join(".imrule/imrule.toml")).unwrap();
+    assert!(toml.contains("[mcp_servers.linear]"));
+    assert!(toml.contains("transport = \"http\""));
+    assert!(toml.contains("url = \"https://mcp.linear.app/mcp\""));
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "mcp",
+            "add",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "-e",
+            "GITHUB_TOKEN=xxx",
+            "github",
+            "--",
+            "npx",
+            "-y",
+            "@modelcontextprotocol/server-github",
+        ])
+        .assert()
+        .success();
+
+    let toml = fs::read_to_string(tmp.path().join(".imrule/imrule.toml")).unwrap();
+    assert!(toml.contains("[mcp_servers.github]"));
+    assert!(toml.contains("command = \"npx\""));
+    assert!(toml.contains("GITHUB_TOKEN = \"xxx\""));
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "apply",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "claude",
+        ])
+        .assert()
+        .success();
+
+    let claude_mcp: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(tmp.path().join(".mcp.json")).unwrap()).unwrap();
+    assert_eq!(
+        claude_mcp["mcpServers"]["linear"]["type"],
+        serde_json::json!("http")
+    );
+    assert_eq!(
+        claude_mcp["mcpServers"]["linear"]["url"],
+        serde_json::json!("https://mcp.linear.app/mcp")
+    );
+    assert_eq!(
+        claude_mcp["mcpServers"]["github"]["type"],
+        serde_json::json!("stdio")
+    );
+    assert_eq!(
+        claude_mcp["mcpServers"]["github"]["command"],
+        serde_json::json!("npx")
+    );
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "mcp",
+            "remove",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "linear",
+        ])
+        .assert()
+        .success();
+
+    let toml = fs::read_to_string(tmp.path().join(".imrule/imrule.toml")).unwrap();
+    assert!(!toml.contains("[mcp_servers.linear]"));
+}
+
+#[test]
+fn mcp_remove_missing_server_fails() {
+    let tmp = tempdir().unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args(["init", "--project-root", tmp.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "mcp",
+            "remove",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "missing",
+        ])
+        .assert()
+        .failure();
+}

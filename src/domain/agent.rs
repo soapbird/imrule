@@ -241,7 +241,7 @@ const AGENT_DEFINITIONS: &[AgentDefinition] = &[
         identifier: "opencode",
         name: "OpenCode",
         output_template: AgentOutputTemplate::Multiple(OPENCODE_PATHS),
-        mcp_server_key: "mcpServers",
+        mcp_server_key: "mcp",
         capabilities: caps(true, true, true, true, false),
     },
     AgentDefinition {
@@ -346,7 +346,7 @@ const AGENT_DEFINITIONS: &[AgentDefinition] = &[
         identifier: "mistral",
         name: "Mistral",
         output_template: AgentOutputTemplate::Multiple(MISTRAL_PATHS),
-        mcp_server_key: "mcpServers",
+        mcp_server_key: "mcp_servers",
         capabilities: caps(true, true, false, true, false),
     },
     AgentDefinition {

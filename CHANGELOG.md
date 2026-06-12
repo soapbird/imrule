@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.3.0] - 2026-06-12
+
+### Added
+
+- **New `imrule mcp` command** for managing MCP servers directly from the CLI. `imrule mcp add <name> --transport <stdio|http|sse>` writes a server definition into the `[mcp_servers]` table of `imrule.toml`; stdio servers take their command and args after `--` (e.g. `imrule mcp add github -- npx -y @modelcontextprotocol/server-github`), while http/sse servers take the URL as a trailing positional argument. `--env`/`-e` and `--header` (both `KEY=VALUE`) attach environment variables and headers. `imrule mcp remove <name>` deletes a server. Both subcommands support `--global`/`-g` (writes to the XDG config home) and `--dry-run`.
+- **TOML-based native MCP storage** for agents that use TOML config: Codex (`.codex/config.toml`), OpenCode, Mistral (`.vibe/config.toml`, array-of-tables), and OpenHands (`config.toml`). `imrule apply` now reads and writes these native TOML configs in addition to the JSON-based ones, merging imrule-managed servers without disturbing the rest of the file.
+- `imrule.toml` `[mcp_servers]` definitions are unioned with `.imrule/mcp.json` when applying, so MCP servers can be declared in either source.
+
+### Changed
+
+- Native MCP config keys aligned with each agent's current schema: OpenCode now writes under `mcp` (was `mcpServers`) and Mistral under `mcp_servers` (was `mcpServers`).
+
+### Fixed
+
+- `imrule clear` now removes MCP servers declared in the `imrule.toml` `[mcp_servers]` table, not just those in `.imrule/mcp.json`. Servers added via `imrule mcp add` were previously written into every native agent config by `apply` but never cleaned up by `clear`, leaving stale entries behind. `collect_mcp_keys` now enumerates both sources, restoring the guarantee that `clear` removes everything `apply` generated.
+
 ## [0.1.2.0] - 2026-05-26
 
 ### Changed

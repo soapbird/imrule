@@ -9,6 +9,9 @@ use clap::Parser;
 use crate::application::apply_use_case::{ApplyOptions, ApplyUseCase};
 use crate::application::clear_use_case::{ClearOptions, ClearUseCase};
 use crate::application::init_use_case::{InitOptions, InitUseCase};
+use crate::application::mcp_use_case::{
+    parse_env_pairs, McpAddOptions, McpRemoveOptions, McpUseCase,
+};
 use crate::application::revert_use_case::{RevertOptions, RevertUseCase};
 use crate::application::skills_add_use_case::{SkillsAddOptions, SkillsAddUseCase};
 use crate::infrastructure::agent_writer::DefaultAgentWriter;
@@ -17,7 +20,7 @@ use crate::infrastructure::file_system::FsFileSystem;
 use crate::infrastructure::gitignore::GitignoreUpdater;
 use crate::infrastructure::mcp_storage::JsonMcpStorage;
 use crate::infrastructure::skill_fetcher::GitSkillFetcher;
-use crate::interface::cli::{parse_agents, Cli, Command, SkillsCommand};
+use crate::interface::cli::{parse_agents, Cli, Command, McpCommand, SkillsCommand};
 
 /// Entry point for the CLI.
 pub fn run() -> ExitCode {
@@ -76,6 +79,87 @@ fn run_inner() -> Result<(), CliError> {
             println!("ImRule initialized at {}", root.display());
             Ok(())
         }
+        Command::Mcp(mcp_args) => match mcp_args.command {
+            McpCommand::Add(args) => {
+                let project_root = args
+                    .project_root
+                    .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+                let env_map = parse_env_pairs(&args.env.unwrap_or_default())
+                    .map_err(|err| CliError::new(1, err.to_string()))?;
+                let header_map = parse_env_pairs(&args.header.unwrap_or_default())
+                    .map_err(|err| CliError::new(1, err.to_string()))?;
+
+                let (command, args_list, url) = match args.transport.into() {
+                    crate::domain::config::McpTransport::Stdio => {
+                        if args.rest.is_empty() {
+                            return Err(CliError::new(
+                                1,
+                                "stdio transport requires a command (e.g. `imrule mcp add name -- npx -y @server/package`)".to_string(),
+                            ));
+                        }
+                        let mut rest = args.rest.clone();
+                        let cmd = rest.remove(0);
+                        (Some(cmd), rest, None)
+                    }
+                    crate::domain::config::McpTransport::Http
+                    | crate::domain::config::McpTransport::Sse => {
+                        if args.rest.len() != 1 {
+                            return Err(CliError::new(
+                                1,
+                                "remote transport requires exactly one URL argument".to_string(),
+                            ));
+                        }
+                        (None, Vec::new(), Some(args.rest[0].clone()))
+                    }
+                };
+
+                let use_case = McpUseCase::new(&config, &config);
+                use_case
+                    .add(McpAddOptions {
+                        project_root,
+                        config_path: None,
+                        global: args.global,
+                        dry_run: args.dry_run,
+                        name: args.name,
+                        transport: args.transport.into(),
+                        command,
+                        args: args_list,
+                        url,
+                        env: env_map,
+                        headers: header_map,
+                    })
+                    .map_err(|err| CliError::new(1, err.to_string()))?;
+
+                if args.dry_run {
+                    println!("ImRule mcp add dry run completed successfully.");
+                } else {
+                    println!("ImRule mcp add completed successfully.");
+                }
+                Ok(())
+            }
+            McpCommand::Remove(args) => {
+                let project_root = args
+                    .project_root
+                    .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+                let use_case = McpUseCase::new(&config, &config);
+                use_case
+                    .remove(McpRemoveOptions {
+                        project_root,
+                        config_path: None,
+                        global: args.global,
+                        dry_run: args.dry_run,
+                        name: args.name,
+                    })
+                    .map_err(|err| CliError::new(1, err.to_string()))?;
+
+                if args.dry_run {
+                    println!("ImRule mcp remove dry run completed successfully.");
+                } else {
+                    println!("ImRule mcp remove completed successfully.");
+                }
+                Ok(())
+            }
+        },
         Command::Revert(args) => {
             let project_root = args
                 .project_root

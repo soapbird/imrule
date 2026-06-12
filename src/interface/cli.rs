@@ -2,9 +2,30 @@
 
 use std::path::PathBuf;
 
-use clap::{ArgAction, Args, Parser, Subcommand};
+use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
+
+use crate::domain::config::McpTransport;
 
 const AGENT_IDENTIFIERS: &str = "agentsmd, aider, amazonqcli, amp, antigravity, augmentcode, claude, cline, codex, copilot, crush, cursor, factory, firebase, firebender, gemini-cli, goose, jetbrains-ai, jules, junie, kilocode, kiro, mistral, opencode, openhands, pi, qwen, roo, trae, warp, windsurf, zed";
+
+/// CLI-facing transport enum so the domain type stays free of clap.
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+pub enum CliMcpTransport {
+    #[default]
+    Stdio,
+    Http,
+    Sse,
+}
+
+impl From<CliMcpTransport> for McpTransport {
+    fn from(value: CliMcpTransport) -> Self {
+        match value {
+            CliMcpTransport::Stdio => McpTransport::Stdio,
+            CliMcpTransport::Http => McpTransport::Http,
+            CliMcpTransport::Sse => McpTransport::Sse,
+        }
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "imrule")]
@@ -25,6 +46,8 @@ pub enum Command {
     Clear(ClearArgs),
     /// Scaffold a .imrule directory with default files.
     Init(InitArgs),
+    /// Manage MCP server definitions in imrule.toml.
+    Mcp(McpArgs),
     /// Revert imrule configurations from supported AI agents.
     Revert(RevertArgs),
     /// Manage agent skills.
@@ -38,6 +61,72 @@ pub enum SkillsCommand {
     /// List installed skills.
     #[command(alias = "ls")]
     List(SkillsListArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum McpCommand {
+    /// Add an MCP server definition to imrule.toml.
+    Add(McpAddArgs),
+    /// Remove an MCP server definition from imrule.toml.
+    Remove(McpRemoveArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct McpArgs {
+    #[command(subcommand)]
+    pub command: McpCommand,
+}
+
+#[derive(Debug, Args)]
+pub struct McpAddArgs {
+    /// MCP server name.
+    pub name: String,
+
+    /// Transport protocol for the MCP server.
+    #[arg(long, value_enum, default_value_t = CliMcpTransport::Stdio)]
+    pub transport: CliMcpTransport,
+
+    /// Environment variables for stdio servers (KEY=VALUE).
+    #[arg(long, short = 'e', value_name = "KEY=VALUE")]
+    pub env: Option<Vec<String>>,
+
+    /// HTTP/SSE headers (KEY=VALUE).
+    #[arg(long, value_name = "KEY=VALUE")]
+    pub header: Option<Vec<String>>,
+
+    /// Project root directory.
+    #[arg(long = "project-root", value_name = "DIR")]
+    pub project_root: Option<PathBuf>,
+
+    /// Write to the global config directory instead of the project.
+    #[arg(long, short = 'g', default_value_t = false)]
+    pub global: bool,
+
+    /// Preview changes without writing files.
+    #[arg(long = "dry-run", default_value_t = false)]
+    pub dry_run: bool,
+
+    /// Positional URL (for remote transports) or command arguments (for stdio after `--`).
+    #[arg(trailing_var_arg = true)]
+    pub rest: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct McpRemoveArgs {
+    /// MCP server name.
+    pub name: String,
+
+    /// Project root directory.
+    #[arg(long = "project-root", value_name = "DIR")]
+    pub project_root: Option<PathBuf>,
+
+    /// Write to the global config directory instead of the project.
+    #[arg(long, short = 'g', default_value_t = false)]
+    pub global: bool,
+
+    /// Preview changes without writing files.
+    #[arg(long = "dry-run", default_value_t = false)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Args)]
