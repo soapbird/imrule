@@ -62,7 +62,7 @@ impl<'a> ClearUseCase<'a> {
         };
 
         // Collect MCP keys before any deletion so native configs can be cleaned.
-        let imrule_mcp_keys = self.collect_mcp_keys(&options.project_root)?;
+        let imrule_mcp_keys = self.collect_mcp_keys(&options.project_root, &config)?;
 
         // Resolve output paths using the same logic as apply (respects custom output_path from config).
         let output_paths =
@@ -300,15 +300,32 @@ impl<'a> ClearUseCase<'a> {
         dirs
     }
 
-    fn collect_mcp_keys(&self, project_root: &Path) -> Result<Vec<String>, ImruleError> {
-        let Some(mcp_config) = self.mcp_port.read_imrule_mcp_config(project_root)? else {
-            return Ok(Vec::new());
-        };
-        let keys = mcp_config
-            .get("mcpServers")
-            .and_then(|s| s.as_object())
-            .map(|obj| obj.keys().cloned().collect())
-            .unwrap_or_default();
+    /// Collects every MCP server name that `apply` could have written into native
+    /// agent configs. Servers come from two sources that `apply` unions together
+    /// (see `build_imrule_mcp_config`): the legacy `.imrule/mcp.json` file and the
+    /// `[mcp_servers]` table in `imrule.toml` (written by `imrule mcp add`). Both
+    /// must be enumerated here, otherwise `clear` orphans TOML-defined servers in
+    /// every agent config.
+    fn collect_mcp_keys(
+        &self,
+        project_root: &Path,
+        config: &LoadedConfig,
+    ) -> Result<Vec<String>, ImruleError> {
+        let mut keys: Vec<String> = Vec::new();
+
+        // Source 1: legacy `.imrule/mcp.json`.
+        if let Some(mcp_config) = self.mcp_port.read_imrule_mcp_config(project_root)? {
+            if let Some(obj) = mcp_config.get("mcpServers").and_then(|s| s.as_object()) {
+                keys.extend(obj.keys().cloned());
+            }
+        }
+
+        // Source 2: `[mcp_servers]` table in `imrule.toml`.
+        keys.extend(config.mcp_servers.keys().cloned());
+
+        // De-duplicate while preserving order; a server may exist in both sources.
+        keys.sort();
+        keys.dedup();
         Ok(keys)
     }
 

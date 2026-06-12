@@ -313,6 +313,70 @@ fn clear_with_empty_mcp_json_skips_mcp_cleanup() {
 }
 
 #[test]
+fn clear_removes_mcp_servers_defined_in_imrule_toml() {
+    // Regression: servers added via `imrule mcp add` land in the `[mcp_servers]`
+    // table of imrule.toml (NOT .imrule/mcp.json). `apply` writes them into every
+    // native agent config, so `clear` must enumerate them too. Previously
+    // collect_mcp_keys read only .imrule/mcp.json and orphaned these servers.
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "TOML MCP test.").unwrap();
+    // Mirrors what `imrule mcp add toml-tool --transport http --url ...` writes.
+    fs::write(
+        tmp.path().join(".imrule/imrule.toml"),
+        "[mcp_servers.toml-tool]\ntransport = \"http\"\nurl = \"https://example.com/mcp\"\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "apply",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "cursor",
+        ])
+        .assert()
+        .success();
+
+    // apply must have written the TOML-defined server into the native config.
+    let applied = fs::read_to_string(tmp.path().join(".cursor/mcp.json")).unwrap();
+    let applied: serde_json::Value = serde_json::from_str(&applied).unwrap();
+    assert!(
+        applied["mcpServers"]["toml-tool"].is_object(),
+        "apply should write the imrule.toml MCP server into the native config"
+    );
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "clear",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "cursor",
+        ])
+        .assert()
+        .success();
+
+    // clear must remove the TOML-defined server. The native file is removed once
+    // empty; if it survives, the server key must be gone.
+    let native = tmp.path().join(".cursor/mcp.json");
+    if native.exists() {
+        let content = fs::read_to_string(&native).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert!(
+            config
+                .get("mcpServers")
+                .and_then(|s| s.get("toml-tool"))
+                .is_none(),
+            "clear must remove the imrule.toml MCP server from the native config"
+        );
+    }
+}
+
+#[test]
 fn clear_removes_backup_files_alongside_generated() {
     let tmp = tempdir().unwrap();
     fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
