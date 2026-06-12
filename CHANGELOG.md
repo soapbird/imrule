@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **New `imrule mcp` command** for managing MCP servers directly from the CLI. `imrule mcp add <name>` writes a server definition (stdio, http, or sse transport, with `--command`/`--args`/`--url`/`--env`/`--header`) into the `[mcp_servers]` table of `imrule.toml`, and `imrule mcp remove <name>` deletes it. Both support `--global` (writes to the XDG config home) and `--dry-run`.
+- **New `imrule mcp` command** for managing MCP servers directly from the CLI. `imrule mcp add <name> --transport <stdio|http|sse>` writes a server definition into the `[mcp_servers]` table of `imrule.toml`; stdio servers take their command and args after `--` (e.g. `imrule mcp add github -- npx -y @modelcontextprotocol/server-github`), while http/sse servers take the URL as a trailing positional argument. `--env`/`-e` and `--header` (both `KEY=VALUE`) attach environment variables and headers. `imrule mcp remove <name>` deletes a server. Both subcommands support `--global`/`-g` (writes to the XDG config home) and `--dry-run`.
 - **TOML-based native MCP storage** for agents that use TOML config: Codex (`.codex/config.toml`), OpenCode, Mistral (`.vibe/config.toml`, array-of-tables), and OpenHands (`config.toml`). `imrule apply` now reads and writes these native TOML configs in addition to the JSON-based ones, merging imrule-managed servers without disturbing the rest of the file.
 - `imrule.toml` `[mcp_servers]` definitions are unioned with `.imrule/mcp.json` when applying, so MCP servers can be declared in either source.
 
