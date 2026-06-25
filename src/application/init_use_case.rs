@@ -33,6 +33,7 @@ impl<'a> InitUseCase<'a> {
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
                 .join(".imrule")
         };
+        tracing::info!(root = %root.display(), global = options.global, "initializing imrule");
 
         self.fs_port.ensure_dir_exists(&root)?;
         self.write_if_missing(root.join("AGENTS.md"), DEFAULT_INSTRUCTIONS)?;

@@ -53,6 +53,12 @@ impl<'a> McpUseCase<'a> {
     /// Adds or updates an MCP server definition in imrule.toml.
     pub fn add(&self, options: McpAddOptions) -> Result<(), ImruleError> {
         let effective_root = effective_project_root(options.project_root.clone(), options.global);
+        tracing::info!(
+            name = %options.name,
+            global = options.global,
+            dry_run = options.dry_run,
+            "adding mcp server"
+        );
         let mut config =
             self.config_port
                 .load_config(&effective_root, options.config_path.as_deref(), None)?;
@@ -71,6 +77,12 @@ impl<'a> McpUseCase<'a> {
     /// Removes an MCP server definition from imrule.toml.
     pub fn remove(&self, options: McpRemoveOptions) -> Result<(), ImruleError> {
         let effective_root = effective_project_root(options.project_root, options.global);
+        tracing::info!(
+            name = %options.name,
+            global = options.global,
+            dry_run = options.dry_run,
+            "removing mcp server"
+        );
         let mut config =
             self.config_port
                 .load_config(&effective_root, options.config_path.as_deref(), None)?;

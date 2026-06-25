@@ -5,7 +5,7 @@ use thiserror::Error;
 /// Errors that can originate from domain logic.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum ImruleError {
-    #[error("unknown agent identifier: {0}")]
+    #[error("unknown agent identifier: '{0}'. Run `imrule apply --help` for the list of supported agents.")]
     UnknownAgent(String),
 
     #[error("config error: {0}")]

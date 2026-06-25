@@ -1,0 +1,6 @@
+# Default owners for everything in the repository.
+# Replace '*' with the actual maintainer team or usernames.
+* @soapbird
+
+# CI/CD workflows.
+.github/workflows/ @soapbird

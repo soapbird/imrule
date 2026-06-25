@@ -28,7 +28,7 @@ fn cli_version_and_help_are_release_ready() {
 }
 
 #[test]
-fn apply_and_revert_are_native_rust_commands() {
+fn apply_and_clear_are_native_rust_commands() {
     let tmp = tempdir().unwrap();
     fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
     fs::write(tmp.path().join(".imrule/AGENTS.md"), "Always be concise.").unwrap();
@@ -53,7 +53,7 @@ fn apply_and_revert_are_native_rust_commands() {
     Command::cargo_bin("imrule")
         .unwrap()
         .args([
-            "revert",
+            "clear",
             "--project-root",
             tmp.path().to_str().unwrap(),
             "--agents",
@@ -159,41 +159,6 @@ fn apply_works_with_legacy_ruler_directory() {
     // Should print deprecation warning to stderr.
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("legacy '.ruler/' directory"));
-}
-
-#[test]
-fn revert_works_with_legacy_ruler_directory() {
-    let tmp = tempdir().unwrap();
-    fs::create_dir_all(tmp.path().join(".ruler")).unwrap();
-    fs::write(tmp.path().join(".ruler/AGENTS.md"), "Legacy ruler rules.").unwrap();
-
-    Command::cargo_bin("imrule")
-        .unwrap()
-        .args([
-            "apply",
-            "--project-root",
-            tmp.path().to_str().unwrap(),
-            "--agents",
-            "claude",
-        ])
-        .assert()
-        .success();
-
-    assert!(tmp.path().join("CLAUDE.md").exists());
-
-    Command::cargo_bin("imrule")
-        .unwrap()
-        .args([
-            "revert",
-            "--project-root",
-            tmp.path().to_str().unwrap(),
-            "--agents",
-            "claude",
-        ])
-        .assert()
-        .success();
-
-    assert!(!tmp.path().join("CLAUDE.md").exists());
 }
 
 #[test]

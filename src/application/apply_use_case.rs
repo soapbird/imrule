@@ -2,6 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
+use rayon::prelude::*;
+
 use crate::application::ports::{
     AgentWriterPort, ConfigPort, FileSystemPort, GitignorePort, McpPort,
 };
@@ -51,12 +53,18 @@ impl<'a> ApplyUseCase<'a> {
 
     /// Applies ImRule rules using the Rust-native engine.
     pub fn execute(&self, options: ApplyOptions) -> Result<Vec<PathBuf>, ImruleError> {
+        tracing::info!(
+            project_root = %options.project_root.display(),
+            dry_run = options.dry_run,
+            "starting apply"
+        );
         let config = self.config_port.load_config(
             &options.project_root,
             options.config.as_deref(),
             options.agents.clone(),
         )?;
         let selected_agents = resolve_selected_agents(&config, options.agents.as_deref())?;
+        tracing::info!(agent_count = selected_agents.len(), "selected agents");
         let imrule_dir = self
             .fs_port
             .find_imrule_dir(&options.project_root, true)
@@ -75,25 +83,31 @@ impl<'a> ApplyUseCase<'a> {
         let rule_files = self
             .fs_port
             .read_markdown_files(&imrule_dir, include_agents)?;
+        tracing::info!(
+            markdown_count = rule_files.len(),
+            "discovered markdown files"
+        );
         let rules = concatenate_rules(&rule_files, imrule_dir.parent());
-        let mut written_paths = Vec::new();
 
-        for agent in &selected_agents {
-            let agent_config = config.agent_configs.get(agent.identifier);
-            if agent_config.and_then(|cfg| cfg.enabled) == Some(false) {
-                continue;
-            }
-            if let Some(path) = self.agent_writer.write_agent_rules(
-                agent,
-                &rules,
-                &options.project_root,
-                agent_config,
-                options.backup,
-                options.dry_run,
-            )? {
-                written_paths.push(path);
-            }
-        }
+        let rule_results: Result<Vec<_>, ImruleError> = selected_agents
+            .par_iter()
+            .filter(|agent| {
+                let agent_config = config.agent_configs.get(agent.identifier);
+                agent_config.and_then(|cfg| cfg.enabled) != Some(false)
+            })
+            .map(|agent| {
+                let agent_config = config.agent_configs.get(agent.identifier);
+                self.agent_writer.write_agent_rules(
+                    agent,
+                    &rules,
+                    &options.project_root,
+                    agent_config,
+                    options.backup,
+                    options.dry_run,
+                )
+            })
+            .collect();
+        let mut written_paths: Vec<PathBuf> = rule_results?.into_iter().flatten().collect();
 
         if config.mcp.as_ref().and_then(|mcp| mcp.enabled) != Some(false) {
             let mcp_paths = self.apply_mcp_configs(&options, &config, &selected_agents)?;
@@ -134,6 +148,7 @@ impl<'a> ApplyUseCase<'a> {
             )?;
         }
 
+        tracing::info!(written_count = written_paths.len(), "apply completed");
         Ok(written_paths)
     }
 
@@ -155,27 +170,26 @@ impl<'a> ApplyUseCase<'a> {
             .as_ref()
             .map(|mcp| mcp.strategy)
             .unwrap_or(McpStrategy::Merge);
-        let mut written = Vec::new();
-        for agent in selected_agents {
-            let Some(filtered) = filter_mcp_config_for_agent(&imrule_mcp, agent) else {
-                continue;
-            };
-            let Some(path) = self
-                .mcp_port
-                .get_native_mcp_path(agent.name, &options.project_root)
-            else {
-                continue;
-            };
-            if options.dry_run {
-                written.push(path);
-                continue;
-            }
-            let existing = self.mcp_port.read_native_mcp(&path)?;
-            let merged = merge_mcp(&existing, &filtered, strategy, agent.mcp_server_key);
-            self.mcp_port.write_native_mcp(&path, &merged)?;
-            written.push(path);
-        }
-        Ok(written)
+        let written: Result<Vec<_>, ImruleError> = selected_agents
+            .par_iter()
+            .filter_map(|agent| {
+                let filtered = filter_mcp_config_for_agent(&imrule_mcp, agent)?;
+                let path = self
+                    .mcp_port
+                    .get_native_mcp_path(agent.name, &options.project_root)?;
+                Some((agent, filtered, path))
+            })
+            .map(|(agent, filtered, path)| {
+                if options.dry_run {
+                    return Ok(path);
+                }
+                let existing = self.mcp_port.read_native_mcp(&path)?;
+                let merged = merge_mcp(&existing, &filtered, strategy, agent.mcp_server_key);
+                self.mcp_port.write_native_mcp(&path, &merged)?;
+                Ok(path)
+            })
+            .collect();
+        written
     }
 
     fn apply_subagents(
@@ -241,20 +255,28 @@ impl<'a> ApplyUseCase<'a> {
                 .ensure_dir_exists(&target_dir)
                 .map_err(|e| ImruleError::subagent(e.to_string()))?;
 
-            for sub in &discovery.subagents {
-                let content = match agent_type {
-                    "claude" => crate::domain::subagent::build_claude_file(sub),
-                    "cursor" => crate::domain::subagent::build_cursor_file(sub),
-                    "codex" => crate::domain::subagent::build_codex_file(sub),
-                    "copilot" => crate::domain::subagent::build_copilot_file(sub).content,
-                    _ => continue,
-                };
-                let dest = target_dir.join(format!("{}.md", sub.name));
-                self.fs_port.write_text(&dest, &content).map_err(|e| {
-                    ImruleError::subagent(format!("failed to write subagent '{}': {e}", sub.name))
-                })?;
-                written.push(dest);
-            }
+            let sub_results: Result<Vec<_>, ImruleError> = discovery
+                .subagents
+                .par_iter()
+                .map(|sub| {
+                    let content = match agent_type {
+                        "claude" => crate::domain::subagent::build_claude_file(sub),
+                        "cursor" => crate::domain::subagent::build_cursor_file(sub),
+                        "codex" => crate::domain::subagent::build_codex_file(sub),
+                        "copilot" => crate::domain::subagent::build_copilot_file(sub).content,
+                        _ => return Ok(None),
+                    };
+                    let dest = target_dir.join(format!("{}.md", sub.name));
+                    self.fs_port.write_text(&dest, &content).map_err(|e| {
+                        ImruleError::subagent(format!(
+                            "failed to write subagent '{}': {e}",
+                            sub.name
+                        ))
+                    })?;
+                    Ok(Some(dest))
+                })
+                .collect();
+            written.extend(sub_results?.into_iter().flatten());
         }
 
         let gitignore_paths = crate::infrastructure::subagents::get_subagents_gitignore_paths(
@@ -340,11 +362,17 @@ impl<'a> ApplyUseCase<'a> {
                 continue;
             }
 
-            for skill in &discovery.skills {
-                let dest = target_dir.join(&skill.name);
-                copy_skills_directory(&skill.path, &dest)
-                    .map_err(|e| ImruleError::skills(e.to_string()))?;
-            }
+            let copy_results: Result<Vec<_>, ImruleError> = discovery
+                .skills
+                .par_iter()
+                .map(|skill| {
+                    let dest = target_dir.join(&skill.name);
+                    copy_skills_directory(&skill.path, &dest)
+                        .map_err(|e| ImruleError::skills(e.to_string()))?;
+                    Ok(dest)
+                })
+                .collect();
+            copy_results?;
             written.push(target_dir);
         }
 

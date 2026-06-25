@@ -10,7 +10,7 @@ use crate::domain::error::ImruleError;
 use crate::domain::skills::RemoteSkillSource;
 
 /// Loads and parses ImRule configuration.
-pub trait ConfigPort {
+pub trait ConfigPort: Send + Sync {
     /// Loads local/global ImRule TOML configuration.
     fn load_config(
         &self,
@@ -21,7 +21,7 @@ pub trait ConfigPort {
 }
 
 /// Persists ImRule configuration back to the resolved TOML file.
-pub trait ConfigWritePort {
+pub trait ConfigWritePort: Send + Sync {
     /// Saves the given configuration to the resolved config file.
     fn save_config(
         &self,
@@ -32,7 +32,7 @@ pub trait ConfigWritePort {
 }
 
 /// Abstracts filesystem operations so use cases remain testable.
-pub trait FileSystemPort {
+pub trait FileSystemPort: Send + Sync {
     /// Read a text file.
     fn read_text(&self, path: &Path) -> Result<String, ImruleError>;
 
@@ -76,7 +76,7 @@ pub trait FileSystemPort {
 }
 
 /// Updates ignore files with generated paths.
-pub trait GitignorePort {
+pub trait GitignorePort: Send + Sync {
     /// Updates an ignore file with an ImRule-managed block.
     fn update_gitignore(
         &self,
@@ -87,7 +87,7 @@ pub trait GitignorePort {
 }
 
 /// Reads and writes MCP configuration files.
-pub trait McpPort {
+pub trait McpPort: Send + Sync {
     /// Reads `.imrule/mcp.json` when present.
     fn read_imrule_mcp_config(&self, project_root: &Path) -> Result<Option<Value>, ImruleError>;
 
@@ -102,7 +102,7 @@ pub trait McpPort {
 }
 
 /// Writes generated rule files for individual agents.
-pub trait AgentWriterPort {
+pub trait AgentWriterPort: Send + Sync {
     /// Writes rules for a single agent, returning the path when written.
     fn write_agent_rules(
         &self,
@@ -116,7 +116,7 @@ pub trait AgentWriterPort {
 }
 
 /// Fetches skill sources to a local directory.
-pub trait SkillFetcherPort {
+pub trait SkillFetcherPort: Send + Sync {
     /// Fetches a remote skill source to a temporary directory.
     /// Returns the path to the directory containing skill files.
     fn fetch_to_temp(&self, source: &RemoteSkillSource) -> Result<PathBuf, ImruleError>;

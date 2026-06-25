@@ -2,6 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
+use rayon::prelude::*;
+
 use crate::application::apply_use_case::{instruction_output_path, resolve_selected_agents};
 use crate::application::ports::{ConfigPort, FileSystemPort, GitignorePort, McpPort};
 use crate::domain::agent::{all_agents, AgentDefinition};
@@ -49,6 +51,12 @@ impl<'a> ClearUseCase<'a> {
 
     /// Removes all imrule-generated files for selected agents.
     pub fn execute(&self, options: ClearOptions) -> Result<Vec<PathBuf>, ImruleError> {
+        tracing::info!(
+            project_root = %options.project_root.display(),
+            dry_run = options.dry_run,
+            remove_source = options.remove_source,
+            "starting clear"
+        );
         let config = self.config_port.load_config(
             &options.project_root,
             options.config.as_deref(),
@@ -70,12 +78,18 @@ impl<'a> ClearUseCase<'a> {
         let mut removed = Vec::new();
 
         // Remove generated rule files and their backups.
-        for path in &output_paths {
-            if self.remove_if_generated(path, options.dry_run)? {
-                removed.push(path.clone());
-            }
-            self.remove_backup(path, options.dry_run)?;
-        }
+        let removal_results: Result<Vec<_>, ImruleError> = output_paths
+            .par_iter()
+            .map(|path| {
+                let mut local_removed = Vec::new();
+                if self.remove_if_generated(path, options.dry_run)? {
+                    local_removed.push(path.clone());
+                }
+                self.remove_backup(path, options.dry_run)?;
+                Ok(local_removed)
+            })
+            .collect();
+        removed.extend(removal_results?.into_iter().flatten());
 
         // Remove subagent directories created by imrule apply.
         self.clear_subagents(&options, &selected_agents, &mut removed)?;
@@ -114,6 +128,7 @@ impl<'a> ClearUseCase<'a> {
             }
         }
 
+        tracing::info!(removed_count = removed.len(), "clear completed");
         Ok(removed)
     }
 
@@ -218,10 +233,10 @@ impl<'a> ClearUseCase<'a> {
     }
 
     fn remove_if_generated(&self, path: &Path, dry_run: bool) -> Result<bool, ImruleError> {
-        if !self.fs_port.file_exists(path) {
-            return Ok(false);
-        }
-        let content = self.fs_port.read_text(path)?;
+        let content = match self.fs_port.read_text(path) {
+            Ok(c) => c,
+            Err(_) => return Ok(false),
+        };
         if !content.starts_with(GENERATED_BY_IMRULE_MARKER) {
             return Ok(false);
         }
@@ -383,11 +398,14 @@ fn get_resolved_output_paths(
     agents: &[AgentDefinition],
     config: &LoadedConfig,
 ) -> Vec<PathBuf> {
+    let mut seen = std::collections::BTreeSet::new();
     let mut paths = Vec::new();
     for agent in agents {
         let agent_config = config.agent_configs.get(agent.identifier);
         if let Some(path) = instruction_output_path(project_root, agent, agent_config) {
-            paths.push(path);
+            if seen.insert(path.clone()) {
+                paths.push(path);
+            }
         }
     }
     paths

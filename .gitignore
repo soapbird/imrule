@@ -10,6 +10,10 @@
 /tmp/
 /.omx/
 
+# Coverage reports
+/lcov.info
+/cobertura.xml
+
 
 # START ImRule Generated Files
 /AGENTS.md

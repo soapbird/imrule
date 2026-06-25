@@ -6,8 +6,7 @@
 pub mod application;
 pub mod domain;
 pub mod infrastructure;
-
-mod interface;
+pub mod interface;
 
 use std::process::ExitCode;
 

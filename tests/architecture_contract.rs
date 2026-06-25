@@ -18,7 +18,6 @@ fn package_contains_application_layer_without_typescript_surface() {
     let app_mod = fs::read_to_string("src/application/mod.rs").unwrap();
     assert!(app_mod.contains("pub use apply_use_case::{ApplyOptions, ApplyUseCase};"));
     assert!(app_mod.contains("pub use init_use_case::{InitOptions, InitUseCase};"));
-    assert!(app_mod.contains("pub use revert_use_case::{RevertOptions, RevertUseCase};"));
 
     let tracked = std::process::Command::new("git")
         .args([

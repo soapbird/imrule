@@ -174,7 +174,7 @@ fn discovers_subagents_and_computes_gitignore_targets() {
 }
 
 #[test]
-fn apply_path_collection_and_revert_file_operations_match_contract() {
+fn apply_path_collection_and_file_system_operations_match_contract() {
     let tmp = tempdir().unwrap();
     let root = tmp.path();
     let agents = all_agents();

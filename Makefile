@@ -5,7 +5,7 @@ BINARY   := target/release/imrule
 TEST_DIR := test-e2e
 TMP      := /tmp/imrule-e2e
 
-.PHONY: all build check clean fmt fmt-fix install lint run test test-e2e test-e2e-skills uninstall
+.PHONY: all build check clean coverage fmt fmt-fix install lint run test test-e2e test-e2e-skills uninstall
 
 all: fmt lint test build
 
@@ -17,6 +17,12 @@ check:
 
 clean:
 	$(CARGO) clean
+
+coverage:
+	cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+
+changelog:
+	git cliff --unreleased --prepend CHANGELOG.md
 
 fmt:
 	$(CARGO) fmt -- --check
@@ -114,17 +120,17 @@ test-e2e: build
 	touch $(TMP)/apply-gitignore/.gitignore
 	$(BINARY) apply --project-root $(TMP)/apply-gitignore --agents claude --verbose
 	@grep -q "ImRule Generated Files" $(TMP)/apply-gitignore/.gitignore   && echo "[PASS] .gitignore updated"        || (echo "[FAIL] .gitignore not updated"      && exit 1)
-	@echo ""; echo "━━━ E2E: imrule revert (basic) ━━━"
-	rm -rf $(TMP)/revert-basic && cp -r $(TEST_DIR) $(TMP)/revert-basic
-	$(BINARY) apply --project-root $(TMP)/revert-basic --agents claude
-	@test -f $(TMP)/revert-basic/CLAUDE.md                                && echo "[PASS] CLAUDE.md exists"          || (echo "[FAIL] CLAUDE.md missing"           && exit 1)
-	$(BINARY) revert --project-root $(TMP)/revert-basic --agents claude
-	@test ! -f $(TMP)/revert-basic/CLAUDE.md                              && echo "[PASS] CLAUDE.md removed"         || (echo "[FAIL] CLAUDE.md still exists"      && exit 1)
-	@echo ""; echo "━━━ E2E: imrule revert --dry-run ━━━"
-	rm -rf $(TMP)/revert-dryrun && cp -r $(TEST_DIR) $(TMP)/revert-dryrun
-	$(BINARY) apply --project-root $(TMP)/revert-dryrun --agents claude
-	$(BINARY) revert --project-root $(TMP)/revert-dryrun --agents claude --dry-run
-	@test -f $(TMP)/revert-dryrun/CLAUDE.md                               && echo "[PASS] file not removed on dry-run" || (echo "[FAIL] file removed on dry-run"    && exit 1)
+	@echo ""; echo "━━━ E2E: imrule clear (basic) ━━━"
+	rm -rf $(TMP)/clear-basic && cp -r $(TEST_DIR) $(TMP)/clear-basic
+	$(BINARY) apply --project-root $(TMP)/clear-basic --agents claude
+	@test -f $(TMP)/clear-basic/CLAUDE.md                                 && echo "[PASS] CLAUDE.md exists"          || (echo "[FAIL] CLAUDE.md missing"           && exit 1)
+	$(BINARY) clear --project-root $(TMP)/clear-basic --agents claude
+	@test ! -f $(TMP)/clear-basic/CLAUDE.md                               && echo "[PASS] CLAUDE.md removed"         || (echo "[FAIL] CLAUDE.md still exists"      && exit 1)
+	@echo ""; echo "━━━ E2E: imrule clear --dry-run ━━━"
+	rm -rf $(TMP)/clear-dryrun && cp -r $(TEST_DIR) $(TMP)/clear-dryrun
+	$(BINARY) apply --project-root $(TMP)/clear-dryrun --agents claude
+	$(BINARY) clear --project-root $(TMP)/clear-dryrun --agents claude --dry-run
+	@test -f $(TMP)/clear-dryrun/CLAUDE.md                                && echo "[PASS] file not removed on dry-run" || (echo "[FAIL] file removed on dry-run"    && exit 1)
 	@echo ""; echo "━━━ E2E: error on unknown agent ━━━"
 	rm -rf $(TMP)/err-agent && cp -r $(TEST_DIR) $(TMP)/err-agent
 	$(BINARY) apply --project-root $(TMP)/err-agent --agents nonexistent 2>/dev/null && (echo "[FAIL] should have errored" && exit 1) || echo "[PASS] error on unknown agent"

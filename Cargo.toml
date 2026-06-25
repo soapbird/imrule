@@ -10,7 +10,7 @@ readme = "README.md"
 rust-version = "1.85"
 keywords = ["ai", "developer-tools", "codex", "claude", "rules"]
 categories = ["command-line-utilities", "development-tools"]
-include = ["/src/**/*.rs", "/tests/**/*.rs", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE"]
+include = ["/src/**/*.rs", "/tests/**/*.rs", "/benches/**/*.rs", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE"]
 
 [[bin]]
 name = "imrule"
@@ -30,9 +30,19 @@ toml = "0.8"
 toml_edit = "0.22"
 thiserror = "1"
 tempfile = "3"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+rayon = "1"
+clap_complete = "4"
+clap_mangen = "0.2"
 
 [dev-dependencies]
 assert_cmd = "2"
+criterion = "0.5"
+
+[[bench]]
+name = "rules_concat"
+harness = false
 
 [package.metadata.imrule]
 release-channel = "native-rust"

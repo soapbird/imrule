@@ -48,8 +48,10 @@ pub enum Command {
     Init(InitArgs),
     /// Manage MCP server definitions in imrule.toml.
     Mcp(McpArgs),
-    /// Revert imrule configurations from supported AI agents.
-    Revert(RevertArgs),
+    /// Generate shell completions for imrule.
+    Completions(CompletionsArgs),
+    /// Generate the imrule man page.
+    Man,
     /// Manage agent skills.
     Skills(SkillsArgs),
 }
@@ -75,6 +77,13 @@ pub enum McpCommand {
 pub struct McpArgs {
     #[command(subcommand)]
     pub command: McpCommand,
+}
+
+#[derive(Debug, Args)]
+pub struct CompletionsArgs {
+    /// Target shell for completion script generation.
+    #[arg(value_enum)]
+    pub shell: clap_complete::Shell,
 }
 
 #[derive(Debug, Args)]
@@ -197,26 +206,6 @@ pub struct InitArgs {
     /// Initialize in global config directory (XDG_CONFIG_HOME/imrule).
     #[arg(long = "global", default_value_t = false)]
     pub global: bool,
-}
-
-#[derive(Debug, Args)]
-#[command(after_help = AGENT_IDENTIFIERS)]
-pub struct RevertArgs {
-    /// Project root directory.
-    #[arg(long = "project-root", value_name = "DIR")]
-    pub project_root: Option<PathBuf>,
-    /// Comma-separated list of agent identifiers.
-    #[arg(long, value_name = "IDS")]
-    pub agents: Option<String>,
-    /// Path to TOML configuration file.
-    #[arg(long, value_name = "FILE")]
-    pub config: Option<PathBuf>,
-    /// Enable verbose logging.
-    #[arg(long, short = 'v', default_value_t = false)]
-    pub verbose: bool,
-    /// Preview changes without writing files.
-    #[arg(long = "dry-run", default_value_t = false)]
-    pub dry_run: bool,
 }
 
 #[derive(Debug, Args)]

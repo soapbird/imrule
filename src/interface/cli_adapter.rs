@@ -4,7 +4,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 
 use crate::application::apply_use_case::{ApplyOptions, ApplyUseCase};
 use crate::application::clear_use_case::{ClearOptions, ClearUseCase};
@@ -12,7 +12,7 @@ use crate::application::init_use_case::{InitOptions, InitUseCase};
 use crate::application::mcp_use_case::{
     parse_env_pairs, McpAddOptions, McpRemoveOptions, McpUseCase,
 };
-use crate::application::revert_use_case::{RevertOptions, RevertUseCase};
+
 use crate::application::skills_add_use_case::{SkillsAddOptions, SkillsAddUseCase};
 use crate::infrastructure::agent_writer::DefaultAgentWriter;
 use crate::infrastructure::config_loader::TomlConfigLoader;
@@ -27,10 +27,23 @@ pub fn run() -> ExitCode {
     match run_inner() {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError { code, message }) => {
-            eprintln!("[imrule] {message}");
+            eprintln!("[imrule] error: {message}");
             ExitCode::from(code)
         }
     }
+}
+
+fn init_tracing(verbose: bool) {
+    let max_level = if verbose {
+        tracing::Level::INFO
+    } else {
+        tracing::Level::WARN
+    };
+    tracing_subscriber::fmt()
+        .with_max_level(max_level)
+        .with_writer(std::io::stderr)
+        .with_target(false)
+        .init();
 }
 
 fn run_inner() -> Result<(), CliError> {
@@ -43,6 +56,7 @@ fn run_inner() -> Result<(), CliError> {
 
     match cli.command {
         Command::Apply(args) => {
+            init_tracing(args.verbose);
             let project_root = args
                 .project_root
                 .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
@@ -69,6 +83,7 @@ fn run_inner() -> Result<(), CliError> {
             Ok(())
         }
         Command::Init(args) => {
+            init_tracing(false);
             let use_case = InitUseCase::new(&fs);
             let root = use_case
                 .execute(InitOptions {
@@ -81,6 +96,7 @@ fn run_inner() -> Result<(), CliError> {
         }
         Command::Mcp(mcp_args) => match mcp_args.command {
             McpCommand::Add(args) => {
+                init_tracing(false);
                 let project_root = args
                     .project_root
                     .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
@@ -138,6 +154,7 @@ fn run_inner() -> Result<(), CliError> {
                 Ok(())
             }
             McpCommand::Remove(args) => {
+                init_tracing(false);
                 let project_root = args
                     .project_root
                     .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
@@ -160,26 +177,22 @@ fn run_inner() -> Result<(), CliError> {
                 Ok(())
             }
         },
-        Command::Revert(args) => {
-            let project_root = args
-                .project_root
-                .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-            let use_case = RevertUseCase::new(&config, &fs, &gitignore);
-            let changed = use_case
-                .execute(RevertOptions {
-                    project_root,
-                    agents: parse_agents(args.agents),
-                    config: args.config,
-                    dry_run: args.dry_run,
-                })
+        Command::Completions(args) => {
+            init_tracing(false);
+            let mut cmd = Cli::command();
+            clap_complete::generate(args.shell, &mut cmd, "imrule", &mut std::io::stdout());
+            Ok(())
+        }
+        Command::Man => {
+            init_tracing(false);
+            let cmd = Cli::command();
+            let man = clap_mangen::Man::new(cmd);
+            man.render(&mut std::io::stdout())
                 .map_err(|err| CliError::new(1, err.to_string()))?;
-            println!("ImRule revert completed successfully.");
-            if args.verbose {
-                println!("Files changed: {}", changed.len());
-            }
             Ok(())
         }
         Command::Clear(args) => {
+            init_tracing(args.verbose);
             let project_root = args
                 .project_root
                 .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
@@ -205,6 +218,7 @@ fn run_inner() -> Result<(), CliError> {
         }
         Command::Skills(skills_args) => match skills_args.command {
             SkillsCommand::Add(args) => {
+                init_tracing(args.verbose);
                 let project_root = args
                     .project_root
                     .clone()
@@ -256,6 +270,7 @@ fn run_inner() -> Result<(), CliError> {
                 Ok(())
             }
             SkillsCommand::List(args) => {
+                init_tracing(false);
                 let project_root = args
                     .project_root
                     .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
