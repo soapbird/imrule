@@ -67,6 +67,36 @@ fn apply_and_clear_are_native_rust_commands() {
 }
 
 #[test]
+fn apply_collapses_gjc_paths_to_dot_gjc_in_gitignore() {
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "GJC rules.").unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "apply",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "gjc",
+        ])
+        .assert()
+        .success();
+
+    assert!(tmp.path().join(".gjc/RULES.md").is_file());
+    let gitignore = fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+    assert!(
+        gitignore.contains("/.gjc\n") || gitignore.contains("/.gjc/\n"),
+        "expected .gitignore to contain /.gjc, got:\n{gitignore}"
+    );
+    assert!(
+        !gitignore.contains("/.gjc/RULES.md"),
+        "expected .gitignore to collapse .gjc/* paths, got:\n{gitignore}"
+    );
+}
+
+#[test]
 fn apply_dry_run_does_not_write_outputs() {
     let tmp = tempdir().unwrap();
     fs::create_dir_all(tmp.path().join(".imrule")).unwrap();

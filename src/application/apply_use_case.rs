@@ -9,6 +9,7 @@ use crate::application::ports::{
 };
 use crate::domain::agent::{all_agents, AgentDefinition, AgentOutputPaths};
 use crate::domain::config::{AgentConfig, LoadedConfig, McpStrategy};
+use crate::domain::constants::normalize_path_separators;
 use crate::domain::error::ImruleError;
 use crate::domain::mcp::{build_imrule_mcp_config, filter_mcp_config_for_agent, merge_mcp};
 use crate::domain::rules::concatenate_rules;
@@ -141,9 +142,10 @@ impl<'a> ApplyUseCase<'a> {
             .and_then(|gitignore| gitignore.enabled)
             .unwrap_or(true);
         if gitignore_enabled && !options.dry_run {
+            let gitignore_paths = collapse_gitignore_paths(&written_paths, &options.project_root);
             self.gitignore_port.update_gitignore(
                 &options.project_root,
-                &written_paths,
+                &gitignore_paths,
                 ".gitignore",
             )?;
         }
@@ -457,4 +459,29 @@ fn resolve_project_path(project_root: &Path, path: &Path) -> PathBuf {
     } else {
         project_root.join(path)
     }
+}
+
+/// Collapses generated paths under agent-specific directories to the directory itself.
+///
+/// Gajae Code stores rules, MCP config, and skills under `.gjc/`, and the directory
+/// also contains runtime state that should not be committed. Ignore the whole
+/// directory instead of individual files.
+fn collapse_gitignore_paths(paths: &[PathBuf], project_root: &Path) -> Vec<PathBuf> {
+    let mut result = Vec::new();
+    let mut collapsed_gjc = false;
+
+    for path in paths {
+        let relative = path.strip_prefix(project_root).unwrap_or(path);
+        let relative_str = normalize_path_separators(&relative.to_string_lossy());
+        if relative_str.starts_with(".gjc/") {
+            if !collapsed_gjc {
+                result.push(project_root.join(".gjc"));
+                collapsed_gjc = true;
+            }
+        } else {
+            result.push(path.clone());
+        }
+    }
+
+    result
 }
