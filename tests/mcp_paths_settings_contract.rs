@@ -128,6 +128,10 @@ fn native_mcp_paths_match_agent_candidates_and_io_contract() {
         mcp.get_native_mcp_path("Cursor", root),
         Some(root.join(".cursor/mcp.json"))
     );
+    assert_eq!(
+        mcp.get_native_mcp_path("Gajae Code", root),
+        Some(root.join(".gjc/mcp.json"))
+    );
     assert_eq!(mcp.get_native_mcp_path("Unknown", root), None);
 
     let target = root.join(".cursor/mcp.json");

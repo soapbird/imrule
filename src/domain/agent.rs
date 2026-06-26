@@ -135,6 +135,7 @@ const MISTRAL_PATHS: &[(&str, &str)] = &[
     ("instructions", DEFAULT_RULES_FILENAME),
     ("config", ".vibe/config.toml"),
 ];
+const GJC_PATHS: &[(&str, &str)] = &[("instructions", ".gjc/RULES.md"), ("mcp", ".gjc/mcp.json")];
 
 const AGENT_DEFINITIONS: &[AgentDefinition] = &[
     AgentDefinition {
@@ -362,6 +363,13 @@ const AGENT_DEFINITIONS: &[AgentDefinition] = &[
         output_template: AgentOutputTemplate::Single(".aiassistant/rules/AGENTS.md"),
         mcp_server_key: "mcpServers",
         capabilities: caps(false, false, false, false, false),
+    },
+    AgentDefinition {
+        identifier: "gjc",
+        name: "Gajae Code",
+        output_template: AgentOutputTemplate::Multiple(GJC_PATHS),
+        mcp_server_key: "mcpServers",
+        capabilities: caps(true, true, false, true, false),
     },
 ];
 

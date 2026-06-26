@@ -164,6 +164,7 @@ pub fn get_skills_gitignore_paths(project_root: &Path, agents: &[AgentDefinition
         (WINDSURF_SKILLS_PATH, &["windsurf"]),
         (FACTORY_SKILLS_PATH, &["factory"]),
         (ANTIGRAVITY_SKILLS_PATH, &["antigravity"]),
+        (GJC_SKILLS_PATH, &["gjc"]),
     ];
     target_specs
         .iter()

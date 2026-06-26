@@ -48,12 +48,13 @@ fn agent_registry_matches_native_identifiers_order_and_cli_help() {
             "mistral",
             "pi",
             "jetbrains-ai",
+            "gjc",
         ]
     );
 
     assert_eq!(
         get_agent_identifiers_for_cli_help(),
-        "agentsmd, aider, amazonqcli, amp, antigravity, augmentcode, claude, cline, codex, copilot, crush, cursor, factory, firebase, firebender, gemini-cli, goose, jetbrains-ai, jules, junie, kilocode, kiro, mistral, opencode, openhands, pi, qwen, roo, trae, warp, windsurf, zed"
+        "agentsmd, aider, amazonqcli, amp, antigravity, augmentcode, claude, cline, codex, copilot, crush, cursor, factory, firebase, firebender, gemini-cli, gjc, goose, jetbrains-ai, jules, junie, kilocode, kiro, mistral, opencode, openhands, pi, qwen, roo, trae, warp, windsurf, zed"
     );
 }
 
@@ -441,6 +442,20 @@ fn agent_registry_matches_native_names_paths_mcp_keys_and_capabilities() {
             false,
             false,
             false,
+            false,
+        ),
+        (
+            "gjc",
+            "Gajae Code",
+            AgentOutputPaths::many([
+                ("instructions", "/project/.gjc/RULES.md"),
+                ("mcp", "/project/.gjc/mcp.json"),
+            ]),
+            "mcpServers",
+            true,
+            true,
+            false,
+            true,
             false,
         ),
     ];

@@ -6,7 +6,7 @@ ImRule lets you write project instructions, MCP server configurations, skills, a
 
 ## Features
 
-- **30+ supported agents** — Copilot, Claude Code, Codex, Cursor, Windsurf, Cline, Aider, Gemini CLI, and many more
+- **30+ supported agents** — Copilot, Claude Code, Codex, Cursor, Windsurf, Cline, Aider, Gemini CLI, Gajae Code (gjc), and many more
 - **MCP server config** — declare servers in `mcp.json` or the `[mcp_servers]` TOML table (or via `imrule mcp add`), merged into each agent's native format
 - **Skills propagation** — sync `.imrule/skills/` to agent-specific skill directories
 - **Subagent propagation** — transform `.imrule/agents/` definitions to agent-native formats

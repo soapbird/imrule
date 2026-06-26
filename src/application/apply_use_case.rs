@@ -333,6 +333,7 @@ impl<'a> ApplyUseCase<'a> {
                 "antigravity",
                 crate::domain::constants::ANTIGRAVITY_SKILLS_PATH,
             ),
+            ("gjc", crate::domain::constants::GJC_SKILLS_PATH),
         ];
 
         let mut written = Vec::new();

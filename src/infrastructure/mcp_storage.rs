@@ -106,6 +106,7 @@ impl McpPort for JsonMcpStorage {
             "Factory Droid" => vec![project_root.join(".factory/mcp.json")],
             "Zed" => vec![project_root.join(".zed/settings.json")],
             "Mistral" => vec![project_root.join(".vibe/config.toml")],
+            "Gajae Code" => vec![project_root.join(".gjc/mcp.json")],
             _ => return None,
         };
 
