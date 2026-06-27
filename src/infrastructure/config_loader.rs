@@ -296,6 +296,7 @@ fn parse_mcp_servers(
         };
         let transport = server_table
             .get("transport")
+            .or_else(|| server_table.get("type"))
             .and_then(Value::as_str)
             .and_then(parse_mcp_transport)
             .unwrap_or(McpTransport::Stdio);

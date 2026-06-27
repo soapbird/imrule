@@ -225,6 +225,7 @@ imrule skills ls                          # alias for list
 - `mistral`: Mistral
 - `pi`: Pi Coding Agent
 - `jetbrains-ai`: JetBrains AI Assistant
+- `gjc`: Gajae Code
 
 ## Configuration
 

@@ -27,6 +27,9 @@ pub enum McpTransport {
 /// A single MCP server definition stored in imrule.toml under `[mcp_servers.<name>]`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpServerDefinition {
+    /// Transport protocol. The `type` alias is accepted for compatibility with
+    /// Gajae Code's `gjc mcp add --type` flag and common MCP config conventions.
+    #[serde(alias = "type")]
     pub transport: McpTransport,
     /// URL for remote transports (`http`, `sse`).
     pub url: Option<String>,

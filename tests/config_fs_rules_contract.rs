@@ -265,6 +265,42 @@ env = { GITHUB_TOKEN = "xxx" }
 }
 
 #[test]
+fn load_config_parses_mcp_servers_using_type_alias() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        r#"
+[mcp_servers.exa]
+type = "http"
+url = "https://mcp.exa.ai/mcp"
+
+[mcp_servers.sentry]
+type = "http"
+url = "https://mcp.sentry.dev/mcp"
+headers = { Authorization = "Bearer xxx" }
+"#,
+    )
+    .unwrap();
+
+    let loader = TomlConfigLoader::new();
+    let loaded = loader.load_config(root, None, None).unwrap();
+
+    let exa = loaded.mcp_servers.get("exa").unwrap();
+    assert_eq!(exa.transport, imrule::domain::config::McpTransport::Http);
+    assert_eq!(exa.url.as_deref(), Some("https://mcp.exa.ai/mcp"));
+
+    let sentry = loaded.mcp_servers.get("sentry").unwrap();
+    assert_eq!(sentry.transport, imrule::domain::config::McpTransport::Http);
+    assert_eq!(sentry.url.as_deref(), Some("https://mcp.sentry.dev/mcp"));
+    assert_eq!(
+        sentry.headers.get("Authorization").map(String::as_str),
+        Some("Bearer xxx")
+    );
+}
+
+#[test]
 fn load_config_falls_back_to_overridden_xdg_home() {
     let tmp = tempdir().unwrap();
     let xdg_home = tempdir().unwrap();

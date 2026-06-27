@@ -71,6 +71,11 @@ fn apply_collapses_gjc_paths_to_dot_gjc_in_gitignore() {
     let tmp = tempdir().unwrap();
     fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
     fs::write(tmp.path().join(".imrule/AGENTS.md"), "GJC rules.").unwrap();
+    fs::write(
+        tmp.path().join(".imrule/mcp.json"),
+        r#"{"mcpServers":{"gjc-tool":{"command":"node","args":["gjc-tool.js"]}}}"#,
+    )
+    .unwrap();
 
     Command::cargo_bin("imrule")
         .unwrap()
@@ -85,6 +90,12 @@ fn apply_collapses_gjc_paths_to_dot_gjc_in_gitignore() {
         .success();
 
     assert!(tmp.path().join(".gjc/RULES.md").is_file());
+    assert!(tmp.path().join(".gjc/mcp.json").is_file());
+    let mcp: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(tmp.path().join(".gjc/mcp.json")).unwrap())
+            .unwrap();
+    assert!(mcp["mcpServers"]["gjc-tool"].is_object());
+
     let gitignore = fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
     assert!(
         gitignore.contains("/.gjc\n") || gitignore.contains("/.gjc/\n"),
@@ -94,6 +105,21 @@ fn apply_collapses_gjc_paths_to_dot_gjc_in_gitignore() {
         !gitignore.contains("/.gjc/RULES.md"),
         "expected .gitignore to collapse .gjc/* paths, got:\n{gitignore}"
     );
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "clear",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "gjc",
+        ])
+        .assert()
+        .success();
+
+    assert!(!tmp.path().join(".gjc/RULES.md").exists());
+    assert!(!tmp.path().join(".gjc/mcp.json").exists());
 }
 
 #[test]
