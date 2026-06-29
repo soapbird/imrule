@@ -31,7 +31,7 @@ jobs:
             archive: zip
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -68,7 +68,7 @@ jobs:
           $hash.Hash | Out-File -FilePath dist/imrule-${{ matrix.target }}.zip.sha256
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: imrule-${{ matrix.target }}
           path: dist/imrule-${{ matrix.target }}.*
@@ -83,7 +83,7 @@ jobs:
     env:
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -103,13 +103,13 @@ jobs:
           echo "$EOF" >> "$GITHUB_OUTPUT"
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           body: ${{ steps.changelog.outputs.body }}
           draft: false
@@ -117,7 +117,7 @@ jobs:
 
       - name: Checkout Homebrew tap
         if: env.HOMEBREW_TAP_TOKEN != ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ github.repository_owner }}/${{ env.HOMEBREW_TAP_REPO }}
           path: homebrew-tap
