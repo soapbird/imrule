@@ -92,7 +92,7 @@ jobs:
           toolchain: "1.85"
 
       - name: Install git-cliff
-        run: cargo install git-cliff
+        run: cargo install git-cliff --version 2.12.0 --locked
 
       - name: Generate changelog
         id: changelog
