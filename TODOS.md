@@ -61,6 +61,33 @@ fixed in that PR; the items below are the related apply↔clear lifecycle harden
   are duplicated verbatim between `mcp_storage_toml.rs` and `mcp_storage_openhands_toml.rs`.
   Extract into a shared private module.
 
+- [ ] JSONC-aware parsing for `.jsonc` / editor-settings native configs  
+  **Priority:** P2  
+  **Note:** `read_native_mcp` now aborts (instead of destroying the file) when an existing
+  native config isn't strictly valid JSON. That keeps comment-bearing `kilo.jsonc`,
+  `.zed/settings.json`, etc. safe, but blocks `apply` for users who legitimately use JSONC.
+  Add a tolerant JSONC parser for those paths so apply can merge without erroring. (v0.1.4.0 follow-up.)
+
+- [ ] Proper Firebender native MCP support (unified rules + MCP JSON)  
+  **Priority:** P2  
+  **Note:** Firebender's native MCP path was removed in v0.1.4.0 because `firebender.json` is
+  also its instructions file and a native MCP write clobbered the generated instructions.
+  Implement firebender.json as a single JSON document carrying both rules and `mcpServers`.
+
+- [ ] `apply` normalizes ALL servers in a native file, not just imrule-managed ones  
+  **Priority:** P3  
+  **Note:** `write_native_mcp` runs `normalize_native_mcp_json` over the whole merged file, so a
+  user's hand-written servers are reshaped to the agent's schema on every apply. `clear` was
+  fixed (raw write) in v0.1.4.0; consider restricting apply-side normalization to imrule-managed
+  server keys too. Currently treated as intended schema-conformance.
+
+- [ ] Rule-write `par_iter` has no output-path dedup  
+  **Priority:** P3  
+  **Note:** `apply_use_case.rs` writes rules in parallel; agents that share an output file
+  (e.g. the ~11 agents writing root `AGENTS.md`) race on concurrent writes. Content is identical
+  so it's benign today (and worse only with `--backup`), but dedup output paths like the MCP
+  write now does. Pre-existing; MCP path dedup landed in v0.1.4.0.
+
 ## Coverage
 
 - [ ] Test `GitSkillFetcher` (GitHub/GitLab/SSH fetch paths)  
