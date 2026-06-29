@@ -141,9 +141,10 @@ SKILLS_FIXTURE := test-e2e-skills/fixture-local-source
 
 test-e2e-skills: build
 	@echo ""; echo "━━━ E2E Skills: imrule skills add (local source) ━━━"
-	rm -rf $(TMP)/skills-local && mkdir -p $(TMP)/skills-local/.imrule
+	rm -rf $(TMP)/skills-local $(TMP)/skills-xdg && mkdir -p $(TMP)/skills-local/.imrule
 	printf "# Rules\n" > $(TMP)/skills-local/.imrule/AGENTS.md
-	$(BINARY) skills add $(SKILLS_FIXTURE) --project-root $(TMP)/skills-local
+	printf "# ImRule Configuration File\n" > $(TMP)/skills-local/.imrule/imrule.toml
+	XDG_CONFIG_HOME=$(TMP)/skills-xdg $(BINARY) skills add $(SKILLS_FIXTURE) --project-root $(TMP)/skills-local
 	@test -d $(TMP)/skills-local/.imrule/skills/sample-skill                     && echo "[PASS] sample-skill installed to .imrule/skills"         || (echo "[FAIL] sample-skill missing"          && exit 1)
 	@test -f $(TMP)/skills-local/.imrule/skills/sample-skill/SKILL.md            && echo "[PASS] sample-skill has SKILL.md"                       || (echo "[FAIL] sample-skill SKILL.md missing" && exit 1)
 	@test -d $(TMP)/skills-local/.imrule/skills/another-skill                    && echo "[PASS] another-skill installed to .imrule/skills"        || (echo "[FAIL] another-skill missing"         && exit 1)
@@ -159,17 +160,17 @@ test-e2e-skills: build
 	@echo ""; echo "━━━ E2E Skills: imrule skills add --skill (selective) ━━━"
 	rm -rf $(TMP)/skills-filter && mkdir -p $(TMP)/skills-filter/.imrule
 	printf "# Rules\n" > $(TMP)/skills-filter/.imrule/AGENTS.md
-	$(BINARY) skills add $(SKILLS_FIXTURE) --skill sample-skill --project-root $(TMP)/skills-filter
+	XDG_CONFIG_HOME=$(TMP)/skills-xdg $(BINARY) skills add $(SKILLS_FIXTURE) --skill sample-skill --project-root $(TMP)/skills-filter
 	@test -d $(TMP)/skills-filter/.imrule/skills/sample-skill                     && echo "[PASS] sample-skill installed"                         || (echo "[FAIL] sample-skill missing"          && exit 1)
 	@test ! -d $(TMP)/skills-filter/.imrule/skills/another-skill                  && echo "[PASS] another-skill NOT installed (--skill filter)"    || (echo "[FAIL] another-skill should not exist" && exit 1)
 	@echo ""; echo "━━━ E2E Skills: imrule skills list ━━━"
-	$(BINARY) skills list --project-root $(TMP)/skills-local | grep -q "sample-skill" \
+	XDG_CONFIG_HOME=$(TMP)/skills-xdg $(BINARY) skills list --project-root $(TMP)/skills-local | grep -q "sample-skill" \
 		&& echo "[PASS] skills list shows installed skill" \
 		|| (echo "[FAIL] skills list did not show skill" && exit 1)
 	@echo ""; echo "━━━ E2E Skills: imrule skills add (remote GitHub source) ━━━"
 	rm -rf $(TMP)/skills-remote && mkdir -p $(TMP)/skills-remote/.imrule
 	printf "# Rules\n" > $(TMP)/skills-remote/.imrule/AGENTS.md
-	$(BINARY) skills add vercel-labs/agent-skills --project-root $(TMP)/skills-remote 2>&1 | tee $(TMP)/skills-remote/log.txt
+	XDG_CONFIG_HOME=$(TMP)/skills-xdg $(BINARY) skills add vercel-labs/agent-skills --project-root $(TMP)/skills-remote 2>&1 | tee $(TMP)/skills-remote/log.txt
 	@grep -q "Installed" $(TMP)/skills-remote/log.txt                             && echo "[PASS] remote skills installed"                        || (echo "[FAIL] remote skills not installed"   && exit 1)
 	@test -d $(TMP)/skills-remote/.imrule/skills                                 && echo "[PASS] .imrule/skills directory created from remote"    || (echo "[FAIL] .imrule/skills missing"        && exit 1)
 	@echo ""; echo "━━━ E2E Skills: all skills tests passed ━━━"

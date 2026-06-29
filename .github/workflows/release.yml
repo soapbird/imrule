@@ -8,6 +8,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+  HOMEBREW_TAP_REPO: homebrew-tap
 jobs:
   build:
     name: Build release binaries
@@ -79,6 +80,8 @@ jobs:
     needs: build
     permissions:
       contents: write
+    env:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -109,5 +112,76 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: ${{ steps.changelog.outputs.body }}
-          draft: true
+          draft: false
           files: dist/*
+
+      - name: Checkout Homebrew tap
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/${{ env.HOMEBREW_TAP_REPO }}
+          path: homebrew-tap
+          token: ${{ env.HOMEBREW_TAP_TOKEN }}
+      - name: Generate Homebrew formula
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          VERSION="${VERSION#v}"
+          REPO="${GITHUB_REPOSITORY}"
+          RELEASE_BASE="https://github.com/${REPO}/releases/download/v${VERSION}"
+
+          mac_arm_sha="$(cut -d ' ' -f1 dist/imrule-aarch64-apple-darwin.tar.gz.sha256)"
+          mac_intel_sha="$(cut -d ' ' -f1 dist/imrule-x86_64-apple-darwin.tar.gz.sha256)"
+          linux_intel_sha="$(cut -d ' ' -f1 dist/imrule-x86_64-unknown-linux-gnu.tar.gz.sha256)"
+
+          mkdir -p homebrew-tap/Formula
+          cat > homebrew-tap/Formula/imrule.rb <<EOF
+          class Imrule < Formula
+            desc "Apply the same rules to all coding agents"
+            homepage "https://github.com/${REPO}"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "${RELEASE_BASE}/imrule-aarch64-apple-darwin.tar.gz"
+                sha256 "${mac_arm_sha}"
+              else
+                url "${RELEASE_BASE}/imrule-x86_64-apple-darwin.tar.gz"
+                sha256 "${mac_intel_sha}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.intel?
+                url "${RELEASE_BASE}/imrule-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "${linux_intel_sha}"
+              end
+            end
+
+            def install
+              bin.install "imrule"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/imrule --version")
+            end
+          end
+          EOF
+
+      - name: Publish Homebrew tap
+        if: env.HOMEBREW_TAP_TOKEN != ''
+        working-directory: homebrew-tap
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/imrule.rb
+          if git diff --cached --quiet; then
+            echo "Homebrew formula is already up to date."
+          else
+            git commit -m "Update imrule formula to ${VERSION}"
+            git push
+          fi

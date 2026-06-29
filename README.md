@@ -1,137 +1,157 @@
 # ImRule
 
-**Apply the same rules to all coding agents.**
+**모든 코딩 에이전트에 같은 규칙을 적용합니다.**
 
-ImRule lets you write project instructions, MCP server configurations, skills, and subagent definitions once in a `.imrule/` directory, then propagates them to every supported AI coding agent with a single command.
+ImRule은 프로젝트 지침, MCP 서버 설정, 스킬, 서브에이전트 정의를 `.imrule/` 디렉터리에 한 번만 작성한 뒤, 하나의 명령으로 지원되는 모든 AI 코딩 에이전트의 네이티브 설정 파일로 전파하는 Rust CLI 도구입니다.
 
-## Features
+## 주요 기능
 
-- **30+ supported agents** — Copilot, Claude Code, Codex, Cursor, Windsurf, Cline, Aider, Gemini CLI, Gajae Code (gjc), and many more
-- **MCP server config** — declare servers in `mcp.json` or the `[mcp_servers]` TOML table (or via `imrule mcp add`), merged into each agent's native format
-- **Skills propagation** — sync `.imrule/skills/` to agent-specific skill directories
-- **Subagent propagation** — transform `.imrule/agents/` definitions to agent-native formats
-- **Gitignore management** — automatically update `.gitignore` with generated paths
-- **Full reset** — remove all generated assets at once with `imrule clear`
-- **Dry-run mode** — preview all changes without writing files
-- **Global config** — `~/.config/imrule/` for shared rules across projects
-- **Nested projects** — discover `.imrule/` in parent directories
+- **30개 이상 에이전트 지원** — Copilot, Claude Code, Codex, Cursor, Windsurf, Cline, Aider, Gemini CLI, Gajae Code(gjc) 등
+- **MCP 서버 설정** — `mcp.json`, `[mcp_servers]` TOML 테이블, 또는 `imrule mcp add`로 선언한 서버를 각 에이전트 형식에 맞게 병합
+- **스킬 전파** — `.imrule/skills/`를 에이전트별 스킬 디렉터리로 동기화
+- **서브에이전트 전파** — `.imrule/agents/` 정의를 에이전트 네이티브 형식으로 변환
+- **Gitignore 관리** — 생성 파일 경로를 `.gitignore`에 자동 반영
+- **전체 정리** — `imrule clear`로 ImRule이 생성한 자산을 한 번에 제거
+- **Dry-run 모드** — 파일을 쓰지 않고 변경 사항 미리보기
+- **전역 설정** — 여러 프로젝트에서 공유할 수 있는 `~/.config/imrule/`
+- **중첩 프로젝트 지원** — 상위 디렉터리의 `.imrule/` 자동 탐색
 
-## Installation
+## 설치
 
-### Install script
+### 설치 스크립트
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/soapbird/imrule/main/install.sh | sh
 ```
 
-Install to a custom directory:
+원하는 디렉터리에 설치하려면 다음처럼 실행합니다.
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/soapbird/imrule/main/install.sh | sh -s -- --dir /usr/local/bin
 ```
 
-### From source
+### 사전 빌드 바이너리
+
+모든 `v*.*.*` 태그는 GitHub Releases에 macOS(Apple Silicon/Intel), Linux(x86_64), Windows(x86_64)용 최적화 바이너리를 게시합니다.
+
+```bash
+# macOS Apple Silicon
+curl -LO https://github.com/soapbird/imrule/releases/latest/download/imrule-aarch64-apple-darwin.tar.gz
+tar xzf imrule-aarch64-apple-darwin.tar.gz
+sudo install -m 0755 imrule-aarch64-apple-darwin/imrule /usr/local/bin/imrule
+```
+
+### Homebrew
+
+```bash
+brew tap soapbird/tap
+brew install imrule
+```
+
+릴리스 워크플로는 저장소에 `soapbird/homebrew-tap` 쓰기 권한이 있는 `HOMEBREW_TAP_TOKEN` 시크릿이 설정되어 있으면 Homebrew formula를 자동으로 갱신합니다.
+
+### 소스에서 설치
 
 ```bash
 git clone https://github.com/soapbird/imrule.git
 cd imrule
 make build
-sudo make install     # copies binary to /usr/local/bin/imrule
+sudo make install     # 바이너리를 /usr/local/bin/imrule로 복사
 ```
 
-### With Cargo
+### Cargo로 설치
 
 ```bash
 cargo install imrule
 ```
 
-### Custom install prefix
+### 설치 경로 지정
 
 ```bash
-make install PREFIX=~/.local    # installs to ~/.local/bin/imrule
+make install PREFIX=~/.local    # ~/.local/bin/imrule에 설치
 ```
 
-### Uninstall
+### 제거
 
 ```bash
-sudo make uninstall             # removes /usr/local/bin/imrule
+sudo make uninstall             # /usr/local/bin/imrule 제거
 ```
 
-## Quick Start
+## 빠른 시작
 
 ```bash
-# 1. Initialize a .imrule directory
+# 1. .imrule 디렉터리 생성
 imrule init
 
-# 2. Edit your instructions
+# 2. 지침 편집
 vim .imrule/AGENTS.md
 
-# 3. Apply to all agents
+# 3. 모든 에이전트에 적용
 imrule apply
 
-# 4. Remove everything imrule generated
+# 4. ImRule이 생성한 항목 제거
 imrule clear
 ```
 
-## Usage
+## 사용법
 
 ### `imrule init`
 
-Scaffold a `.imrule/` directory with default files (`AGENTS.md`, `imrule.toml`).
+기본 파일(`AGENTS.md`, `imrule.toml`)을 포함한 `.imrule/` 디렉터리를 생성합니다.
 
 ```bash
-imrule init                          # local .imrule/ in current directory
-imrule init --global                 # ~/.config/imrule/
-imrule init --project-root ~/myproj  # specify a different project
+imrule init                          # 현재 디렉터리에 로컬 .imrule/ 생성
+imrule init --global                 # ~/.config/imrule/ 생성
+imrule init --project-root ~/myproj  # 다른 프로젝트 루트 지정
 ```
 
 ### `imrule apply`
 
-Read `.imrule/` contents and write to each agent's native config files.
+`.imrule/` 내용을 읽어 각 에이전트의 네이티브 설정 파일에 씁니다.
 
 ```bash
-imrule apply                              # all agents, current directory
-imrule apply --agents claude,copilot      # specific agents only
-imrule apply --dry-run                    # preview without writing
-imrule apply --backup                     # enable .bak backup files (default: off)
-imrule apply --verbose                    # show file counts
-imrule apply --project-root ~/myproj      # specify project root
-imrule apply --config custom.toml         # use custom config file
+imrule apply                              # 현재 디렉터리에서 모든 에이전트에 적용
+imrule apply --agents claude,copilot      # 특정 에이전트에만 적용
+imrule apply --dry-run                    # 쓰기 없이 미리보기
+imrule apply --backup                     # .bak 백업 파일 생성 활성화(기본값: 꺼짐)
+imrule apply --verbose                    # 파일 개수 출력
+imrule apply --project-root ~/myproj      # 프로젝트 루트 지정
+imrule apply --config custom.toml         # 사용자 지정 설정 파일 사용
 ```
 
 ### `imrule clear`
 
-Remove all assets generated by `imrule apply` across every agent — rule files, `.bak` backups, skills directories, gitignore block, and MCP entries. `clear` targets all agents by default regardless of `default_agents` config; pass `--agents` to limit the scope.
+`imrule apply`가 생성한 모든 자산을 제거합니다. 규칙 파일, `.bak` 백업, 스킬 디렉터리, gitignore 관리 블록, MCP 항목이 대상입니다. `clear`는 `default_agents` 설정과 무관하게 기본적으로 모든 에이전트를 대상으로 하며, `--agents`로 범위를 제한할 수 있습니다.
 
-The `.imrule/` source directory is preserved by default. Use `--remove-source` to delete it too.
+`.imrule/` 원본 디렉터리는 기본적으로 보존됩니다. 원본까지 삭제하려면 `--remove-source`를 사용합니다.
 
 ```bash
-imrule clear                              # remove all generated files (all agents)
-imrule clear --agents claude,cline        # limit to specific agents
-imrule clear --dry-run                    # preview without deleting
-imrule clear --remove-source              # also delete .imrule/ source directory
-imrule clear --verbose                    # show count of removed files
-imrule clear --project-root ~/myproj      # specify project root
+imrule clear                              # 생성 파일 제거(모든 에이전트)
+imrule clear --agents claude,cline        # 특정 에이전트로 제한
+imrule clear --dry-run                    # 삭제 없이 미리보기
+imrule clear --remove-source              # .imrule/ 원본 디렉터리도 삭제
+imrule clear --verbose                    # 제거된 파일 개수 출력
+imrule clear --project-root ~/myproj      # 프로젝트 루트 지정
 ```
 
-> **Safety**: only files that start with `<!-- Generated by ImRule -->` are deleted. User-owned files are never touched.
+> **안전성**: `<!-- Generated by ImRule -->`로 시작하는 파일만 삭제합니다. 사용자가 소유한 파일은 건드리지 않습니다.
 
 ### `imrule mcp`
 
-Manage MCP server definitions in the `[mcp_servers]` table of `imrule.toml` without editing the file by hand. Servers added here are propagated to every agent's native MCP config on the next `imrule apply`.
+`imrule.toml`의 `[mcp_servers]` 테이블에 MCP 서버 정의를 추가하거나 제거합니다. 직접 파일을 편집하지 않아도 되며, 여기 추가한 서버는 다음 `imrule apply` 때 각 에이전트의 네이티브 MCP 설정으로 전파됩니다.
 
 #### `imrule mcp add`
 
-Add an MCP server. The transport defaults to `stdio`.
+MCP 서버를 추가합니다. 기본 transport는 `stdio`입니다.
 
-For a **stdio** server, put the command and its arguments after `--`:
+**stdio** 서버는 `--` 뒤에 명령과 인자를 둡니다.
 
 ```bash
 imrule mcp add github -- npx -y @modelcontextprotocol/server-github
 imrule mcp add github --env GITHUB_TOKEN=xxx -- npx -y @modelcontextprotocol/server-github
 ```
 
-For an **http** or **sse** server, pass the URL as the final argument:
+**http** 또는 **sse** 서버는 마지막 인자로 URL을 전달합니다.
 
 ```bash
 imrule mcp add linear --transport http https://mcp.linear.app/mcp
@@ -139,59 +159,59 @@ imrule mcp add linear --transport http --header Authorization=Bearer-xxx https:/
 imrule mcp add notify --transport sse https://example.com/sse
 ```
 
-Flags:
+플래그:
 
 ```bash
---transport stdio|http|sse   # transport protocol (default: stdio)
---env KEY=VALUE, -e          # environment variable for stdio servers (repeatable)
---header KEY=VALUE           # header for http/sse servers (repeatable)
---global, -g                 # write to the global config (~/.config/imrule/imrule.toml)
---dry-run                    # preview without writing
---project-root DIR           # specify project root
+--transport stdio|http|sse   # transport 프로토콜(기본값: stdio)
+--env KEY=VALUE, -e          # stdio 서버 환경 변수(반복 가능)
+--header KEY=VALUE           # http/sse 서버 헤더(반복 가능)
+--global, -g                 # 전역 설정(~/.config/imrule/imrule.toml)에 기록
+--dry-run                    # 쓰기 없이 미리보기
+--project-root DIR           # 프로젝트 루트 지정
 ```
 
-> stdio servers require a command after `--`. Remote (`http`/`sse`) servers require exactly one URL argument.
+> stdio 서버는 `--` 뒤에 명령이 필요합니다. 원격(`http`/`sse`) 서버는 정확히 하나의 URL 인자가 필요합니다.
 
 #### `imrule mcp remove`
 
-Delete an MCP server definition by name.
+이름으로 MCP 서버 정의를 삭제합니다.
 
 ```bash
-imrule mcp remove github                  # remove from project imrule.toml
-imrule mcp remove github --global         # remove from global config
-imrule mcp remove github --dry-run        # preview without writing
+imrule mcp remove github                  # 프로젝트 imrule.toml에서 제거
+imrule mcp remove github --global         # 전역 설정에서 제거
+imrule mcp remove github --dry-run        # 쓰기 없이 미리보기
 imrule mcp remove github --project-root ~/myproj
 ```
 
 ### `imrule skills`
 
-Manage agent skills — install from a remote repository or list what's installed locally.
+에이전트 스킬을 관리합니다. 원격 저장소에서 설치하거나 로컬에 설치된 스킬을 조회할 수 있습니다.
 
 #### `imrule skills add`
 
-Install skills from a GitHub/GitLab repository, git SSH URL, or local path. After install, automatically runs `imrule apply` to sync skills to all agent directories.
+GitHub/GitLab 저장소, git SSH URL, 로컬 경로에서 스킬을 설치합니다. 설치 후 `imrule apply`를 자동 실행해 모든 에이전트 디렉터리로 동기화합니다.
 
 ```bash
-imrule skills add org/repo                # install all skills from GitHub repo
-imrule skills add org/repo --skill name   # install a specific skill by name
-imrule skills add org/repo --skill '*'    # install all skills (explicit)
-imrule skills add org/repo --list         # list available skills without installing
-imrule skills add org/repo --global       # install to ~/.config/imrule/skills/
-imrule skills add ./local/path            # install from a local directory
-imrule skills add git@github.com:org/repo # install via SSH URL
+imrule skills add org/repo                # GitHub 저장소의 모든 스킬 설치
+imrule skills add org/repo --skill name   # 특정 스킬 설치
+imrule skills add org/repo --skill '*'    # 모든 스킬 설치(명시)
+imrule skills add org/repo --list         # 설치 없이 사용 가능한 스킬 조회
+imrule skills add org/repo --global       # ~/.config/imrule/skills/에 설치
+imrule skills add ./local/path            # 로컬 디렉터리에서 설치
+imrule skills add git@github.com:org/repo # SSH URL로 설치
 ```
 
 #### `imrule skills list`
 
-List skills installed in `.imrule/skills/`.
+`.imrule/skills/`에 설치된 스킬을 조회합니다.
 
 ```bash
-imrule skills list                        # list project skills
-imrule skills list --global               # list global skills (~/.config/imrule/skills/)
-imrule skills ls                          # alias for list
+imrule skills list                        # 프로젝트 스킬 조회
+imrule skills list --global               # 전역 스킬 조회(~/.config/imrule/skills/)
+imrule skills ls                          # list 별칭
 ```
 
-## Supported Agents
+## 지원 에이전트
 
 - `agentsmd`: AgentsMd
 - `copilot`: GitHub Copilot
@@ -227,16 +247,16 @@ imrule skills ls                          # alias for list
 - `jetbrains-ai`: JetBrains AI Assistant
 - `gjc`: Gajae Code
 
-## Configuration
+## 설정
 
 ### `.imrule/AGENTS.md`
 
-Central markdown file for your coding guidelines, style guides, and project context. All `.md` files in `.imrule/` (including subdirectories) are concatenated, starting with `AGENTS.md` (if present), then remaining files in sorted order.
+코딩 규칙, 스타일 가이드, 프로젝트 컨텍스트를 담는 중심 Markdown 파일입니다. `.imrule/` 안의 모든 `.md` 파일(하위 디렉터리 포함)을 이어 붙이며, `AGENTS.md`가 있으면 먼저 배치하고 나머지는 정렬 순서대로 배치합니다.
 
 ### `.imrule/imrule.toml`
 
 ```toml
-# Default agents when --agents is not specified
+# --agents를 지정하지 않았을 때 기본 에이전트
 # default_agents = ["claude", "copilot"]
 
 # [agents.ClaudeCode]
@@ -249,7 +269,7 @@ Central markdown file for your coding guidelines, style guides, and project cont
 
 # [mcp]
 # enabled = true
-# strategy = "merge"    # or "overwrite"
+# strategy = "merge"    # 또는 "overwrite"
 
 # [gitignore]
 # enabled = true
@@ -263,9 +283,9 @@ Central markdown file for your coding guidelines, style guides, and project cont
 # include_in_rules = false
 ```
 
-#### `[mcp_servers]` table
+#### `[mcp_servers]` 테이블
 
-Declare MCP servers directly in `imrule.toml` under `[mcp_servers.<name>]`. This is what `imrule mcp add` writes. Each entry sets a `transport` (`stdio`, `http`, or `sse`) plus the fields that transport needs.
+`imrule.toml`의 `[mcp_servers.<name>]` 아래에 MCP 서버를 직접 선언합니다. `imrule mcp add`가 쓰는 위치도 이곳입니다. 각 항목은 `transport`(`stdio`, `http`, `sse`)와 해당 transport에 필요한 필드를 설정합니다.
 
 ```toml
 # stdio server
@@ -282,11 +302,11 @@ url = "https://mcp.linear.app/mcp"
 headers = { Authorization = "Bearer xxx" }
 ```
 
-Servers declared here are unioned with those in `.imrule/mcp.json` when running `imrule apply`, so you can use either source. On `apply`, every server is written into each agent's native MCP config — including TOML-based agents (Codex, OpenCode, Mistral, OpenHands) — and `imrule clear` removes them again.
+여기 선언한 서버는 `imrule apply` 실행 시 `.imrule/mcp.json`에 있는 서버와 합쳐집니다. 둘 중 어느 소스를 사용해도 됩니다. `apply` 때 모든 서버는 TOML 기반 에이전트(Codex, OpenCode, Mistral, OpenHands)를 포함한 각 에이전트의 네이티브 MCP 설정으로 기록되고, `imrule clear`가 다시 제거합니다.
 
 ### `.imrule/mcp.json`
 
-MCP server definitions in standard format. These are merged with the `[mcp_servers]` table in `imrule.toml` (see above) when applying.
+표준 형식의 MCP 서버 정의입니다. 적용 시 위의 `imrule.toml` `[mcp_servers]` 테이블과 병합됩니다.
 
 ```json
 {
@@ -301,47 +321,47 @@ MCP server definitions in standard format. These are merged with the `[mcp_serve
 
 ### `.imrule/skills/`
 
-Place skill directories here. Each skill needs a `SKILL.md` file. Skills are propagated to agent-specific directories (e.g. `.claude/skills/`, `.cursor/rules/`) when running `imrule apply`.
+스킬 디렉터리를 여기에 둡니다. 각 스킬에는 `SKILL.md` 파일이 필요합니다. `imrule apply`를 실행하면 에이전트별 디렉터리(예: `.claude/skills/`, `.cursor/rules/`)로 전파됩니다.
 
-You can install skills from a remote repository with `imrule skills add`:
+원격 저장소에서 스킬을 설치할 수도 있습니다.
 
 ```bash
-imrule skills add vercel-labs/skills      # install from GitHub
-imrule skills add org/repo --skill name   # install a specific skill
+imrule skills add vercel-labs/skills      # GitHub에서 설치
+imrule skills add org/repo --skill name   # 특정 스킬 설치
 ```
 
 ### `.imrule/agents/`
 
-Place subagent definitions here as markdown files with YAML frontmatter.
+YAML frontmatter가 있는 Markdown 파일로 서브에이전트 정의를 배치합니다.
 
-## Development
+## 개발
 
-Requires Rust 1.85+.
+Rust 1.85 이상이 필요합니다.
 
 ```bash
 make              # fmt + lint + test + build
 make build        # cargo build --release
 make test         # cargo test
-make test-e2e     # end-to-end tests against test-e2e/ fixtures
-make install      # copy binary to /usr/local/bin/imrule (needs sudo)
-make uninstall    # remove /usr/local/bin/imrule
-make check        # fast compile check
+make test-e2e     # test-e2e/ fixture 기반 end-to-end 테스트
+make install      # /usr/local/bin/imrule로 복사(sudo 필요)
+make uninstall    # /usr/local/bin/imrule 제거
+make check        # 빠른 컴파일 검사
 make lint         # cargo clippy
-make fmt          # check formatting
-make fmt-fix      # auto-format
+make fmt          # 포맷 검사
+make fmt-fix      # 자동 포맷
 make clean        # cargo clean
 ```
 
-## Architecture
+## 아키텍처
 
-```
+```text
 src/
-  domain/          — Pure business logic, zero I/O
-  application/     — Use cases (apply, clear, init, mcp, skills)
-  infrastructure/  — Filesystem, config loader, gitignore, MCP storage
-  interface/       — CLI adapter (clap)
+  domain/          — 순수 비즈니스 로직, I/O 없음
+  application/     — 유스케이스(apply, clear, init, mcp, skills)
+  infrastructure/  — 파일시스템, 설정 로더, gitignore, MCP 저장소
+  interface/       — CLI 어댑터(clap)
 ```
 
-## License
+## 라이선스
 
 MIT

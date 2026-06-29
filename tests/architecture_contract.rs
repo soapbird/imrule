@@ -33,3 +33,21 @@ fn package_contains_application_layer_without_typescript_surface() {
     assert!(tracked.status.success());
     assert_eq!(String::from_utf8_lossy(&tracked.stdout), "");
 }
+
+#[test]
+fn release_distribution_contract_is_configured() {
+    let cargo = fs::read_to_string("Cargo.toml").unwrap();
+    assert!(cargo.contains("[profile.release]"));
+    assert!(cargo.contains("lto = \"fat\""));
+    assert!(cargo.contains("codegen-units = 1"));
+    assert!(cargo.contains("strip = \"symbols\""));
+    assert!(cargo.contains("panic = \"abort\""));
+
+    let release = fs::read_to_string(".github/workflows/release.yml").unwrap();
+    assert!(release.contains("imrule-aarch64-apple-darwin.tar.gz"));
+    assert!(release.contains("imrule-x86_64-apple-darwin.tar.gz"));
+    assert!(release.contains("imrule-x86_64-unknown-linux-gnu.tar.gz"));
+    assert!(release.contains("x86_64-pc-windows-msvc"));
+    assert!(release.contains("Generate Homebrew formula"));
+    assert!(release.contains("HOMEBREW_TAP_TOKEN"));
+}

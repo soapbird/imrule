@@ -43,6 +43,12 @@ criterion = "0.5"
 [[bench]]
 name = "rules_concat"
 harness = false
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
 
 [package.metadata.imrule]
 release-channel = "native-rust"
