@@ -48,7 +48,18 @@ fn discovers_skills_groupings_warnings_copies_and_gitignore_targets() {
     let agents = all_agents();
     let selected: Vec<_> = agents
         .iter()
-        .filter(|agent| ["claude", "codex", "mistral", "factory"].contains(&agent.identifier))
+        .filter(|agent| {
+            [
+                "claude",
+                "codex",
+                "mistral",
+                "factory",
+                "kimi-cli",
+                "kimi-code",
+                "kimi",
+            ]
+            .contains(&agent.identifier)
+        })
         .copied()
         .collect();
     assert_eq!(
@@ -57,6 +68,7 @@ fn discovers_skills_groupings_warnings_copies_and_gitignore_targets() {
             root.join(".claude/skills"),
             root.join(".codex/skills"),
             root.join(".vibe/skills"),
+            root.join(".kimi-code/skills"),
             root.join(".factory/skills"),
         ]
     );

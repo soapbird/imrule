@@ -224,6 +224,9 @@ imrule skills ls                          # list 별칭
 - `firebase`: Firebase Studio
 - `openhands`: Open Hands
 - `gemini-cli`: Gemini CLI
+- `kimi-cli`: Kimi CLI
+- `kimi-code`: Kimi Code
+- `kimi`: Kimi
 - `jules`: Jules
 - `junie`: Junie
 - `augmentcode`: AugmentCode

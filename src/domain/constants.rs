@@ -13,6 +13,7 @@ pub const GOOSE_SKILLS_PATH: &str = ".agents/skills";
 pub const VIBE_SKILLS_PATH: &str = ".vibe/skills";
 pub const ROO_SKILLS_PATH: &str = ".roo/skills";
 pub const GEMINI_SKILLS_PATH: &str = ".gemini/skills";
+pub const KIMI_SKILLS_PATH: &str = ".kimi-code/skills";
 pub const JUNIE_SKILLS_PATH: &str = ".junie/skills";
 pub const CURSOR_SKILLS_PATH: &str = ".cursor/skills";
 pub const WINDSURF_SKILLS_PATH: &str = ".windsurf/skills";

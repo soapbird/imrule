@@ -140,6 +140,34 @@ fn apply_writes_gemini_and_qwen_http_servers_with_http_url() {
 }
 
 #[test]
+fn apply_writes_kimi_mcp_servers_to_project_config() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    write_imrule_fixture(root);
+
+    apply_for(root, &["kimi-cli", "kimi-code", "kimi"]);
+
+    let config_path = root.join(".kimi-code/mcp.json");
+    let config: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(config_path).unwrap()).unwrap();
+    assert_eq!(
+        config["mcpServers"]["github"],
+        json!({
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-github"]
+        }),
+        "Kimi stdio MCP servers do not use an explicit type field"
+    );
+    assert_eq!(
+        config["mcpServers"]["linear"],
+        json!({
+            "url": "https://mcp.linear.app/mcp"
+        }),
+        "Kimi HTTP MCP servers use a plain url without an explicit type field"
+    );
+}
+
+#[test]
 fn apply_writes_roo_http_servers_as_streamable_http() {
     let tmp = tempdir().unwrap();
     let root = tmp.path();
@@ -158,6 +186,11 @@ fn apply_writes_roo_http_servers_as_streamable_http() {
         config["mcpServers"]["linear"]["url"],
         json!("https://mcp.linear.app/mcp")
     );
+    assert_eq!(
+        config["mcpServers"]["linear"]["disabled"],
+        json!(false),
+        "Roo expects explicit enabled-by-default server state"
+    );
 }
 
 #[test]
@@ -168,22 +201,26 @@ fn apply_writes_kilo_servers_to_current_project_config() {
 
     apply_for(root, &["kilocode"]);
 
+    let config_path = root.join("kilo.jsonc");
     let config: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(root.join("kilo.json")).unwrap()).unwrap();
+        serde_json::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
     assert_eq!(
         config["mcp"]["github"],
         json!({
             "type": "local",
-            "command": ["npx", "-y", "@modelcontextprotocol/server-github"]
+            "command": ["npx", "-y", "@modelcontextprotocol/server-github"],
+            "enabled": true
         })
     );
     assert_eq!(
         config["mcp"]["linear"],
         json!({
             "type": "remote",
-            "url": "https://mcp.linear.app/mcp"
+            "url": "https://mcp.linear.app/mcp",
+            "enabled": true
         })
     );
+    assert!(root.join("kilo.json").exists() == false);
     assert!(!root.join(".kilocode/mcp.json").exists());
 }
 
@@ -206,6 +243,53 @@ fn apply_writes_crush_servers_under_native_mcp_key() {
 }
 
 #[test]
+fn apply_writes_zed_servers_without_transport_type() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    write_imrule_fixture(root);
+
+    apply_for(root, &["zed"]);
+
+    let zed_config: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join(".zed/settings.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        zed_config["context_servers"]["linear"],
+        json!({ "url": "https://mcp.linear.app/mcp" })
+    );
+    assert_eq!(
+        zed_config["context_servers"]["github"],
+        json!({
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-github"]
+        })
+    );
+}
+
+#[test]
+fn apply_writes_firebender_servers_without_transport_type() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    write_imrule_fixture(root);
+
+    apply_for(root, &["firebender"]);
+
+    let firebender_config: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join("firebender.json")).unwrap()).unwrap();
+    assert_eq!(
+        firebender_config["mcpServers"]["linear"],
+        json!({ "url": "https://mcp.linear.app/mcp" })
+    );
+    assert_eq!(
+        firebender_config["mcpServers"]["github"],
+        json!({
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-github"]
+        })
+    );
+}
+
+#[test]
 fn apply_writes_opencode_servers_under_native_mcp_key() {
     let tmp = tempdir().unwrap();
     let root = tmp.path();
@@ -222,11 +306,13 @@ fn apply_writes_opencode_servers_under_native_mcp_key() {
         json!({
             "github": {
                 "type": "local",
-                "command": ["npx", "-y", "@modelcontextprotocol/server-github"]
+                "command": ["npx", "-y", "@modelcontextprotocol/server-github"],
+                "enabled": true
             },
             "linear": {
                 "type": "remote",
-                "url": "https://mcp.linear.app/mcp"
+                "url": "https://mcp.linear.app/mcp",
+                "enabled": true
             }
         })
     );

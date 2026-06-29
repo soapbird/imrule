@@ -26,6 +26,9 @@ fn agent_registry_matches_native_identifiers_order_and_cli_help() {
             "firebase",
             "openhands",
             "gemini-cli",
+            "kimi-cli",
+            "kimi-code",
+            "kimi",
             "jules",
             "junie",
             "augmentcode",
@@ -54,7 +57,7 @@ fn agent_registry_matches_native_identifiers_order_and_cli_help() {
 
     assert_eq!(
         get_agent_identifiers_for_cli_help(),
-        "agentsmd, aider, amazonqcli, amp, antigravity, augmentcode, claude, cline, codex, copilot, crush, cursor, factory, firebase, firebender, gemini-cli, gjc, goose, jetbrains-ai, jules, junie, kilocode, kiro, mistral, opencode, openhands, pi, qwen, roo, trae, warp, windsurf, zed"
+        "agentsmd, aider, amazonqcli, amp, antigravity, augmentcode, claude, cline, codex, copilot, crush, cursor, factory, firebase, firebender, gemini-cli, gjc, goose, jetbrains-ai, jules, junie, kilocode, kimi, kimi-cli, kimi-code, kiro, mistral, opencode, openhands, pi, qwen, roo, trae, warp, windsurf, zed"
     );
 }
 
@@ -181,6 +184,39 @@ fn agent_registry_matches_native_names_paths_mcp_keys_and_capabilities() {
             true,
             true,
             false,
+            true,
+            false,
+        ),
+        (
+            "kimi-cli",
+            "Kimi CLI",
+            AgentOutputPaths::single("/project/.kimi-code/AGENTS.md"),
+            "mcpServers",
+            true,
+            true,
+            true,
+            true,
+            false,
+        ),
+        (
+            "kimi-code",
+            "Kimi Code",
+            AgentOutputPaths::single("/project/.kimi-code/AGENTS.md"),
+            "mcpServers",
+            true,
+            true,
+            true,
+            true,
+            false,
+        ),
+        (
+            "kimi",
+            "Kimi",
+            AgentOutputPaths::single("/project/.kimi-code/AGENTS.md"),
+            "mcpServers",
+            true,
+            true,
+            true,
             true,
             false,
         ),

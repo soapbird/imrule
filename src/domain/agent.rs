@@ -209,6 +209,27 @@ const AGENT_DEFINITIONS: &[AgentDefinition] = &[
         capabilities: caps(true, true, false, true, false),
     },
     AgentDefinition {
+        identifier: "kimi-cli",
+        name: "Kimi CLI",
+        output_template: AgentOutputTemplate::Single(".kimi-code/AGENTS.md"),
+        mcp_server_key: "mcpServers",
+        capabilities: caps(true, true, true, true, false),
+    },
+    AgentDefinition {
+        identifier: "kimi-code",
+        name: "Kimi Code",
+        output_template: AgentOutputTemplate::Single(".kimi-code/AGENTS.md"),
+        mcp_server_key: "mcpServers",
+        capabilities: caps(true, true, true, true, false),
+    },
+    AgentDefinition {
+        identifier: "kimi",
+        name: "Kimi",
+        output_template: AgentOutputTemplate::Single(".kimi-code/AGENTS.md"),
+        mcp_server_key: "mcpServers",
+        capabilities: caps(true, true, true, true, false),
+    },
+    AgentDefinition {
         identifier: "jules",
         name: "Jules",
         output_template: AgentOutputTemplate::Single(DEFAULT_RULES_FILENAME),

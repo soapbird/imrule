@@ -27,6 +27,21 @@ fn normalize_native_mcp_json(file_path: &Path, data: &Value) -> Value {
         });
     }
 
+    if path.ends_with(".kimi-code/mcp.json") {
+        transform_servers(&mut output, "mcpServers", |server| {
+            match server.get("type").and_then(Value::as_str) {
+                Some("sse") => {
+                    server.remove("type");
+                    server.insert("transport".to_string(), Value::String("sse".to_string()));
+                }
+                Some("stdio" | "http") => {
+                    server.remove("type");
+                }
+                _ => {}
+            }
+        });
+    }
+
     if path.ends_with(".roo/mcp.json") {
         transform_servers(&mut output, "mcpServers", |server| {
             if server.get("type").and_then(Value::as_str) == Some("http") {
@@ -35,6 +50,26 @@ fn normalize_native_mcp_json(file_path: &Path, data: &Value) -> Value {
                     Value::String("streamable-http".to_string()),
                 );
             }
+            server
+                .entry("disabled".to_string())
+                .or_insert(Value::Bool(false));
+        });
+    }
+
+    if path.ends_with(".kiro/settings/mcp.json") || path.ends_with(".factory/mcp.json") {
+        transform_servers(&mut output, "mcpServers", |server| {
+            server
+                .entry("disabled".to_string())
+                .or_insert(Value::Bool(false));
+        });
+    }
+
+    if path.ends_with("firebender.json") || path.ends_with(".zed/settings.json") {
+        transform_servers(&mut output, "mcpServers", |server| {
+            server.remove("type");
+        });
+        transform_servers(&mut output, "context_servers", |server| {
+            server.remove("type");
         });
     }
 
@@ -67,6 +102,9 @@ fn normalize_native_mcp_json(file_path: &Path, data: &Value) -> Value {
             {
                 server.insert("type".to_string(), Value::String("remote".to_string()));
             }
+            server
+                .entry("enabled".to_string())
+                .or_insert(Value::Bool(true));
         });
     }
 
@@ -174,9 +212,12 @@ impl McpPort for JsonMcpStorage {
             "Aider" => vec![project_root.join(".mcp.json")],
             "Open Hands" => vec![project_root.join("config.toml")],
             "Gemini CLI" => vec![project_root.join(".gemini/settings.json")],
+            "Kimi CLI" | "Kimi Code" | "Kimi" => vec![project_root.join(".kimi-code/mcp.json")],
             "Junie" => vec![project_root.join(".junie/mcp/mcp.json")],
             "Qwen Code" => vec![project_root.join(".qwen/settings.json")],
             "Kilo Code" => vec![
+                project_root.join("kilo.jsonc"),
+                project_root.join(".kilo/kilo.jsonc"),
                 project_root.join("kilo.json"),
                 project_root.join(".kilo/kilo.json"),
             ],
