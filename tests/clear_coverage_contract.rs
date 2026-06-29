@@ -457,3 +457,185 @@ fn clear_removes_both_imrule_and_ruler_with_remove_source() {
     assert!(!tmp.path().join(".imrule").exists());
     assert!(!tmp.path().join(".ruler").exists());
 }
+
+#[test]
+fn clear_preserves_native_mcp_file_carrying_user_schema_key() {
+    // A native MCP config may carry a top-level `$schema` hint that imrule never
+    // writes — so it is always user/tool-authored. After `clear` strips the last
+    // imrule-managed server, the file is left as `{ "$schema": "...",
+    // "mcpServers": {} }`. That `$schema` is meaningful user data: the file must
+    // be PRESERVED (with the managed server removed), not deleted.
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
+    fs::write(
+        tmp.path().join(".imrule/AGENTS.md"),
+        "Schema kept on clear.",
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join(".imrule/imrule.toml"),
+        "[mcp_servers.tool]\ntransport = \"http\"\nurl = \"https://example.com/mcp\"\n",
+    )
+    .unwrap();
+
+    // Native config carrying a `$schema` key alongside the imrule-managed server.
+    fs::create_dir_all(tmp.path().join(".cursor")).unwrap();
+    fs::write(
+        tmp.path().join(".cursor/mcp.json"),
+        r#"{"$schema":"https://example.com/schema.json","mcpServers":{"tool":{"url":"https://example.com/mcp"}}}"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "clear",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "cursor",
+        ])
+        .assert()
+        .success();
+
+    // The file survives because `$schema` is meaningful user data; the
+    // imrule-managed server is gone.
+    let path = tmp.path().join(".cursor/mcp.json");
+    assert!(path.exists(), "file with user $schema must not be deleted");
+    let config: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(
+        config["$schema"],
+        serde_json::json!("https://example.com/schema.json")
+    );
+    assert!(config["mcpServers"].get("tool").is_none());
+}
+
+#[test]
+fn clear_preserves_native_mcp_file_when_schema_accompanies_unmanaged_server() {
+    // Inverse of the schema-only case: when a `$schema` key sits beside a server
+    // imrule does NOT manage, the file still holds meaningful data and survives.
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "Schema kept.").unwrap();
+    fs::write(
+        tmp.path().join(".imrule/imrule.toml"),
+        "[mcp_servers.tool]\ntransport = \"http\"\nurl = \"https://example.com/mcp\"\n",
+    )
+    .unwrap();
+
+    fs::create_dir_all(tmp.path().join(".cursor")).unwrap();
+    fs::write(
+        tmp.path().join(".cursor/mcp.json"),
+        r#"{"$schema":"https://example.com/schema.json","mcpServers":{"tool":{"url":"https://example.com/mcp"},"keep-me":{"command":"node","args":["x.js"]}}}"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "clear",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "cursor",
+        ])
+        .assert()
+        .success();
+
+    // The unmanaged server keeps the file alive; the managed one is gone.
+    let content = fs::read_to_string(tmp.path().join(".cursor/mcp.json")).unwrap();
+    let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert!(config["mcpServers"]["keep-me"].is_object());
+    assert!(config["mcpServers"].get("tool").is_none());
+}
+
+#[test]
+fn clear_cleans_windsurf_orphan_after_mcp_capability_dropped() {
+    // Regression: Windsurf's MCP capability was disabled, but a previous apply
+    // may have left imrule-managed servers in .windsurf/mcp_config.json. Clear
+    // must still strip imrule's keys instead of orphaning them forever.
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "Windsurf orphan.").unwrap();
+    fs::write(
+        tmp.path().join(".imrule/imrule.toml"),
+        "[mcp_servers.tool]\ntransport = \"http\"\nurl = \"https://example.com/mcp\"\n",
+    )
+    .unwrap();
+
+    // Orphan native config left by an older version that still managed Windsurf MCP.
+    fs::create_dir_all(tmp.path().join(".windsurf")).unwrap();
+    fs::write(
+        tmp.path().join(".windsurf/mcp_config.json"),
+        r#"{"mcpServers":{"tool":{"url":"https://example.com/mcp"},"user-kept":{"command":"node"}}}"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "clear",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "windsurf",
+        ])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(tmp.path().join(".windsurf/mcp_config.json")).unwrap();
+    let config: serde_json::Value = serde_json::from_str(&content).unwrap();
+    assert!(
+        config["mcpServers"].get("tool").is_none(),
+        "imrule key must be cleaned"
+    );
+    assert!(
+        config["mcpServers"]["user-kept"].is_object(),
+        "user server preserved"
+    );
+}
+
+#[test]
+fn clear_cleans_legacy_kilocode_mcp_file() {
+    // Regression: Kilo's native path moved to kilo.jsonc, but older versions
+    // wrote .kilocode/mcp.json. Clear must still find and clean that legacy file.
+    let tmp = tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join(".imrule")).unwrap();
+    fs::write(tmp.path().join(".imrule/AGENTS.md"), "Kilo legacy.").unwrap();
+    fs::write(
+        tmp.path().join(".imrule/imrule.toml"),
+        "[mcp_servers.tool]\ntransport = \"http\"\nurl = \"https://example.com/mcp\"\n",
+    )
+    .unwrap();
+
+    fs::create_dir_all(tmp.path().join(".kilocode")).unwrap();
+    fs::write(
+        tmp.path().join(".kilocode/mcp.json"),
+        r#"{"mcp":{"tool":{"type":"remote","url":"https://example.com/mcp","enabled":true}}}"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "clear",
+            "--project-root",
+            tmp.path().to_str().unwrap(),
+            "--agents",
+            "kilocode",
+        ])
+        .assert()
+        .success();
+
+    // Legacy file held only the imrule-managed server, so it is now empty/removed.
+    let legacy = tmp.path().join(".kilocode/mcp.json");
+    if legacy.exists() {
+        let config: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&legacy).unwrap()).unwrap();
+        assert!(
+            config["mcp"].get("tool").is_none(),
+            "legacy imrule key must be cleaned"
+        );
+    }
+}

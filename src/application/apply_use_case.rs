@@ -1,5 +1,6 @@
 //! Native apply-engine use case.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
@@ -172,7 +173,7 @@ impl<'a> ApplyUseCase<'a> {
             .as_ref()
             .map(|mcp| mcp.strategy)
             .unwrap_or(McpStrategy::Merge);
-        let written: Result<Vec<_>, ImruleError> = selected_agents
+        let candidates: Vec<_> = selected_agents
             .par_iter()
             .filter_map(|agent| {
                 let filtered = filter_mcp_config_for_agent(&imrule_mcp, agent)?;
@@ -181,14 +182,28 @@ impl<'a> ApplyUseCase<'a> {
                     .get_native_mcp_path(agent.name, &options.project_root)?;
                 Some((agent, filtered, path))
             })
+            .collect();
+
+        // Dedup by target path. Several agent aliases (e.g. the Kimi trio
+        // kimi/kimi-cli/kimi-code) resolve to the same native MCP file; writing
+        // them concurrently below is a read-modify-write race on one file. Keep
+        // the first occurrence per path and drop the rest.
+        let mut seen_paths = HashSet::new();
+        let unique: Vec<_> = candidates
+            .into_iter()
+            .filter(|(_, _, path)| seen_paths.insert(path.clone()))
+            .collect();
+
+        let written: Result<Vec<_>, ImruleError> = unique
+            .par_iter()
             .map(|(agent, filtered, path)| {
                 if options.dry_run {
-                    return Ok(path);
+                    return Ok(path.clone());
                 }
-                let existing = self.mcp_port.read_native_mcp(&path)?;
-                let merged = merge_mcp(&existing, &filtered, strategy, agent.mcp_server_key);
-                self.mcp_port.write_native_mcp(&path, &merged)?;
-                Ok(path)
+                let existing = self.mcp_port.read_native_mcp(path)?;
+                let merged = merge_mcp(&existing, filtered, strategy, agent.mcp_server_key);
+                self.mcp_port.write_native_mcp(path, &merged)?;
+                Ok(path.clone())
             })
             .collect();
         written

@@ -124,6 +124,17 @@ fn transform_servers(
     }
 }
 
+/// Serializes `value` as pretty JSON and writes it to `file_path`, creating
+/// parent directories as needed. Used by both the normalizing and raw write
+/// paths so they share identical on-disk formatting.
+fn write_json_bytes(file_path: &Path, value: &Value) -> Result<(), ImruleError> {
+    if let Some(parent) = file_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| ImruleError::mcp(e.to_string()))?;
+    }
+    let text = serde_json::to_string_pretty(value).expect("serializable JSON value") + "\n";
+    fs::write(file_path, text).map_err(|e| ImruleError::mcp(e.to_string()))
+}
+
 pub struct JsonMcpStorage;
 
 impl JsonMcpStorage {
@@ -180,7 +191,19 @@ impl McpPort for JsonMcpStorage {
             return read_toml_mcp(file_path);
         }
         match fs::read_to_string(file_path) {
-            Ok(text) => Ok(serde_json::from_str(&text).unwrap_or_else(|_| json!({}))),
+            // An empty/whitespace-only file is treated as "no config yet".
+            Ok(text) if text.trim().is_empty() => Ok(json!({})),
+            // A non-empty file that fails to parse is NOT collapsed to `{}` —
+            // doing so would let apply overwrite (and clear delete) a user's
+            // hand-written or comment-bearing config (e.g. JSONC). Surface an
+            // error so the caller aborts instead of destroying the file.
+            Ok(text) => serde_json::from_str(&text).map_err(|e| {
+                ImruleError::mcp(format!(
+                    "{}: existing config is not valid JSON ({e}); refusing to overwrite it. \
+                     Fix or remove the file, then re-run.",
+                    file_path.display()
+                ))
+            }),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
             Err(err) => Err(ImruleError::mcp(err.to_string())),
         }
@@ -190,12 +213,15 @@ impl McpPort for JsonMcpStorage {
         if is_toml_mcp_path(file_path) {
             return write_toml_mcp(file_path, data);
         }
-        if let Some(parent) = file_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| ImruleError::mcp(e.to_string()))?;
-        }
         let output = normalize_native_mcp_json(file_path, data);
-        let text = serde_json::to_string_pretty(&output).expect("serializable JSON value") + "\n";
-        fs::write(file_path, text).map_err(|e| ImruleError::mcp(e.to_string()))
+        write_json_bytes(file_path, &output)
+    }
+
+    fn write_native_mcp_raw(&self, file_path: &Path, data: &Value) -> Result<(), ImruleError> {
+        if is_toml_mcp_path(file_path) {
+            return write_toml_mcp(file_path, data);
+        }
+        write_json_bytes(file_path, data)
     }
 
     fn get_native_mcp_path(&self, adapter_name: &str, project_root: &Path) -> Option<PathBuf> {
@@ -220,6 +246,9 @@ impl McpPort for JsonMcpStorage {
                 project_root.join(".kilo/kilo.jsonc"),
                 project_root.join("kilo.json"),
                 project_root.join(".kilo/kilo.json"),
+                // Legacy path kept last so a fresh apply prefers kilo.jsonc, but
+                // clear (and reuse) still finds configs written by older versions.
+                project_root.join(".kilocode/mcp.json"),
             ],
             "Kiro" => vec![project_root.join(".kiro/settings/mcp.json")],
             "RooCode" => vec![project_root.join(".roo/mcp.json")],
@@ -227,7 +256,9 @@ impl McpPort for JsonMcpStorage {
             "Firebase Studio" => vec![project_root.join(".idx/mcp.json")],
             "Crush" => vec![project_root.join(".crush.json")],
             "Amazon Q CLI" => vec![project_root.join(".amazonq/mcp.json")],
-            "Firebender" => vec![project_root.join("firebender.json")],
+            // Firebender intentionally has NO native MCP path: firebender.json is
+            // also its instructions file, and a native MCP write would overwrite
+            // the generated instructions. Unified rules+MCP JSON is future work.
             "Factory Droid" => vec![project_root.join(".factory/mcp.json")],
             "Zed" => vec![project_root.join(".zed/settings.json")],
             "Mistral" => vec![project_root.join(".vibe/config.toml")],

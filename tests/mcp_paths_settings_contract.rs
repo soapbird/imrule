@@ -155,10 +155,9 @@ fn native_mcp_paths_match_agent_candidates_and_io_contract() {
         mcp.get_native_mcp_path("Amazon Q CLI", root),
         Some(root.join(".amazonq/mcp.json"))
     );
-    assert_eq!(
-        mcp.get_native_mcp_path("Firebender", root),
-        Some(root.join("firebender.json"))
-    );
+    // Firebender has NO native MCP path: firebender.json is its instructions
+    // file, so a native MCP write would clobber the generated instructions.
+    assert_eq!(mcp.get_native_mcp_path("Firebender", root), None);
     assert_eq!(
         mcp.get_native_mcp_path("Factory Droid", root),
         Some(root.join(".factory/mcp.json"))
@@ -179,7 +178,18 @@ fn native_mcp_paths_match_agent_candidates_and_io_contract() {
         mcp.read_native_mcp(&target).unwrap(),
         json!({ "mcpServers": { "x": { "command": "node" } } })
     );
+    // A non-empty file that is not valid JSON must NOT collapse to `{}` — that
+    // would let apply overwrite (and clear delete) user-authored config. It is
+    // an error, and the file on disk is left untouched.
     fs::write(&target, "not json").unwrap();
+    assert!(
+        mcp.read_native_mcp(&target).is_err(),
+        "unparseable non-empty config must error, not silently become {{}}"
+    );
+    assert_eq!(fs::read_to_string(&target).unwrap(), "not json");
+
+    // An empty / whitespace-only file is still treated as "no config yet".
+    fs::write(&target, "   \n").unwrap();
     assert_eq!(mcp.read_native_mcp(&target).unwrap(), json!({}));
 }
 
@@ -408,4 +418,74 @@ fn read_imrule_mcp_config_prefers_imrule_over_ruler() {
     let config = mcp.read_imrule_mcp_config(root).unwrap().unwrap();
     assert!(config["mcpServers"].get("primary").is_some());
     assert!(config["mcpServers"].get("legacy").is_none());
+}
+
+#[test]
+fn gemini_and_qwen_sse_servers_drop_transport_type() {
+    // The HTTP branch (httpUrl rewrite) is already covered elsewhere; this pins
+    // the sibling `sse` branch, which only strips the explicit `type` field.
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    let mcp = JsonMcpStorage::new();
+
+    for relative_path in [".gemini/settings.json", ".qwen/settings.json"] {
+        let target = root.join(relative_path);
+        mcp.write_native_mcp(
+            &target,
+            &json!({
+                "mcpServers": {
+                    "legacy": { "type": "sse", "url": "https://mcp.example.test/sse" }
+                }
+            }),
+        )
+        .unwrap();
+        let written: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
+        assert!(
+            written["mcpServers"]["legacy"].get("type").is_none(),
+            "{relative_path} should drop the sse type field"
+        );
+        assert_eq!(
+            written["mcpServers"]["legacy"]["url"],
+            json!("https://mcp.example.test/sse")
+        );
+    }
+}
+
+#[test]
+fn opencode_local_server_renames_env_to_environment() {
+    // Exercises the `env` -> `environment` rename inside the opencode/kilo local
+    // branch, which no apply fixture currently triggers.
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    let mcp = JsonMcpStorage::new();
+
+    let target = root.join("opencode.json");
+    mcp.write_native_mcp(
+        &target,
+        &json!({
+            "mcp": {
+                "local": {
+                    "type": "stdio",
+                    "command": "npx",
+                    "args": ["-y", "demo"],
+                    "env": { "TOKEN": "secret" }
+                }
+            }
+        }),
+    )
+    .unwrap();
+
+    let written: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
+    assert_eq!(
+        written["mcp"]["local"]["environment"],
+        json!({ "TOKEN": "secret" })
+    );
+    assert!(written["mcp"]["local"].get("env").is_none());
+    assert_eq!(written["mcp"]["local"]["type"], json!("local"));
+    assert_eq!(
+        written["mcp"]["local"]["command"],
+        json!(["npx", "-y", "demo"])
+    );
 }
