@@ -88,8 +88,10 @@ fn write_codex_mcp(doc: &mut DocumentMut, data: &Value) {
         };
         let mut server_table = Table::new();
         for (key, value) in server_config {
-            if key != "type" {
-                insert_json_value(&mut server_table, key, value);
+            match key.as_str() {
+                "type" => {}
+                "headers" => insert_json_value(&mut server_table, "http_headers", value),
+                _ => insert_json_value(&mut server_table, key, value),
             }
         }
         servers_table.insert(&server_name, Item::Table(server_table));

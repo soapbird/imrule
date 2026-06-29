@@ -384,9 +384,10 @@ impl<'a> ClearUseCase<'a> {
 fn is_json_effectively_empty(val: &serde_json::Value) -> bool {
     match val {
         serde_json::Value::Null => true,
-        serde_json::Value::Object(map) => {
-            map.is_empty() || map.values().all(is_json_effectively_empty)
-        }
+        serde_json::Value::Object(map) => map
+            .iter()
+            .filter(|(key, _)| key.as_str() != "$schema")
+            .all(|(_, value)| is_json_effectively_empty(value)),
         serde_json::Value::Array(arr) => arr.is_empty(),
         _ => false,
     }

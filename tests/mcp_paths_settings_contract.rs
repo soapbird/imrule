@@ -14,7 +14,7 @@ use serde_json::json;
 use tempfile::tempdir;
 
 #[test]
-fn filters_mcp_by_agent_capabilities_and_transforms_remote_to_stdio_when_needed() {
+fn filters_mcp_by_agent_capabilities() {
     let agents = all_agents();
     let firebase = agents
         .iter()
@@ -30,7 +30,7 @@ fn filters_mcp_by_agent_capabilities_and_transforms_remote_to_stdio_when_needed(
         .unwrap();
 
     assert!(get_agent_mcp_capabilities(firebase).supports_stdio);
-    assert!(!get_agent_mcp_capabilities(firebase).supports_remote);
+    assert!(get_agent_mcp_capabilities(firebase).supports_remote);
     assert!(!agent_supports_mcp(cline));
     assert!(agent_supports_mcp(copilot));
 
@@ -47,12 +47,7 @@ fn filters_mcp_by_agent_capabilities_and_transforms_remote_to_stdio_when_needed(
         filter_mcp_config_for_agent(&config, firebase),
         Some(json!({
             "mcpServers": {
-                "remote": {
-                    "type": "stdio",
-                    "args": ["-y", "mcp-remote@latest", "https://example.test/mcp"],
-                    "command": "npx",
-                    "headers": { "Authorization": "Bearer token" }
-                },
+                "remote": { "url": "https://example.test/mcp", "headers": { "Authorization": "Bearer token" } },
                 "stdio": { "command": "node", "args": ["server.js"] }
             }
         }))
@@ -131,6 +126,26 @@ fn native_mcp_paths_match_agent_candidates_and_io_contract() {
     assert_eq!(
         mcp.get_native_mcp_path("Gajae Code", root),
         Some(root.join(".gjc/mcp.json"))
+    );
+    assert_eq!(
+        mcp.get_native_mcp_path("RooCode", root),
+        Some(root.join(".roo/mcp.json"))
+    );
+    assert_eq!(
+        mcp.get_native_mcp_path("Kilo Code", root),
+        Some(root.join("kilo.json"))
+    );
+    assert_eq!(
+        mcp.get_native_mcp_path("Crush", root),
+        Some(root.join(".crush.json"))
+    );
+    assert_eq!(
+        mcp.get_native_mcp_path("Amazon Q CLI", root),
+        Some(root.join(".amazonq/mcp.json"))
+    );
+    assert_eq!(
+        mcp.get_native_mcp_path("Firebender", root),
+        Some(root.join("firebender.json"))
     );
     assert_eq!(mcp.get_native_mcp_path("Unknown", root), None);
 

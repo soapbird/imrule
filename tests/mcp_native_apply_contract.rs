@@ -68,6 +68,144 @@ fn apply_writes_codex_mcp_servers_to_project_config_toml() {
 }
 
 #[test]
+fn apply_skips_aider_mcp_because_aider_has_no_native_mcp_support() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    write_imrule_fixture(root);
+
+    let written = apply_for(root, &["aider"]);
+
+    assert!(!written.contains(&root.join(".mcp.json")));
+    assert!(!root.join(".mcp.json").exists());
+}
+
+#[test]
+fn apply_skips_windsurf_mcp_without_project_mcp_contract() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    write_imrule_fixture(root);
+
+    let written = apply_for(root, &["windsurf"]);
+
+    assert!(!written.contains(&root.join(".windsurf/mcp_config.json")));
+    assert!(!root.join(".windsurf/mcp_config.json").exists());
+}
+
+#[test]
+fn apply_writes_codex_remote_headers_as_http_headers() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(root.join(".imrule/AGENTS.md"), "Project rules.").unwrap();
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        r#"
+[mcp_servers.docs]
+transport = "http"
+url = "https://example.test/mcp"
+
+[mcp_servers.docs.headers]
+Authorization = "Bearer token"
+"#,
+    )
+    .unwrap();
+
+    apply_for(root, &["codex"]);
+
+    let codex_config = fs::read_to_string(root.join(".codex/config.toml")).unwrap();
+    assert!(codex_config.contains("[mcp_servers.docs.http_headers]"));
+    assert!(codex_config.contains("Authorization = \"Bearer token\""));
+    assert!(!codex_config.contains("[mcp_servers.docs.headers]"));
+}
+
+#[test]
+fn apply_writes_gemini_and_qwen_http_servers_with_http_url() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    write_imrule_fixture(root);
+
+    apply_for(root, &["gemini-cli", "qwen"]);
+
+    for relative_path in [".gemini/settings.json", ".qwen/settings.json"] {
+        let config: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(root.join(relative_path)).unwrap()).unwrap();
+        assert_eq!(
+            config["mcpServers"]["linear"],
+            json!({
+                "httpUrl": "https://mcp.linear.app/mcp"
+            }),
+            "{relative_path} should use Streamable HTTP's httpUrl key"
+        );
+    }
+}
+
+#[test]
+fn apply_writes_roo_http_servers_as_streamable_http() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    write_imrule_fixture(root);
+
+    apply_for(root, &["roo"]);
+
+    let config: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join(".roo/mcp.json")).unwrap()).unwrap();
+    assert_eq!(
+        config["mcpServers"]["linear"]["type"],
+        json!("streamable-http"),
+        "Roo expects streamable-http transport name"
+    );
+    assert_eq!(
+        config["mcpServers"]["linear"]["url"],
+        json!("https://mcp.linear.app/mcp")
+    );
+}
+
+#[test]
+fn apply_writes_kilo_servers_to_current_project_config() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    write_imrule_fixture(root);
+
+    apply_for(root, &["kilocode"]);
+
+    let config: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join("kilo.json")).unwrap()).unwrap();
+    assert_eq!(
+        config["mcp"]["github"],
+        json!({
+            "type": "local",
+            "command": ["npx", "-y", "@modelcontextprotocol/server-github"]
+        })
+    );
+    assert_eq!(
+        config["mcp"]["linear"],
+        json!({
+            "type": "remote",
+            "url": "https://mcp.linear.app/mcp"
+        })
+    );
+    assert!(!root.join(".kilocode/mcp.json").exists());
+}
+
+#[test]
+fn apply_writes_crush_servers_under_native_mcp_key() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    write_imrule_fixture(root);
+
+    apply_for(root, &["crush"]);
+
+    let crush_config: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join(".crush.json")).unwrap()).unwrap();
+    assert!(crush_config.get("mcpServers").is_none());
+    assert_eq!(
+        crush_config["mcp"]["linear"]["type"],
+        json!("http"),
+        "Crush expects the top-level mcp key, not mcpServers"
+    );
+}
+
+#[test]
 fn apply_writes_opencode_servers_under_native_mcp_key() {
     let tmp = tempdir().unwrap();
     let root = tmp.path();
@@ -83,12 +221,11 @@ fn apply_writes_opencode_servers_under_native_mcp_key() {
         opencode_config["mcp"],
         json!({
             "github": {
-                "type": "stdio",
-                "command": "npx",
-                "args": ["-y", "@modelcontextprotocol/server-github"]
+                "type": "local",
+                "command": ["npx", "-y", "@modelcontextprotocol/server-github"]
             },
             "linear": {
-                "type": "http",
+                "type": "remote",
                 "url": "https://mcp.linear.app/mcp"
             }
         })
