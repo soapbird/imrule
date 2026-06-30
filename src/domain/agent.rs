@@ -171,7 +171,7 @@ const AGENT_DEFINITIONS: &[AgentDefinition] = &[
         name: "Windsurf",
         output_template: AgentOutputTemplate::Single(DEFAULT_RULES_FILENAME),
         mcp_server_key: "mcpServers",
-        capabilities: caps(true, true, false, true, false),
+        capabilities: caps(false, false, false, true, false),
     },
     AgentDefinition {
         identifier: "cline",
@@ -185,14 +185,14 @@ const AGENT_DEFINITIONS: &[AgentDefinition] = &[
         name: "Aider",
         output_template: AgentOutputTemplate::Multiple(AIDER_PATHS),
         mcp_server_key: "mcpServers",
-        capabilities: caps(true, true, false, false, false),
+        capabilities: caps(false, false, false, false, false),
     },
     AgentDefinition {
         identifier: "firebase",
         name: "Firebase Studio",
         output_template: AgentOutputTemplate::Single(".idx/airules.md"),
         mcp_server_key: "mcpServers",
-        capabilities: caps(true, false, false, false, false),
+        capabilities: caps(true, true, false, false, false),
     },
     AgentDefinition {
         identifier: "openhands",
@@ -207,6 +207,27 @@ const AGENT_DEFINITIONS: &[AgentDefinition] = &[
         output_template: AgentOutputTemplate::Single(DEFAULT_RULES_FILENAME),
         mcp_server_key: "mcpServers",
         capabilities: caps(true, true, false, true, false),
+    },
+    AgentDefinition {
+        identifier: "kimi-cli",
+        name: "Kimi CLI",
+        output_template: AgentOutputTemplate::Single(".kimi-code/AGENTS.md"),
+        mcp_server_key: "mcpServers",
+        capabilities: caps(true, true, true, true, false),
+    },
+    AgentDefinition {
+        identifier: "kimi-code",
+        name: "Kimi Code",
+        output_template: AgentOutputTemplate::Single(".kimi-code/AGENTS.md"),
+        mcp_server_key: "mcpServers",
+        capabilities: caps(true, true, true, true, false),
+    },
+    AgentDefinition {
+        identifier: "kimi",
+        name: "Kimi",
+        output_template: AgentOutputTemplate::Single(".kimi-code/AGENTS.md"),
+        mcp_server_key: "mcpServers",
+        capabilities: caps(true, true, true, true, false),
     },
     AgentDefinition {
         identifier: "jules",
@@ -235,7 +256,7 @@ const AGENT_DEFINITIONS: &[AgentDefinition] = &[
         identifier: "kilocode",
         name: "Kilo Code",
         output_template: AgentOutputTemplate::Single(DEFAULT_RULES_FILENAME),
-        mcp_server_key: "mcpServers",
+        mcp_server_key: "mcp",
         capabilities: caps(true, true, false, true, false),
     },
     AgentDefinition {
@@ -256,7 +277,7 @@ const AGENT_DEFINITIONS: &[AgentDefinition] = &[
         identifier: "crush",
         name: "Crush",
         output_template: AgentOutputTemplate::Multiple(CRUSH_PATHS),
-        mcp_server_key: "mcpServers",
+        mcp_server_key: "mcp",
         capabilities: caps(true, true, false, false, false),
     },
     AgentDefinition {

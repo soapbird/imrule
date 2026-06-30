@@ -159,6 +159,7 @@ pub fn get_skills_gitignore_paths(project_root: &Path, agents: &[AgentDefinition
         (VIBE_SKILLS_PATH, &["mistral"]),
         (ROO_SKILLS_PATH, &["roo"]),
         (GEMINI_SKILLS_PATH, &["gemini-cli"]),
+        (KIMI_SKILLS_PATH, &["kimi-cli", "kimi-code", "kimi"]),
         (JUNIE_SKILLS_PATH, &["junie"]),
         (CURSOR_SKILLS_PATH, &["cursor"]),
         (WINDSURF_SKILLS_PATH, &["windsurf"]),

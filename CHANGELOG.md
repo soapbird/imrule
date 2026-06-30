@@ -6,9 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.4.0] - 2026-06-29
+
 ### Added
 
+- Support for **Kimi** (`kimi`, `kimi-cli`, `kimi-code`) — rules propagate to `.kimi-code/AGENTS.md`, MCP servers to `.kimi-code/mcp.json`, and skills to `.kimi-code/skills/`.
 - Support for **Gajae Code (gjc)** — rules propagate to `.gjc/RULES.md`, MCP servers to `.gjc/mcp.json`, and skills to `.gjc/skills/`.
+
+### Changed
+
+- Native MCP config output now matches each agent's current schema: Kilo Code and Crush write under the `mcp` key; Gemini/Qwen HTTP servers use `httpUrl`; RooCode uses `streamable-http` with an explicit `disabled` default; OpenCode/Kilo use `local`/`remote` server types with `command` arrays and `environment`; Kiro/Factory default `disabled: false`. Kilo Code now writes to `kilo.jsonc` (reusing an existing `.kilo/kilo.json*` if present).
+- Windsurf and Aider native MCP writing is disabled, matching what those tools actually support; `apply` no longer creates MCP files for them.
+
+### Fixed
+
+- `apply` and `clear` no longer destroy a native config file that isn't strictly valid JSON (e.g. a comment-bearing `kilo.jsonc` or editor settings file). imrule now stops with a clear error instead of silently overwriting or deleting your file.
+- Firebender: a native MCP write no longer overwrites the generated `firebender.json` instructions.
+- `clear` no longer reshapes your own (non-imrule) MCP servers while removing imrule-managed ones — it now writes them back untouched.
+- `clear` no longer deletes a native config file that still carries a user-authored `$schema` key.
+- `clear` now cleans up imrule MCP entries left behind for agents whose MCP support was later disabled (e.g. Windsurf) and from the legacy `.kilocode/mcp.json` path.
+- Applying multiple Kimi aliases no longer races when writing the shared `.kimi-code` config.
+- Codex: an explicit `http_headers` value is preserved instead of being clobbered by the `headers` alias.
 
 ## [0.1.3.0] - 2026-06-12
 

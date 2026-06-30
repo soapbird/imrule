@@ -6,7 +6,7 @@ use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 
 use crate::domain::config::McpTransport;
 
-const AGENT_IDENTIFIERS: &str = "agentsmd, aider, amazonqcli, amp, antigravity, augmentcode, claude, cline, codex, copilot, crush, cursor, factory, firebase, firebender, gemini-cli, gjc, goose, jetbrains-ai, jules, junie, kilocode, kiro, mistral, opencode, openhands, pi, qwen, roo, trae, warp, windsurf, zed";
+const AGENT_IDENTIFIERS: &str = "agentsmd, aider, amazonqcli, amp, antigravity, augmentcode, claude, cline, codex, copilot, crush, cursor, factory, firebase, firebender, gemini-cli, gjc, goose, jetbrains-ai, jules, junie, kilocode, kimi, kimi-cli, kimi-code, kiro, mistral, opencode, openhands, pi, qwen, roo, trae, warp, windsurf, zed";
 
 /// CLI-facing transport enum so the domain type stays free of clap.
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]

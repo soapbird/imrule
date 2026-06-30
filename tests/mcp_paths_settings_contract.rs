@@ -14,7 +14,7 @@ use serde_json::json;
 use tempfile::tempdir;
 
 #[test]
-fn filters_mcp_by_agent_capabilities_and_transforms_remote_to_stdio_when_needed() {
+fn filters_mcp_by_agent_capabilities() {
     let agents = all_agents();
     let firebase = agents
         .iter()
@@ -30,7 +30,7 @@ fn filters_mcp_by_agent_capabilities_and_transforms_remote_to_stdio_when_needed(
         .unwrap();
 
     assert!(get_agent_mcp_capabilities(firebase).supports_stdio);
-    assert!(!get_agent_mcp_capabilities(firebase).supports_remote);
+    assert!(get_agent_mcp_capabilities(firebase).supports_remote);
     assert!(!agent_supports_mcp(cline));
     assert!(agent_supports_mcp(copilot));
 
@@ -47,12 +47,7 @@ fn filters_mcp_by_agent_capabilities_and_transforms_remote_to_stdio_when_needed(
         filter_mcp_config_for_agent(&config, firebase),
         Some(json!({
             "mcpServers": {
-                "remote": {
-                    "type": "stdio",
-                    "args": ["-y", "mcp-remote@latest", "https://example.test/mcp"],
-                    "command": "npx",
-                    "headers": { "Authorization": "Bearer token" }
-                },
+                "remote": { "url": "https://example.test/mcp", "headers": { "Authorization": "Bearer token" } },
                 "stdio": { "command": "node", "args": ["server.js"] }
             }
         }))
@@ -132,6 +127,41 @@ fn native_mcp_paths_match_agent_candidates_and_io_contract() {
         mcp.get_native_mcp_path("Gajae Code", root),
         Some(root.join(".gjc/mcp.json"))
     );
+    assert_eq!(
+        mcp.get_native_mcp_path("Kimi CLI", root),
+        Some(root.join(".kimi-code/mcp.json"))
+    );
+    assert_eq!(
+        mcp.get_native_mcp_path("Kimi Code", root),
+        Some(root.join(".kimi-code/mcp.json"))
+    );
+    assert_eq!(
+        mcp.get_native_mcp_path("Kimi", root),
+        Some(root.join(".kimi-code/mcp.json"))
+    );
+    assert_eq!(
+        mcp.get_native_mcp_path("RooCode", root),
+        Some(root.join(".roo/mcp.json"))
+    );
+    assert_eq!(
+        mcp.get_native_mcp_path("Kilo Code", root),
+        Some(root.join("kilo.jsonc"))
+    );
+    assert_eq!(
+        mcp.get_native_mcp_path("Crush", root),
+        Some(root.join(".crush.json"))
+    );
+    assert_eq!(
+        mcp.get_native_mcp_path("Amazon Q CLI", root),
+        Some(root.join(".amazonq/mcp.json"))
+    );
+    // Firebender has NO native MCP path: firebender.json is its instructions
+    // file, so a native MCP write would clobber the generated instructions.
+    assert_eq!(mcp.get_native_mcp_path("Firebender", root), None);
+    assert_eq!(
+        mcp.get_native_mcp_path("Factory Droid", root),
+        Some(root.join(".factory/mcp.json"))
+    );
     assert_eq!(mcp.get_native_mcp_path("Unknown", root), None);
 
     let target = root.join(".cursor/mcp.json");
@@ -148,8 +178,149 @@ fn native_mcp_paths_match_agent_candidates_and_io_contract() {
         mcp.read_native_mcp(&target).unwrap(),
         json!({ "mcpServers": { "x": { "command": "node" } } })
     );
+    // A non-empty file that is not valid JSON must NOT collapse to `{}` — that
+    // would let apply overwrite (and clear delete) user-authored config. It is
+    // an error, and the file on disk is left untouched.
     fs::write(&target, "not json").unwrap();
+    assert!(
+        mcp.read_native_mcp(&target).is_err(),
+        "unparseable non-empty config must error, not silently become {{}}"
+    );
+    assert_eq!(fs::read_to_string(&target).unwrap(), "not json");
+
+    // An empty / whitespace-only file is still treated as "no config yet".
+    fs::write(&target, "   \n").unwrap();
     assert_eq!(mcp.read_native_mcp(&target).unwrap(), json!({}));
+}
+
+#[test]
+fn factory_mcp_output_matches_droid_schema_defaults() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    let target = root.join(".factory/mcp.json");
+
+    let mcp = JsonMcpStorage::new();
+    mcp.write_native_mcp(
+        &target,
+        &json!({
+            "mcpServers": {
+                "remote": { "type": "http", "url": "https://mcp.example.test/mcp" },
+                "stdio": { "type": "stdio", "command": "npx", "args": ["-y", "demo"] },
+                "already-disabled": {
+                    "type": "http",
+                    "url": "https://disabled.example.test/mcp",
+                    "disabled": true
+                }
+            }
+        }),
+    )
+    .unwrap();
+
+    let written: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
+    assert_eq!(written["mcpServers"]["remote"]["type"], json!("http"));
+    assert_eq!(
+        written["mcpServers"]["remote"]["url"],
+        json!("https://mcp.example.test/mcp")
+    );
+    assert_eq!(written["mcpServers"]["remote"]["disabled"], json!(false));
+    assert_eq!(written["mcpServers"]["stdio"]["disabled"], json!(false));
+    assert_eq!(
+        written["mcpServers"]["already-disabled"]["disabled"],
+        json!(true)
+    );
+}
+
+#[test]
+fn native_mcp_output_matches_enablement_and_transport_schema_defaults() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    let mcp = JsonMcpStorage::new();
+
+    let roo_target = root.join(".roo/mcp.json");
+    mcp.write_native_mcp(
+        &roo_target,
+        &json!({ "mcpServers": { "remote": { "type": "http", "url": "https://mcp.example.test/mcp" } } }),
+    )
+    .unwrap();
+    let roo: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&roo_target).unwrap()).unwrap();
+    assert_eq!(
+        roo["mcpServers"]["remote"]["type"],
+        json!("streamable-http")
+    );
+    assert_eq!(roo["mcpServers"]["remote"]["disabled"], json!(false));
+
+    let kiro_target = root.join(".kiro/settings/mcp.json");
+    mcp.write_native_mcp(
+        &kiro_target,
+        &json!({ "mcpServers": { "remote": { "type": "http", "url": "https://mcp.example.test/mcp" } } }),
+    )
+    .unwrap();
+    let kiro: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&kiro_target).unwrap()).unwrap();
+    assert_eq!(kiro["mcpServers"]["remote"]["type"], json!("http"));
+    assert_eq!(kiro["mcpServers"]["remote"]["disabled"], json!(false));
+
+    let opencode_target = root.join("opencode.json");
+    mcp.write_native_mcp(
+        &opencode_target,
+        &json!({
+            "mcp": {
+                "local": { "type": "stdio", "command": "npx", "args": ["-y", "demo"] },
+                "remote": { "type": "http", "url": "https://mcp.example.test/mcp" }
+            }
+        }),
+    )
+    .unwrap();
+    let opencode: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&opencode_target).unwrap()).unwrap();
+    assert_eq!(opencode["mcp"]["local"]["type"], json!("local"));
+    assert_eq!(
+        opencode["mcp"]["local"]["command"],
+        json!(["npx", "-y", "demo"])
+    );
+    assert_eq!(opencode["mcp"]["local"]["enabled"], json!(true));
+    assert_eq!(opencode["mcp"]["remote"]["type"], json!("remote"));
+    assert_eq!(opencode["mcp"]["remote"]["enabled"], json!(true));
+
+    let zed_target = root.join(".zed/settings.json");
+    mcp.write_native_mcp(
+        &zed_target,
+        &json!({ "context_servers": { "remote": { "type": "http", "url": "https://mcp.example.test/mcp" } } }),
+    )
+    .unwrap();
+    let zed: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&zed_target).unwrap()).unwrap();
+    assert!(zed["context_servers"]["remote"].get("type").is_none());
+
+    let kimi_target = root.join(".kimi-code/mcp.json");
+    mcp.write_native_mcp(
+        &kimi_target,
+        &json!({
+            "mcpServers": {
+                "stdio": { "type": "stdio", "command": "npx", "args": ["-y", "demo"] },
+                "remote": { "type": "http", "url": "https://mcp.example.test/mcp" },
+                "legacy": { "type": "sse", "url": "https://mcp.example.test/sse" }
+            }
+        }),
+    )
+    .unwrap();
+    let kimi: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&kimi_target).unwrap()).unwrap();
+    assert!(kimi["mcpServers"]["stdio"].get("type").is_none());
+    assert!(kimi["mcpServers"]["remote"].get("type").is_none());
+    assert_eq!(kimi["mcpServers"]["legacy"]["transport"], json!("sse"));
+    assert!(kimi["mcpServers"]["legacy"].get("type").is_none());
+    let firebender_target = root.join("firebender.json");
+    mcp.write_native_mcp(
+        &firebender_target,
+        &json!({ "mcpServers": { "remote": { "type": "http", "url": "https://mcp.example.test/mcp" } } }),
+    )
+    .unwrap();
+    let firebender: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&firebender_target).unwrap()).unwrap();
+    assert!(firebender["mcpServers"]["remote"].get("type").is_none());
 }
 
 #[test]
@@ -247,4 +418,74 @@ fn read_imrule_mcp_config_prefers_imrule_over_ruler() {
     let config = mcp.read_imrule_mcp_config(root).unwrap().unwrap();
     assert!(config["mcpServers"].get("primary").is_some());
     assert!(config["mcpServers"].get("legacy").is_none());
+}
+
+#[test]
+fn gemini_and_qwen_sse_servers_drop_transport_type() {
+    // The HTTP branch (httpUrl rewrite) is already covered elsewhere; this pins
+    // the sibling `sse` branch, which only strips the explicit `type` field.
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    let mcp = JsonMcpStorage::new();
+
+    for relative_path in [".gemini/settings.json", ".qwen/settings.json"] {
+        let target = root.join(relative_path);
+        mcp.write_native_mcp(
+            &target,
+            &json!({
+                "mcpServers": {
+                    "legacy": { "type": "sse", "url": "https://mcp.example.test/sse" }
+                }
+            }),
+        )
+        .unwrap();
+        let written: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
+        assert!(
+            written["mcpServers"]["legacy"].get("type").is_none(),
+            "{relative_path} should drop the sse type field"
+        );
+        assert_eq!(
+            written["mcpServers"]["legacy"]["url"],
+            json!("https://mcp.example.test/sse")
+        );
+    }
+}
+
+#[test]
+fn opencode_local_server_renames_env_to_environment() {
+    // Exercises the `env` -> `environment` rename inside the opencode/kilo local
+    // branch, which no apply fixture currently triggers.
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    let mcp = JsonMcpStorage::new();
+
+    let target = root.join("opencode.json");
+    mcp.write_native_mcp(
+        &target,
+        &json!({
+            "mcp": {
+                "local": {
+                    "type": "stdio",
+                    "command": "npx",
+                    "args": ["-y", "demo"],
+                    "env": { "TOKEN": "secret" }
+                }
+            }
+        }),
+    )
+    .unwrap();
+
+    let written: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
+    assert_eq!(
+        written["mcp"]["local"]["environment"],
+        json!({ "TOKEN": "secret" })
+    );
+    assert!(written["mcp"]["local"].get("env").is_none());
+    assert_eq!(written["mcp"]["local"]["type"], json!("local"));
+    assert_eq!(
+        written["mcp"]["local"]["command"],
+        json!(["npx", "-y", "demo"])
+    );
 }

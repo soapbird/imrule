@@ -13,7 +13,6 @@ use crate::domain::constants::{
     GENERATED_BY_IMRULE_MARKER, LEGACY_DIR_NAME,
 };
 use crate::domain::error::ImruleError;
-use crate::domain::mcp::agent_supports_mcp;
 
 /// Runtime options for `imrule clear`.
 #[derive(Debug, Clone)]
@@ -206,9 +205,11 @@ impl<'a> ClearUseCase<'a> {
             return Ok(());
         }
         for agent in selected_agents {
-            if !agent_supports_mcp(agent) {
-                continue;
-            }
+            // NOTE: do NOT gate on agent_supports_mcp here. An agent whose MCP
+            // capability was later disabled (e.g. Windsurf) may still have a
+            // native MCP file from a previous apply; clear must remove imrule's
+            // keys from it instead of orphaning them. Agents with no native MCP
+            // path are skipped below anyway.
             let Some(native_path) = self
                 .mcp_port
                 .get_native_mcp_path(agent.name, &options.project_root)
@@ -283,6 +284,9 @@ impl<'a> ClearUseCase<'a> {
             ("mistral", crate::domain::constants::VIBE_SKILLS_PATH),
             ("roo", crate::domain::constants::ROO_SKILLS_PATH),
             ("gemini-cli", crate::domain::constants::GEMINI_SKILLS_PATH),
+            ("kimi-cli", crate::domain::constants::KIMI_SKILLS_PATH),
+            ("kimi-code", crate::domain::constants::KIMI_SKILLS_PATH),
+            ("kimi", crate::domain::constants::KIMI_SKILLS_PATH),
             ("junie", crate::domain::constants::JUNIE_SKILLS_PATH),
             ("cursor", crate::domain::constants::CURSOR_SKILLS_PATH),
             ("windsurf", crate::domain::constants::WINDSURF_SKILLS_PATH),
@@ -362,7 +366,9 @@ impl<'a> ClearUseCase<'a> {
                 }
             }
         }
-        self.mcp_port.write_native_mcp(native_path, &config)
+        // Raw write: clear must only remove imrule-managed keys, never reshape
+        // the user's own remaining servers (which write_native_mcp would do).
+        self.mcp_port.write_native_mcp_raw(native_path, &config)
     }
 
     /// Removes a native MCP config file if it contains only empty objects/arrays.
@@ -384,6 +390,10 @@ impl<'a> ClearUseCase<'a> {
 fn is_json_effectively_empty(val: &serde_json::Value) -> bool {
     match val {
         serde_json::Value::Null => true,
+        // A file is "empty" only when it has no keys, or every value is itself
+        // empty. A `$schema` (or any other) key with a non-empty value counts as
+        // meaningful user data — imrule never writes `$schema`, so it is always
+        // user/tool-authored and must not trigger deletion of the file.
         serde_json::Value::Object(map) => {
             map.is_empty() || map.values().all(is_json_effectively_empty)
         }

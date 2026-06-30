@@ -91,11 +91,19 @@ pub trait McpPort: Send + Sync {
     /// Reads `.imrule/mcp.json` when present.
     fn read_imrule_mcp_config(&self, project_root: &Path) -> Result<Option<Value>, ImruleError>;
 
-    /// Reads a native JSON MCP config, returning `{}` when missing or invalid.
+    /// Reads a native JSON MCP config, returning `{}` when missing or empty.
+    /// A non-empty file that fails to parse is an error, not `{}` — callers must
+    /// not overwrite a config they could not understand.
     fn read_native_mcp(&self, path: &Path) -> Result<Value, ImruleError>;
 
-    /// Writes native JSON MCP config.
+    /// Writes native JSON MCP config, normalizing servers to the target agent's
+    /// native schema (e.g. `url` -> `httpUrl`). Use for apply.
     fn write_native_mcp(&self, path: &Path, data: &Value) -> Result<(), ImruleError>;
+
+    /// Writes native JSON MCP config verbatim, WITHOUT schema normalization.
+    /// Use for clear, which must only remove imrule-managed keys and never
+    /// reshape the user's own remaining servers.
+    fn write_native_mcp_raw(&self, path: &Path, data: &Value) -> Result<(), ImruleError>;
 
     /// Determines the native MCP config path for a given adapter display name.
     fn get_native_mcp_path(&self, adapter_name: &str, project_root: &Path) -> Option<PathBuf>;

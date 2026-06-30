@@ -61,7 +61,7 @@ src/
 ```
 
 ### Domain (`src/domain/`)
-- `agent.rs` — Compile-time `const` array of 33 `AgentDefinition`s (identifier, name, output paths, MCP keys, capabilities). This is the single source of truth for the agent registry.
+- `agent.rs` — Compile-time `const` array of 36 `AgentDefinition`s (identifier, name, output paths, MCP keys, capabilities). This is the single source of truth for the agent registry.
 - `config.rs` — Config structs: `LoadedConfig`, `AgentConfig`, `McpConfig`, `McpServerDefinition`, `McpTransport`, `GitignoreConfig`, `SkillsConfig`, `SubagentsConfig`, `SubagentFrontmatter`.
 - `error.rs` — Unified `ImruleError` enum (`thiserror`) with variants: `UnknownAgent`, `Config`, `Mcp`, `Subagent`, `Rules`, `Skills`, `Filesystem`, `Gitignore`.
 - `mcp.rs` — MCP capability filtering, remote→stdio transformation, merge/overwrite logic, and conversion of `McpServerDefinition` values to agent-native JSON.
@@ -97,7 +97,7 @@ There are **zero unit tests inside `src/`**. All testing happens via integration
 
 | Test File | What It Validates |
 |---|---|
-| `agent_layer_contract.rs` | Full agent registry (33 agents): identifiers, names, output paths, MCP keys, capabilities. `DefaultAgentWriter` idempotency and custom output path overrides. |
+| `agent_layer_contract.rs` | Full agent registry (36 agents): identifiers, names, output paths, MCP keys, capabilities. `DefaultAgentWriter` idempotency and custom output path overrides. |
 | `architecture_contract.rs` | Layer boundaries: `main.rs` only calls `imrule::run_cli()`, no direct domain/infra imports. Confirms `Cargo.toml` metadata and no tracked TypeScript artifacts. |
 | `cli_release_contract.rs` | Binary-level tests via `assert_cmd::Command`: `--version`, `--help`, real `apply`/`clear` round-trip, `--dry-run`, `init` idempotency, `init --global` with `XDG_CONFIG_HOME`. |
 | `config_fs_rules_contract.rs` | `concatenate_rules` format, `read_markdown_files` ordering/skipping, `GitignoreUpdater` managed block behavior, `TomlConfigLoader` parsing (including `[mcp_servers]`), parent-directory creation on write. |
