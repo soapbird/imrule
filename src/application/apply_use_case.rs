@@ -428,7 +428,7 @@ pub fn resolve_selected_agents(
 ) -> Result<Vec<AgentDefinition>, ImruleError> {
     let requested = cli_agents
         .map(|agents| agents.to_vec())
-        .or_else(|| config.default_agents.clone());
+        .or_else(|| config.agents.clone());
     let all = all_agents();
     let Some(requested) = requested else {
         return Ok(all);

@@ -1,9 +1,9 @@
 # ImRule Configuration File
 # See https://github.com/soapbird/imrule for documentation.
 
-# To specify which agents are active by default when --agents is not used,
-# uncomment and populate the following line. If omitted, all agents are active.
-default_agents = ["codex", "claude"]
+# Specify which agents are active by default when --agents is not used.
+# If omitted, all agents are active.
+agents = ["codex", "claude"]
 
 # Enable nested rule loading from nested .imrule directories
 # nested = false

@@ -70,47 +70,57 @@ impl ConfigPort for TomlConfigLoader {
         };
 
         let table = raw.as_table();
-        let default_agents = table
-            .and_then(|table| table.get("default_agents"))
-            .and_then(|value| value.as_array())
+
+        // Default agents: prefer "agents" (new array key), fall back to
+        // legacy "default_agents". When "agents" is a table (old per-agent
+        // config section), it is not treated as the default-agents array.
+        let agents = table
+            .and_then(|t| t.get("agents"))
+            .and_then(|v| v.as_array())
             .map(|items| {
                 items
                     .iter()
                     .map(|item| item.as_str().unwrap_or_default().to_string())
                     .collect()
+            })
+            .or_else(|| {
+                table
+                    .and_then(|t| t.get("default_agents"))
+                    .and_then(|v| v.as_array())
+                    .map(|items| {
+                        items
+                            .iter()
+                            .map(|item| item.as_str().unwrap_or_default().to_string())
+                            .collect()
+                    })
             });
 
-        let agents_section = table
-            .and_then(|table| table.get("agents"))
-            .and_then(|value| value.as_table());
+        // Per-agent config tables: "[agent.X]" (new) takes priority over
+        // "[agents.X]" (legacy, only present when "agents" is a table).
+        let agent_section = table
+            .and_then(|t| t.get("agent"))
+            .and_then(|v| v.as_table());
+        let legacy_agents_section = table
+            .and_then(|t| t.get("agents"))
+            .and_then(|v| v.as_table());
 
         let mut agent_configs = BTreeMap::new();
-        if let Some(agents_section) = agents_section {
-            for (name, section) in agents_section {
+        // Legacy "[agents.X]" entries first (lower priority).
+        if let Some(legacy_agents_section) = legacy_agents_section {
+            for (name, section) in legacy_agents_section {
                 if SUBAGENT_RESERVED_KEYS.contains(&name.as_str()) {
                     continue;
                 }
                 if let Some(section) = section.as_table() {
-                    let cfg = AgentConfig {
-                        enabled: section.get("enabled").and_then(|value| value.as_bool()),
-                        output_path: section
-                            .get("output_path")
-                            .and_then(|value| value.as_str())
-                            .map(|value| project_root.join(value)),
-                        output_path_instructions: section
-                            .get("output_path_instructions")
-                            .and_then(|value| value.as_str())
-                            .map(|value| project_root.join(value)),
-                        output_path_config: section
-                            .get("output_path_config")
-                            .and_then(|value| value.as_str())
-                            .map(|value| project_root.join(value)),
-                        mcp: section
-                            .get("mcp")
-                            .and_then(|value| value.as_table())
-                            .map(parse_mcp_config),
-                    };
-                    agent_configs.insert(name.clone(), cfg);
+                    agent_configs.insert(name.clone(), parse_agent_config(section, project_root));
+                }
+            }
+        }
+        // New "[agent.X]" entries override legacy ones.
+        if let Some(agent_section) = agent_section {
+            for (name, section) in agent_section {
+                if let Some(section) = section.as_table() {
+                    agent_configs.insert(name.clone(), parse_agent_config(section, project_root));
                 }
             }
         }
@@ -143,25 +153,25 @@ impl ConfigPort for TomlConfigLoader {
                 .unwrap_or_default(),
         );
 
-        let legacy_subagents = table
+        let subagents_table = table
             .and_then(|table| table.get("subagents"))
             .and_then(|value| value.as_table());
         let subagents = SubagentsConfig {
-            enabled: agents_section
-                .and_then(|agents| agents.get("enabled"))
-                .and_then(|value| value.as_bool())
+            enabled: subagents_table
+                .and_then(|s| s.get("enabled"))
+                .and_then(|v| v.as_bool())
                 .or_else(|| {
-                    legacy_subagents
-                        .and_then(|s| s.get("enabled"))
-                        .and_then(|v| v.as_bool())
+                    legacy_agents_section
+                        .and_then(|agents| agents.get("enabled"))
+                        .and_then(|value| value.as_bool())
                 }),
-            include_in_rules: agents_section
-                .and_then(|agents| agents.get("include_in_rules"))
-                .and_then(|value| value.as_bool())
+            include_in_rules: subagents_table
+                .and_then(|s| s.get("include_in_rules"))
+                .and_then(|v| v.as_bool())
                 .or_else(|| {
-                    legacy_subagents
-                        .and_then(|s| s.get("include_in_rules"))
-                        .and_then(|v| v.as_bool())
+                    legacy_agents_section
+                        .and_then(|agents| agents.get("include_in_rules"))
+                        .and_then(|value| value.as_bool())
                 }),
         };
 
@@ -175,7 +185,7 @@ impl ConfigPort for TomlConfigLoader {
             .unwrap_or(false);
 
         Ok(LoadedConfig {
-            default_agents,
+            agents,
             agent_configs,
             cli_agents,
             mcp,
@@ -186,6 +196,28 @@ impl ConfigPort for TomlConfigLoader {
             nested,
             nested_defined,
         })
+    }
+}
+
+fn parse_agent_config(section: &toml::map::Map<String, Value>, project_root: &Path) -> AgentConfig {
+    AgentConfig {
+        enabled: section.get("enabled").and_then(|value| value.as_bool()),
+        output_path: section
+            .get("output_path")
+            .and_then(|value| value.as_str())
+            .map(|value| project_root.join(value)),
+        output_path_instructions: section
+            .get("output_path_instructions")
+            .and_then(|value| value.as_str())
+            .map(|value| project_root.join(value)),
+        output_path_config: section
+            .get("output_path_config")
+            .and_then(|value| value.as_str())
+            .map(|value| project_root.join(value)),
+        mcp: section
+            .get("mcp")
+            .and_then(|value| value.as_table())
+            .map(parse_mcp_config),
     }
 }
 
@@ -299,7 +331,7 @@ fn parse_mcp_servers(
             .or_else(|| server_table.get("type"))
             .and_then(Value::as_str)
             .and_then(parse_mcp_transport)
-            .unwrap_or(McpTransport::Stdio);
+            .unwrap_or_else(|| infer_mcp_transport(server_table));
 
         let mut def = McpServerDefinition {
             transport,
@@ -363,6 +395,14 @@ fn parse_mcp_transport(value: &str) -> Option<McpTransport> {
         "http" => Some(McpTransport::Http),
         "sse" => Some(McpTransport::Sse),
         _ => None,
+    }
+}
+
+fn infer_mcp_transport(server_table: &toml::map::Map<String, Value>) -> McpTransport {
+    if server_table.contains_key("url") {
+        McpTransport::Http
+    } else {
+        McpTransport::Stdio
     }
 }
 

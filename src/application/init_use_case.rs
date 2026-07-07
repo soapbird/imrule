@@ -54,9 +54,9 @@ const DEFAULT_INSTRUCTIONS: &str = "# AGENTS.md\n\nCentralised AI agent instruct
 const DEFAULT_TOML: &str = r#"# ImRule Configuration File
 # See https://github.com/soapbird/imrule for documentation.
 
-# To specify which agents are active by default when --agents is not used,
-# uncomment and populate the following line. If omitted, all agents are active.
-# default_agents = ["copilot", "claude"]
+# Specify which agents are active by default when --agents is not used.
+# If omitted, all agents are active.
+agents = ["codex", "claude"]
 
 # Enable nested rule loading from nested .imrule directories
 # nested = false
@@ -65,7 +65,7 @@ const DEFAULT_TOML: &str = r#"# ImRule Configuration File
 # enabled = true
 # local = false
 
-# [agents.aider]
+# [agent.aider]
 # enabled = true
 # output_path_instructions = "AGENTS.md"
 # output_path_config = ".aider.conf.yml"

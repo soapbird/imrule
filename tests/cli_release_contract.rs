@@ -161,9 +161,7 @@ fn init_scaffolds_imrule_files_without_overwriting_existing_content() {
     assert!(fs::read_to_string(&agents)
         .unwrap()
         .contains("Centralised AI agent instructions"));
-    assert!(fs::read_to_string(&toml)
-        .unwrap()
-        .contains("default_agents"));
+    assert!(fs::read_to_string(&toml).unwrap().contains("agents = ["));
 
     fs::write(&agents, "custom").unwrap();
     Command::cargo_bin("imrule")
@@ -928,7 +926,8 @@ fn mcp_add_and_remove_persist_to_imrule_toml() {
         .success();
 
     let claude_mcp: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(tmp.path().join(".mcp.json")).unwrap()).unwrap();
+        serde_json::from_str(&fs::read_to_string(tmp.path().join(".claude/mcp.json")).unwrap())
+            .unwrap();
     assert_eq!(
         claude_mcp["mcpServers"]["linear"]["type"],
         serde_json::json!("http")

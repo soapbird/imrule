@@ -233,7 +233,7 @@ impl McpPort for JsonMcpStorage {
             ],
             "Cursor" => vec![project_root.join(".cursor/mcp.json")],
             "Windsurf" => vec![project_root.join(".windsurf/mcp_config.json")],
-            "Claude Code" => vec![project_root.join(".mcp.json")],
+            "Claude Code" => vec![project_root.join(".claude/mcp.json")],
             "OpenAI Codex CLI" => vec![project_root.join(".codex/config.toml")],
             "Aider" => vec![project_root.join(".mcp.json")],
             "Open Hands" => vec![project_root.join("config.toml")],

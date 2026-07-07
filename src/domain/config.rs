@@ -165,7 +165,7 @@ pub struct AgentConfig {
 /// Parsed ImRule configuration values.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LoadedConfig {
-    pub default_agents: Option<Vec<String>>,
+    pub agents: Option<Vec<String>>,
     pub agent_configs: BTreeMap<String, AgentConfig>,
     pub cli_agents: Option<Vec<String>>,
     pub mcp: Option<McpConfig>,

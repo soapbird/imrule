@@ -74,7 +74,7 @@ fn mcp_add_http_server_writes_to_imrule_toml() {
         })
         .unwrap();
 
-    let claude_mcp_path = root.join(".mcp.json");
+    let claude_mcp_path = root.join(".claude/mcp.json");
     assert!(written_paths.contains(&claude_mcp_path));
     let claude_mcp: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&claude_mcp_path).unwrap()).unwrap();

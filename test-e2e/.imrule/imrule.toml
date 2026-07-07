@@ -1,38 +1,21 @@
 # ImRule Configuration File
 # See https://github.com/soapbird/imrule for documentation.
 
-# To specify which agents are active by default when --agents is not used,
-# uncomment and populate the following line. If omitted, all agents are active.
-# default_agents = ["Copilot", "Claude"]
+# Specify which agents are active by default when --agents is not used.
+# If omitted, all agents are active.
+# agents = ["copilot", "claude"]
 
 # --- Agent Specific Configurations ---
 # You can enable/disable agents and override their default output paths here.
 
-# [agents.GitHubCopilot]
+# [agent.copilot]
 # enabled = true
 # output_path = ".github/copilot-instructions.md"
 
-# [agents.ClaudeCode]
+# [agent.claude]
 # enabled = true
 # output_path = "CLAUDE.md"
 
-# [agents.OpenAICodexCLI]
+# [agent.codex]
 # enabled = true
 # output_path = "AGENTS.md"
-
-# [agents.Cursor]
-# enabled = true
-# output_path = "AGENTS.md"
-
-# [agents.Windsurf]
-# enabled = true
-# output_path = ".windsurf/rules/imrule_windsurf_instructions.md"
-
-# [agents.Cline]
-# enabled = true
-# output_path = ".clinerules"
-
-# [agents.Aider]
-# enabled = true
-# output_path_instructions = "AGENTS.md"
-# output_path_config = ".aider.conf.yml"
