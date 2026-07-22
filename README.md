@@ -306,6 +306,15 @@ headers = { Authorization = "Bearer xxx" }
 ```
 
 여기 선언한 서버는 `imrule apply` 실행 시 `.imrule/mcp.json`에 있는 서버와 합쳐집니다. 둘 중 어느 소스를 사용해도 됩니다. `apply` 때 모든 서버는 TOML 기반 에이전트(Codex, OpenCode, Mistral, OpenHands)를 포함한 각 에이전트의 네이티브 MCP 설정으로 기록되고, `imrule clear`가 다시 제거합니다.
+`$NAME` 또는 `${NAME}` 참조는 `imrule apply`에서 실제 값으로 치환됩니다. 값은 프로젝트 루트의 `.env`, `.imrule/.env`, 실행 환경 순서로 읽으며 뒤의 소스가 앞의 값을 덮어씁니다. 정의되지 않은 참조는 그대로 남습니다. 치환된 비밀값은 에이전트별 MCP 설정 파일에 기록되므로 해당 파일을 커밋하지 마세요.
+
+```toml
+# .imrule/imrule.toml
+env = { GITHUB_TOKEN = "${GITHUB_TOKEN}" }
+
+# .env
+GITHUB_TOKEN = "actual-secret"
+```
 
 ### `.imrule/mcp.json`
 

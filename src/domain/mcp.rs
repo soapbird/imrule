@@ -185,3 +185,72 @@ pub fn build_imrule_mcp_config(
     result.insert("mcpServers".to_string(), Value::Object(servers));
     Some(Value::Object(result))
 }
+/// Replaces `$NAME` and `${NAME}` references in every MCP configuration string.
+pub fn expand_mcp_environment_variables(config: &mut Value, variables: &BTreeMap<String, String>) {
+    match config {
+        Value::String(value) => *value = expand_environment_references(value, variables),
+        Value::Array(items) => {
+            for item in items {
+                expand_mcp_environment_variables(item, variables);
+            }
+        }
+        Value::Object(entries) => {
+            for value in entries.values_mut() {
+                expand_mcp_environment_variables(value, variables);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn expand_environment_references(value: &str, variables: &BTreeMap<String, String>) -> String {
+    let mut expanded = String::with_capacity(value.len());
+    let mut remaining = value;
+
+    while let Some(dollar_index) = remaining.find('$') {
+        expanded.push_str(&remaining[..dollar_index]);
+        let after_dollar = &remaining[dollar_index + 1..];
+
+        let (name, consumed) = if let Some(braced) = after_dollar.strip_prefix('{') {
+            let Some(end_index) = braced.find('}') else {
+                expanded.push('$');
+                remaining = after_dollar;
+                continue;
+            };
+            (&braced[..end_index], end_index + 3)
+        } else {
+            let name_length = after_dollar
+                .chars()
+                .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+                .count();
+            if name_length == 0 {
+                expanded.push('$');
+                remaining = after_dollar;
+                continue;
+            }
+            (&after_dollar[..name_length], name_length + 1)
+        };
+
+        if is_environment_variable_name(name) {
+            if let Some(replacement) = variables.get(name) {
+                expanded.push_str(replacement);
+            } else {
+                expanded.push_str(&remaining[dollar_index..dollar_index + consumed]);
+            }
+            remaining = &remaining[dollar_index + consumed..];
+        } else {
+            expanded.push('$');
+            remaining = after_dollar;
+        }
+    }
+
+    expanded.push_str(remaining);
+    expanded
+}
+
+fn is_environment_variable_name(name: &str) -> bool {
+    name.starts_with(|character: char| character.is_ascii_alphabetic() || character == '_')
+        && name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+}

@@ -118,6 +118,47 @@ Authorization = "Bearer token"
     assert!(codex_config.contains("Authorization = \"Bearer token\""));
     assert!(!codex_config.contains("[mcp_servers.docs.headers]"));
 }
+#[test]
+fn apply_expands_mcp_variables_from_project_environment_files() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(root.join(".imrule/AGENTS.md"), "Project rules.").unwrap();
+    fs::write(
+        root.join(".env"),
+        "IMRULE_MCP_ROOT_TOKEN=root-secret\nIMRULE_MCP_OVERRIDE=root-value\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".imrule/.env"),
+        "IMRULE_MCP_LOCAL_TOKEN=local-secret\nIMRULE_MCP_OVERRIDE=imrule-value\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        r#"
+[mcp_servers.local]
+transport = "stdio"
+command = "npx"
+env = { ROOT_TOKEN = "${IMRULE_MCP_ROOT_TOKEN}", LOCAL_TOKEN = "$IMRULE_MCP_LOCAL_TOKEN", OVERRIDE = "${IMRULE_MCP_OVERRIDE}", MISSING = "${IMRULE_MCP_MISSING}" }
+
+[mcp_servers.remote]
+transport = "http"
+url = "https://example.test/mcp"
+headers = { Authorization = "Bearer ${IMRULE_MCP_LOCAL_TOKEN}" }
+"#,
+    )
+    .unwrap();
+
+    apply_for(root, &["codex"]);
+
+    let codex_config = fs::read_to_string(root.join(".codex/config.toml")).unwrap();
+    assert!(codex_config.contains("ROOT_TOKEN = \"root-secret\""));
+    assert!(codex_config.contains("LOCAL_TOKEN = \"local-secret\""));
+    assert!(codex_config.contains("OVERRIDE = \"imrule-value\""));
+    assert!(codex_config.contains("MISSING = \"${IMRULE_MCP_MISSING}\""));
+    assert!(codex_config.contains("Authorization = \"Bearer local-secret\""));
+}
 
 #[test]
 fn apply_writes_gemini_and_qwen_http_servers_with_http_url() {

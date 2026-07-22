@@ -1,6 +1,6 @@
 //! Native apply-engine use case.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
@@ -12,7 +12,10 @@ use crate::domain::agent::{all_agents, AgentDefinition, AgentOutputPaths};
 use crate::domain::config::{AgentConfig, LoadedConfig, McpStrategy};
 use crate::domain::constants::normalize_path_separators;
 use crate::domain::error::ImruleError;
-use crate::domain::mcp::{build_imrule_mcp_config, filter_mcp_config_for_agent, merge_mcp};
+use crate::domain::mcp::{
+    build_imrule_mcp_config, expand_mcp_environment_variables, filter_mcp_config_for_agent,
+    merge_mcp,
+};
 use crate::domain::rules::concatenate_rules;
 use crate::domain::skills::get_skills_gitignore_paths;
 use crate::infrastructure::skills::{copy_skills_directory, discover_skills};
@@ -164,10 +167,12 @@ impl<'a> ApplyUseCase<'a> {
         let json_mcp = self
             .mcp_port
             .read_imrule_mcp_config(&options.project_root)?;
-        let Some(imrule_mcp) = build_imrule_mcp_config(json_mcp.as_ref(), &config.mcp_servers)
+        let Some(mut imrule_mcp) = build_imrule_mcp_config(json_mcp.as_ref(), &config.mcp_servers)
         else {
             return Ok(Vec::new());
         };
+        let environment = self.load_mcp_environment(&options.project_root)?;
+        expand_mcp_environment_variables(&mut imrule_mcp, &environment);
         let strategy = config
             .mcp
             .as_ref()
@@ -207,6 +212,30 @@ impl<'a> ApplyUseCase<'a> {
             })
             .collect();
         written
+    }
+    fn load_mcp_environment(
+        &self,
+        project_root: &Path,
+    ) -> Result<BTreeMap<String, String>, ImruleError> {
+        let mut variables = BTreeMap::new();
+        for path in [
+            project_root.join(".env"),
+            project_root.join(".imrule").join(".env"),
+        ] {
+            if !self.fs_port.file_exists(&path) {
+                continue;
+            }
+            for entry in dotenvy::from_path_iter(&path).map_err(|error| {
+                ImruleError::config(format!("failed to read {}: {error}", path.display()))
+            })? {
+                let (key, value) = entry.map_err(|error| {
+                    ImruleError::config(format!("failed to parse {}: {error}", path.display()))
+                })?;
+                variables.insert(key, value);
+            }
+        }
+        variables.extend(std::env::vars());
+        Ok(variables)
     }
 
     fn apply_subagents(
