@@ -60,10 +60,19 @@ fn mcp_add_http_server_writes_to_imrule_toml() {
     // Verify it is written to Claude's native config on apply.
     use imrule::application::apply_use_case::{ApplyOptions, ApplyUseCase};
     use imrule::infrastructure::agent_writer::DefaultAgentWriter;
+    use imrule::infrastructure::git_tracking::GitUntracker;
     use imrule::infrastructure::gitignore::GitignoreUpdater;
     let agent_writer = DefaultAgentWriter::new(&fs_port);
     let gitignore = GitignoreUpdater::new();
-    let apply = ApplyUseCase::new(&loader, &fs_port, &gitignore, &mcp_storage, &agent_writer);
+    let git_untracker = GitUntracker::new();
+    let apply = ApplyUseCase::new(
+        &loader,
+        &fs_port,
+        &gitignore,
+        &git_untracker,
+        &mcp_storage,
+        &agent_writer,
+    );
     let written_paths = apply
         .execute(ApplyOptions {
             project_root: root.to_path_buf(),
@@ -72,7 +81,8 @@ fn mcp_add_http_server_writes_to_imrule_toml() {
             dry_run: false,
             backup: false,
         })
-        .unwrap();
+        .unwrap()
+        .written;
 
     let claude_mcp_path = root.join(".claude/mcp.json");
     assert!(written_paths.contains(&claude_mcp_path));
@@ -80,7 +90,11 @@ fn mcp_add_http_server_writes_to_imrule_toml() {
         serde_json::from_str(&fs::read_to_string(&claude_mcp_path).unwrap()).unwrap();
     assert_eq!(
         claude_mcp["mcpServers"]["linear"],
-        json!({ "type": "http", "url": "https://mcp.linear.app/mcp" })
+        json!({
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "mcp-remote@latest", "https://mcp.linear.app/mcp"]
+        })
     );
 }
 

@@ -6,20 +6,40 @@ use imrule::application::ports::McpPort;
 use imrule::infrastructure::agent_writer::DefaultAgentWriter;
 use imrule::infrastructure::config_loader::TomlConfigLoader;
 use imrule::infrastructure::file_system::FsFileSystem;
+use imrule::infrastructure::git_tracking::GitUntracker;
 use imrule::infrastructure::gitignore::GitignoreUpdater;
 use imrule::infrastructure::mcp_storage::JsonMcpStorage;
 use serde_json::json;
 use tempfile::tempdir;
+
+fn configure_native_remote_transport(root: &Path) {
+    let config_path = root.join(".imrule/imrule.toml");
+    let existing = fs::read_to_string(&config_path).unwrap();
+    fs::write(
+        config_path,
+        format!("{existing}\n[mcp]\nremote_transport = \"native\"\n"),
+    )
+    .unwrap();
+}
 
 fn apply_for(root: &Path, agents: &[&str]) -> Vec<std::path::PathBuf> {
     let xdg_home = tempdir().unwrap();
     let loader = TomlConfigLoader::new().with_xdg_home(xdg_home.path().to_path_buf());
     let fs_port = FsFileSystem::new();
     let gitignore = GitignoreUpdater::new();
+    let git_untracker = GitUntracker::new();
     let mcp_storage = JsonMcpStorage::new();
     let agent_writer = DefaultAgentWriter::new(&fs_port);
-    let apply = ApplyUseCase::new(&loader, &fs_port, &gitignore, &mcp_storage, &agent_writer);
+    let apply = ApplyUseCase::new(
+        &loader,
+        &fs_port,
+        &gitignore,
+        &git_untracker,
+        &mcp_storage,
+        &agent_writer,
+    );
 
+    configure_native_remote_transport(root);
     apply
         .execute(ApplyOptions {
             project_root: root.to_path_buf(),
@@ -29,6 +49,7 @@ fn apply_for(root: &Path, agents: &[&str]) -> Vec<std::path::PathBuf> {
             backup: false,
         })
         .unwrap()
+        .written
 }
 
 fn write_imrule_fixture(root: &Path) {
@@ -410,17 +431,27 @@ fn try_apply_for(
     let loader = TomlConfigLoader::new().with_xdg_home(xdg_home.path().to_path_buf());
     let fs_port = FsFileSystem::new();
     let gitignore = GitignoreUpdater::new();
+    let git_untracker = GitUntracker::new();
     let mcp_storage = JsonMcpStorage::new();
     let agent_writer = DefaultAgentWriter::new(&fs_port);
-    let apply = ApplyUseCase::new(&loader, &fs_port, &gitignore, &mcp_storage, &agent_writer);
+    let apply = ApplyUseCase::new(
+        &loader,
+        &fs_port,
+        &gitignore,
+        &git_untracker,
+        &mcp_storage,
+        &agent_writer,
+    );
 
-    apply.execute(ApplyOptions {
-        project_root: root.to_path_buf(),
-        agents: Some(agents.iter().map(|agent| (*agent).to_string()).collect()),
-        config: None,
-        dry_run: false,
-        backup: false,
-    })
+    apply
+        .execute(ApplyOptions {
+            project_root: root.to_path_buf(),
+            agents: Some(agents.iter().map(|agent| (*agent).to_string()).collect()),
+            config: None,
+            dry_run: false,
+            backup: false,
+        })
+        .map(|result| result.written)
 }
 
 #[test]

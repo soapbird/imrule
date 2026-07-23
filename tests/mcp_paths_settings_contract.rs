@@ -1,11 +1,13 @@
 use std::fs;
 
-use imrule::application::ports::McpPort;
+use imrule::application::ports::{ConfigPort, McpPort};
 use imrule::domain::agent::all_agents;
-use imrule::domain::config::McpStrategy;
+use imrule::domain::config::{McpConfig, McpRemoteTransport, McpStrategy};
 use imrule::domain::mcp::{
     agent_supports_mcp, filter_mcp_config_for_agent, get_agent_mcp_capabilities, merge_mcp,
+    validate_mcp_config_for_remote_transport,
 };
+use imrule::infrastructure::config_loader::TomlConfigLoader;
 use imrule::infrastructure::mcp_storage::JsonMcpStorage;
 use imrule::infrastructure::vscode_settings::{
     get_vscode_settings_path, merge_augment_mcp_servers, transform_imrule_to_augment_mcp,
@@ -42,9 +44,12 @@ fn filters_mcp_by_agent_capabilities() {
         }
     });
 
-    assert_eq!(filter_mcp_config_for_agent(&config, cline), None);
     assert_eq!(
-        filter_mcp_config_for_agent(&config, firebase),
+        filter_mcp_config_for_agent(&config, cline, McpRemoteTransport::Native),
+        None
+    );
+    assert_eq!(
+        filter_mcp_config_for_agent(&config, firebase, McpRemoteTransport::Native),
         Some(json!({
             "mcpServers": {
                 "remote": { "url": "https://example.test/mcp", "headers": { "Authorization": "Bearer token" } },
@@ -53,13 +58,149 @@ fn filters_mcp_by_agent_capabilities() {
         }))
     );
     assert_eq!(
-        filter_mcp_config_for_agent(&config, copilot),
+        filter_mcp_config_for_agent(&config, copilot, McpRemoteTransport::Native),
         Some(json!({
             "mcpServers": {
                 "remote": { "url": "https://example.test/mcp", "headers": { "Authorization": "Bearer token" } },
                 "stdio": { "command": "node", "args": ["server.js"] }
             }
         }))
+    );
+}
+
+#[test]
+fn mcp_remote_mode_bridges_only_url_remote_servers_for_stdio_agents() {
+    assert_eq!(McpRemoteTransport::default(), McpRemoteTransport::McpRemote);
+    assert_eq!(
+        McpConfig::default().remote_transport,
+        McpRemoteTransport::McpRemote
+    );
+
+    let agents = all_agents();
+    let both = agents
+        .iter()
+        .find(|agent| agent.identifier == "firebase")
+        .unwrap()
+        .clone();
+    let mut stdio_only = both.clone();
+    stdio_only.capabilities.mcp_remote = false;
+    let mut remote_only = both.clone();
+    remote_only.capabilities.mcp_stdio = false;
+    let mut unsupported = both.clone();
+    unsupported.capabilities.mcp_stdio = false;
+    unsupported.capabilities.mcp_remote = false;
+
+    let config = json!({
+        "mcpServers": {
+            "http": {
+                "type": "http",
+                "url": "https://example.test/mcp"
+            },
+            "sse": {
+                "type": "sse",
+                "url": "https://example.test/events"
+            },
+            "stdio": {
+                "type": "stdio",
+                "command": "node",
+                "args": ["server.js"]
+            },
+            "headers": {
+                "type": "http",
+                "url": "https://secret.example.test/mcp",
+                "headers": { "Authorization": "Bearer secret" }
+            },
+            "mixed": {
+                "type": "http",
+                "url": "https://bad.example.test/mcp",
+                "command": "node"
+            },
+            "unknown-remote": {
+                "type": "websocket",
+                "url": "wss://bad.example.test/mcp"
+            }
+        }
+    });
+    let expected = Some(json!({
+        "mcpServers": {
+            "http": {
+                "type": "stdio",
+                "command": "npx",
+                "args": ["-y", "mcp-remote@latest", "https://example.test/mcp"]
+            },
+            "sse": {
+                "type": "stdio",
+                "command": "npx",
+                "args": ["-y", "mcp-remote@latest", "https://example.test/events"]
+            },
+            "stdio": {
+                "type": "stdio",
+                "command": "node",
+                "args": ["server.js"]
+            }
+        }
+    }));
+
+    assert_eq!(
+        filter_mcp_config_for_agent(&config, &both, McpRemoteTransport::McpRemote),
+        expected
+    );
+    assert_eq!(
+        filter_mcp_config_for_agent(&config, &stdio_only, McpRemoteTransport::McpRemote),
+        expected
+    );
+    assert_eq!(
+        filter_mcp_config_for_agent(&config, &remote_only, McpRemoteTransport::McpRemote),
+        None
+    );
+    assert_eq!(
+        filter_mcp_config_for_agent(&config, &unsupported, McpRemoteTransport::McpRemote),
+        None
+    );
+}
+#[test]
+fn mcp_remote_mode_rejects_static_headers() {
+    let config = json!({
+        "mcpServers": {
+            "protected": {
+                "type": "http",
+                "url": "https://example.test/mcp",
+                "headers": { "Authorization": "Bearer token" }
+            }
+        }
+    });
+
+    let error = validate_mcp_config_for_remote_transport(&config, McpRemoteTransport::McpRemote)
+        .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("set [mcp] remote_transport = \"native\""));
+    assert!(validate_mcp_config_for_remote_transport(&config, McpRemoteTransport::Native).is_ok());
+}
+
+#[test]
+fn loads_mcp_remote_transport_mode_from_mcp_config() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        "[mcp]\nremote_transport = \"mcp-remote\"\n",
+    )
+    .unwrap();
+
+    let loader = TomlConfigLoader::new().with_xdg_home(root.join("xdg"));
+    let loaded = loader.load_config(root, None, None).unwrap();
+    assert_eq!(
+        loaded.mcp.unwrap().remote_transport,
+        McpRemoteTransport::McpRemote
+    );
+
+    fs::write(root.join(".imrule/imrule.toml"), "[mcp]\nenabled = true\n").unwrap();
+    let loaded = loader.load_config(root, None, None).unwrap();
+    assert_eq!(
+        loaded.mcp.unwrap().remote_transport,
+        McpRemoteTransport::McpRemote
     );
 }
 

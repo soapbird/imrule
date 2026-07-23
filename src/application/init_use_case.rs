@@ -70,6 +70,8 @@ agents = ["codex", "claude"]
 # output_path_instructions = "AGENTS.md"
 # output_path_config = ".aider.conf.yml"
 
+[mcp]
+remote_transport = "mcp-remote"
 # [mcp_servers.example_stdio]
 # command = "your-mcp-server"
 # args = ["--stdio"]

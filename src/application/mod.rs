@@ -7,6 +7,7 @@ pub mod mcp_use_case;
 pub mod ports;
 pub mod skills_add_use_case;
 
+pub use apply_use_case::ApplyResult;
 pub use apply_use_case::{ApplyOptions, ApplyUseCase};
 pub use clear_use_case::{ClearOptions, ClearUseCase};
 pub use init_use_case::{InitOptions, InitUseCase};

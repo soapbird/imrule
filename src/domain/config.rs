@@ -14,6 +14,17 @@ pub enum McpStrategy {
     Overwrite,
 }
 
+/// How remote MCP servers are propagated to agents.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum McpRemoteTransport {
+    /// Run remote servers through the `mcp-remote` stdio bridge.
+    #[default]
+    McpRemote,
+    /// Use each agent's native remote transport support.
+    Native,
+}
+
 /// MCP transport types recognised by ImRule.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -76,6 +87,8 @@ pub struct McpConfig {
     pub enabled: Option<bool>,
     #[serde(default)]
     pub strategy: McpStrategy,
+    #[serde(default)]
+    pub remote_transport: McpRemoteTransport,
 }
 
 impl Default for McpConfig {
@@ -83,6 +96,7 @@ impl Default for McpConfig {
         Self {
             enabled: Some(true),
             strategy: McpStrategy::Merge,
+            remote_transport: McpRemoteTransport::McpRemote,
         }
     }
 }

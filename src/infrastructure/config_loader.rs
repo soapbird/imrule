@@ -9,8 +9,8 @@ use toml::Value;
 
 use crate::application::ports::{ConfigPort, ConfigWritePort};
 use crate::domain::config::{
-    AgentConfig, GitignoreConfig, LoadedConfig, McpConfig, McpServerDefinition, McpStrategy,
-    McpTransport, SkillsConfig, SubagentsConfig,
+    AgentConfig, GitignoreConfig, LoadedConfig, McpConfig, McpRemoteTransport, McpServerDefinition,
+    McpStrategy, McpTransport, SkillsConfig, SubagentsConfig,
 };
 use crate::domain::constants::{xdg_config_home, LEGACY_CONFIG_FILENAME, LEGACY_DIR_NAME};
 use crate::domain::error::ImruleError;
@@ -287,6 +287,13 @@ fn parse_mcp_config(table: &toml::map::Map<String, Value>) -> McpConfig {
     if let Some(strategy) = table.get("merge_strategy").and_then(|value| value.as_str()) {
         config.strategy = parse_mcp_strategy(strategy).unwrap_or(McpStrategy::Merge);
     }
+    if let Some(remote_transport) = table
+        .get("remote_transport")
+        .and_then(|value| value.as_str())
+    {
+        config.remote_transport =
+            parse_mcp_remote_transport(remote_transport).unwrap_or(McpRemoteTransport::McpRemote);
+    }
     config
 }
 
@@ -294,6 +301,7 @@ fn empty_mcp_config() -> McpConfig {
     McpConfig {
         enabled: None,
         strategy: McpStrategy::Merge,
+        remote_transport: McpRemoteTransport::McpRemote,
     }
 }
 
@@ -314,6 +322,14 @@ fn parse_mcp_strategy(value: &str) -> Option<McpStrategy> {
     match value {
         "merge" => Some(McpStrategy::Merge),
         "overwrite" => Some(McpStrategy::Overwrite),
+        _ => None,
+    }
+}
+
+fn parse_mcp_remote_transport(value: &str) -> Option<McpRemoteTransport> {
+    match value {
+        "native" => Some(McpRemoteTransport::Native),
+        "mcp-remote" => Some(McpRemoteTransport::McpRemote),
         _ => None,
     }
 }

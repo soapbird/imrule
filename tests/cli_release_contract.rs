@@ -162,6 +162,9 @@ fn init_scaffolds_imrule_files_without_overwriting_existing_content() {
         .unwrap()
         .contains("Centralised AI agent instructions"));
     assert!(fs::read_to_string(&toml).unwrap().contains("agents = ["));
+    assert!(fs::read_to_string(&toml)
+        .unwrap()
+        .contains("remote_transport = \"mcp-remote\""));
 
     fs::write(&agents, "custom").unwrap();
     Command::cargo_bin("imrule")
@@ -930,11 +933,15 @@ fn mcp_add_and_remove_persist_to_imrule_toml() {
             .unwrap();
     assert_eq!(
         claude_mcp["mcpServers"]["linear"]["type"],
-        serde_json::json!("http")
+        serde_json::json!("stdio")
     );
     assert_eq!(
-        claude_mcp["mcpServers"]["linear"]["url"],
-        serde_json::json!("https://mcp.linear.app/mcp")
+        claude_mcp["mcpServers"]["linear"]["command"],
+        serde_json::json!("npx")
+    );
+    assert_eq!(
+        claude_mcp["mcpServers"]["linear"]["args"],
+        serde_json::json!(["-y", "mcp-remote@0.1.38", "https://mcp.linear.app/mcp"])
     );
     assert_eq!(
         claude_mcp["mcpServers"]["github"]["type"],

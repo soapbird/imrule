@@ -273,6 +273,7 @@ imrule skills ls                          # list 별칭
 # [mcp]
 # enabled = true
 # strategy = "merge"    # 또는 "overwrite"
+# remote_transport = "mcp-remote" # 또는 "native"
 
 # [gitignore]
 # enabled = true
@@ -306,6 +307,26 @@ headers = { Authorization = "Bearer xxx" }
 ```
 
 여기 선언한 서버는 `imrule apply` 실행 시 `.imrule/mcp.json`에 있는 서버와 합쳐집니다. 둘 중 어느 소스를 사용해도 됩니다. `apply` 때 모든 서버는 TOML 기반 에이전트(Codex, OpenCode, Mistral, OpenHands)를 포함한 각 에이전트의 네이티브 MCP 설정으로 기록되고, `imrule clear`가 다시 제거합니다.
+
+원격 MCP의 OAuth 인증 흐름은 기본적으로 `[mcp] remote_transport = "mcp-remote"`로 Agent마다 통일됩니다. URL 기반 HTTP/SSE 서버는 stdio `mcp-remote` 브리지로 변환되므로, 최초 MCP 연결 시 브라우저 인증이 시작됩니다. `npx`를 사용할 수 있어야 하며, ImRule은 OAuth 토큰이나 브리지 캐시를 저장하거나 `clear`로 삭제하지 않습니다. Agent별 네이티브 원격 MCP 설정을 유지하려면 `remote_transport = "native"`를 명시합니다. 정적 `headers`가 필요한 서버는 브리지 모드에서 지원하지 않으며, 적용 전에 오류로 중단되므로 `native` 모드를 사용해야 합니다. `mcp-remote` 브리지를 실행할 수 없는 Agent에는 해당 원격 서버가 적용되지 않습니다.
+
+```toml
+[mcp]
+remote_transport = "mcp-remote"
+
+[mcp_servers.linear]
+url = "https://mcp.linear.app/mcp"
+
+[mcp_servers.jira]
+url = "https://mcp.atlassian.com/v1/mcp/authv2"
+
+[mcp_servers.sentry]
+url = "https://mcp.sentry.dev/mcp"
+
+[mcp_servers.figma]
+url = "http://127.0.0.1:3845/mcp"
+```
+
 `$NAME` 또는 `${NAME}` 참조는 `imrule apply`에서 실제 값으로 치환됩니다. 값은 프로젝트 루트의 `.env`, `.imrule/.env`, 실행 환경 순서로 읽으며 뒤의 소스가 앞의 값을 덮어씁니다. 정의되지 않은 참조는 그대로 남습니다. 치환된 비밀값은 에이전트별 MCP 설정 파일에 기록되므로 해당 파일을 커밋하지 마세요.
 
 ```toml
