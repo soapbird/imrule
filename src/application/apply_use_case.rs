@@ -15,7 +15,7 @@ use crate::domain::constants::normalize_path_separators;
 use crate::domain::error::ImruleError;
 use crate::domain::mcp::{
     build_imrule_mcp_config, expand_mcp_environment_variables, filter_mcp_config_for_agent,
-    filter_mcp_config_for_agent_with_version_cache, merge_mcp,
+    filter_mcp_config_for_agent_with_package_spec, merge_mcp,
     validate_mcp_config_for_remote_transport, McpRemoteVersionCache,
 };
 use crate::domain::rules::concatenate_rules;
@@ -200,6 +200,15 @@ impl<'a> ApplyUseCase<'a> {
         })
     }
 
+    /// Merges and writes MCP server configs to every selected agent's native config file.
+    ///
+    /// # Security note
+    ///
+    /// Environment variables referenced via `$TOKEN` in `.env` files are resolved
+    /// and written in plaintext to each agent's native MCP config. This means
+    /// resolved secret values are materialized on disk in multiple locations.
+    /// Generated files are added to `.gitignore` and untracked from the git index
+    /// to mitigate accidental commits.
     fn apply_mcp_configs(
         &self,
         options: &ApplyOptions,
@@ -228,24 +237,27 @@ impl<'a> ApplyUseCase<'a> {
         validate_mcp_config_for_remote_transport(&imrule_mcp, remote_transport)?;
         let version_cache =
             self.mcp_remote_version_cache(options, &imrule_mcp, selected_agents, remote_transport)?;
-        let candidates: Vec<_> = selected_agents
-            .par_iter()
-            .filter_map(|agent| {
-                let filtered = match version_cache.as_ref() {
-                    Some(cache) => filter_mcp_config_for_agent_with_version_cache(
-                        &imrule_mcp,
-                        agent,
-                        remote_transport,
-                        cache,
-                    )?,
-                    None => filter_mcp_config_for_agent(&imrule_mcp, agent, remote_transport)?,
-                };
-                let path = self
-                    .mcp_port
-                    .get_native_mcp_path(agent.name, &options.project_root)?;
-                Some((agent, filtered, path))
-            })
-            .collect();
+        let candidates: Vec<_> = {
+            let cached_spec = version_cache.as_ref().map(|c| c.package_spec());
+            selected_agents
+                .par_iter()
+                .filter_map(|agent| {
+                    let filtered = match cached_spec.as_deref() {
+                        Some(spec) => filter_mcp_config_for_agent_with_package_spec(
+                            &imrule_mcp,
+                            agent,
+                            remote_transport,
+                            spec,
+                        )?,
+                        None => filter_mcp_config_for_agent(&imrule_mcp, agent, remote_transport)?,
+                    };
+                    let path = self
+                        .mcp_port
+                        .get_native_mcp_path(agent.name, &options.project_root)?;
+                    Some((agent, filtered, path))
+                })
+                .collect()
+        };
 
         // Dedup by target path. Several agent aliases (e.g. the Kimi trio
         // kimi/kimi-cli/kimi-code) resolve to the same native MCP file; writing
@@ -303,13 +315,23 @@ impl<'a> ApplyUseCase<'a> {
         }
 
         match (self.cache_port, self.version_resolver) {
-            (Some(cache_port), Some(version_resolver)) => resolve_mcp_remote_version(
-                cache_port,
-                version_resolver,
-                &options.project_root,
-                !options.dry_run,
-            )
-            .map(Some),
+            (Some(cache_port), Some(version_resolver)) => {
+                match resolve_mcp_remote_version(
+                    cache_port,
+                    version_resolver,
+                    &options.project_root,
+                    !options.dry_run,
+                ) {
+                    Ok(cache) => Ok(Some(cache)),
+                    Err(error) => {
+                        tracing::warn!(
+                            %error,
+                            "failed to resolve mcp-remote version; falling back to @latest"
+                        );
+                        Ok(None)
+                    }
+                }
+            }
             _ => Ok(None),
         }
     }
@@ -317,25 +339,7 @@ impl<'a> ApplyUseCase<'a> {
         &self,
         project_root: &Path,
     ) -> Result<BTreeMap<String, String>, ImruleError> {
-        let mut variables = BTreeMap::new();
-        for path in [
-            project_root.join(".env"),
-            project_root.join(".imrule").join(".env"),
-        ] {
-            if !self.fs_port.file_exists(&path) {
-                continue;
-            }
-            for entry in dotenvy::from_path_iter(&path).map_err(|error| {
-                ImruleError::config(format!("failed to read {}: {error}", path.display()))
-            })? {
-                let (key, value) = entry.map_err(|error| {
-                    ImruleError::config(format!("failed to parse {}: {error}", path.display()))
-                })?;
-                variables.insert(key, value);
-            }
-        }
-        variables.extend(std::env::vars());
-        Ok(variables)
+        crate::application::load_mcp_environment(self.fs_port, project_root)
     }
 
     fn apply_subagents(

@@ -929,8 +929,7 @@ fn mcp_add_and_remove_persist_to_imrule_toml() {
         .success();
 
     let claude_mcp: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(tmp.path().join(".claude/mcp.json")).unwrap())
-            .unwrap();
+        serde_json::from_str(&fs::read_to_string(tmp.path().join(".mcp.json")).unwrap()).unwrap();
     assert_eq!(
         claude_mcp["mcpServers"]["linear"]["type"],
         serde_json::json!("stdio")
@@ -989,4 +988,134 @@ fn mcp_remove_missing_server_fails() {
         ])
         .assert()
         .failure();
+}
+
+#[test]
+fn mcp_add_global_writes_to_xdg_config_home() {
+    let xdg = tempdir().unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", xdg.path())
+        .args(["init", "--global"])
+        .assert()
+        .success();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", xdg.path())
+        .args([
+            "mcp",
+            "add",
+            "--global",
+            "--transport",
+            "http",
+            "linear",
+            "https://mcp.linear.app/mcp",
+        ])
+        .assert()
+        .success();
+
+    let toml = fs::read_to_string(xdg.path().join("imrule/imrule.toml")).unwrap();
+    assert!(toml.contains("[mcp_servers.linear]"));
+    assert!(toml.contains("transport = \"http\""));
+    assert!(toml.contains("url = \"https://mcp.linear.app/mcp\""));
+}
+
+#[test]
+fn mcp_remove_global_deletes_from_xdg_config_home() {
+    let xdg = tempdir().unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", xdg.path())
+        .args(["init", "--global"])
+        .assert()
+        .success();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", xdg.path())
+        .args([
+            "mcp",
+            "add",
+            "--global",
+            "--transport",
+            "stdio",
+            "github",
+            "--",
+            "npx",
+            "-y",
+            "@modelcontextprotocol/server-github",
+        ])
+        .assert()
+        .success();
+
+    let toml_before = fs::read_to_string(xdg.path().join("imrule/imrule.toml")).unwrap();
+    assert!(toml_before.contains("[mcp_servers.github]"));
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", xdg.path())
+        .args(["mcp", "remove", "--global", "github"])
+        .assert()
+        .success();
+
+    let toml_after = fs::read_to_string(xdg.path().join("imrule/imrule.toml")).unwrap();
+    assert!(!toml_after.contains("[mcp_servers.github]"));
+}
+
+#[test]
+fn mcp_auth_with_only_stdio_servers_skips_all() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args(["init", "--project-root", root.to_str().unwrap()])
+        .assert()
+        .success();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "mcp",
+            "add",
+            "--project-root",
+            root.to_str().unwrap(),
+            "--transport",
+            "stdio",
+            "github",
+            "--",
+            "npx",
+            "-y",
+            "@modelcontextprotocol/server-github",
+        ])
+        .assert()
+        .success();
+
+    let output = Command::cargo_bin("imrule")
+        .unwrap()
+        .args(["mcp", "auth", "--project-root", root.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("0 authenticated"));
+    assert!(stdout.contains("1 skipped"));
+    assert!(stdout.contains("github"));
+}
+
+#[test]
+fn mcp_auth_help_parses() {
+    let output = Command::cargo_bin("imrule")
+        .unwrap()
+        .args(["mcp", "auth", "--help"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Authenticate"));
 }
