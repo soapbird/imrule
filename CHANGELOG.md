@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0.0] - 2026-07-24
+
+### Added
+
+- **`imrule mcp auth` subcommand**: authenticates eligible remote MCP servers through `mcp-remote` with a sequential OAuth flow, skipping stdio and header-bearing servers automatically.
+- **Project-scoped MCP auth cache** (`.imrule/cache.json`): resolves and pins the `mcp-remote` npm package version so `apply` and `auth` use a concrete version instead of `@latest`. The cache is written atomically and validated against strict semver.
+- **Environment variable expansion**: `$VAR` and `${VAR}` references in MCP server configs are expanded from `.env` and `.imrule/.env` files, then overlaid with process environment variables.
+
+### Changed
+
+- The `default_agents` config key in `imrule.toml` is now `agents` (backward compatible: the legacy key still works).
+- `apply` now resolves the `mcp-remote` bridge version once per invocation instead of per-agent, reducing redundant allocations in the parallel apply loop.
+- Git index operations (`git rm --cached`, `git ls-files`) now report errors through a dedicated `GitTracking` error variant instead of reusing `Gitignore`.
+
+### Fixed
+
+- **Claude Code MCP path**: corrected from `.claude/mcp.json` to `.mcp.json` in the project root, the path Claude Code actually reads. Previous versions silently wrote MCP configs to a location Claude Code ignored.
+- **`apply` no longer hard-fails offline**: when `npm` or network is unavailable for `mcp-remote` version resolution, `apply` falls back to `mcp-remote@latest` and continues instead of aborting.
+- Native MCP config mappings corrected for multiple agents (Kilo Code, Crush, Gemini/Qwen, RooCode, OpenCode, Factory).
+- `apply` and `clear` no longer destroy native config files that aren't strictly valid JSON.
+- Duplicate `load_mcp_environment` implementations in apply and mcp auth paths consolidated into a single shared helper.
+
 ## [0.1.4.0] - 2026-06-29
 
 ### Added
