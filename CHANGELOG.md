@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0.1] - 2026-07-24
+
+### Fixed
+
+- **`--version` was stuck at `0.1.0`**: `Cargo.toml` was never bumped alongside `VERSION` and `CHANGELOG.md`, so `imrule --version` reported the wrong version after every release. A new `build.rs` now reads the `VERSION` file at compile time and injects it into `clap`'s `--version` output, making `VERSION` the single source of truth for the full 4-component version (e.g. `0.2.0.1`). `Cargo.toml`'s semver `version` field is kept in sync with the major.minor.patch prefix.
+
 ## [0.2.0.0] - 2026-07-24
 
 ### Added

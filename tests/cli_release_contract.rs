@@ -11,7 +11,18 @@ fn cli_version_and_help_are_release_ready() {
         .output()
         .unwrap();
     assert!(version.status.success());
-    assert!(String::from_utf8_lossy(&version.stdout).contains("imrule 0.1.0"));
+    // `--version` must reflect the VERSION file (4-component scheme), which
+    // is injected at compile time by build.rs. Read it dynamically so this
+    // assertion never goes stale again.
+    let expected = fs::read_to_string("VERSION").unwrap().trim().to_owned();
+    assert!(
+        String::from_utf8_lossy(&version.stdout)
+            .trim()
+            .ends_with(&format!("imrule {}", expected)),
+        "expected 'imrule {}' but got: {}",
+        expected,
+        String::from_utf8_lossy(&version.stdout).trim()
+    );
 
     let help = Command::cargo_bin("imrule")
         .unwrap()
