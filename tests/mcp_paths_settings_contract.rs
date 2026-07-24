@@ -4,8 +4,8 @@ use imrule::application::ports::{ConfigPort, McpPort};
 use imrule::domain::agent::all_agents;
 use imrule::domain::config::{McpConfig, McpRemoteTransport, McpStrategy};
 use imrule::domain::mcp::{
-    agent_supports_mcp, filter_mcp_config_for_agent, get_agent_mcp_capabilities, merge_mcp,
-    validate_mcp_config_for_remote_transport,
+    agent_supports_mcp, expand_mcp_environment_variables, filter_mcp_config_for_agent,
+    get_agent_mcp_capabilities, merge_mcp, validate_mcp_config_for_remote_transport,
 };
 use imrule::infrastructure::config_loader::TomlConfigLoader;
 use imrule::infrastructure::mcp_storage::JsonMcpStorage;
@@ -629,4 +629,83 @@ fn opencode_local_server_renames_env_to_environment() {
         written["mcp"]["local"]["command"],
         json!(["npx", "-y", "demo"])
     );
+}
+
+// --- Gap coverage: expand_mcp_environment_variables edge cases ---
+// The apply fixture exercises the common ${VAR} / $VAR / override / missing
+// cases, but the parser has several branches that are never directly asserted:
+// `$` at end of string, `$` followed by a digit (not a valid env name), an
+// unclosed `${`, and recursion through nested arrays/objects.
+
+#[test]
+fn expand_environment_variables_handles_dollar_edge_cases() {
+    let mut vars = std::collections::BTreeMap::new();
+    vars.insert("TOKEN".to_string(), "secret".to_string());
+
+    // `$` at end of string is preserved verbatim (no name follows).
+    let mut a = json!("prefix$");
+    expand_mcp_environment_variables(&mut a, &vars);
+    assert_eq!(a, json!("prefix$"));
+
+    // `$` followed by a digit is NOT a valid env name — left untouched.
+    let mut b = json!("price:$5");
+    expand_mcp_environment_variables(&mut b, &vars);
+    assert_eq!(b, json!("price:$5"));
+
+    // Unclosed `${` — the brace is never terminated; the literal is preserved.
+    let mut c = json!("${TOKEN");
+    expand_mcp_environment_variables(&mut c, &vars);
+    assert_eq!(c, json!("${TOKEN"));
+
+    // Empty `${}` is not a valid env name — left untouched.
+    let mut d = json!("${}");
+    expand_mcp_environment_variables(&mut d, &vars);
+    assert_eq!(d, json!("${}"));
+
+    // `${VAR}` and `$VAR` both expand; unknown vars are left as-is.
+    let mut e = json!("${TOKEN} and $TOKEN and $MISSING");
+    expand_mcp_environment_variables(&mut e, &vars);
+    assert_eq!(e, json!("secret and secret and $MISSING"));
+
+    // A bare `$` with no following identifier character is preserved.
+    let mut f = json!("cost $$ total");
+    expand_mcp_environment_variables(&mut f, &vars);
+    assert_eq!(f, json!("cost $$ total"));
+}
+
+#[test]
+fn expand_environment_variables_recurses_through_arrays_and_objects() {
+    let mut vars = std::collections::BTreeMap::new();
+    vars.insert("HOST".to_string(), "example.test".to_string());
+    vars.insert("PORT".to_string(), "8080".to_string());
+
+    let mut config = json!({
+        "mcpServers": {
+            "remote": {
+                "url": "https://${HOST}:${PORT}/mcp",
+                "headers": { "X-Trace": "$HOST" },
+                "tags": ["$HOST", "literal", "$PORT"]
+            }
+        }
+    });
+    expand_mcp_environment_variables(&mut config, &vars);
+    assert_eq!(
+        config["mcpServers"]["remote"]["url"],
+        json!("https://example.test:8080/mcp")
+    );
+    assert_eq!(
+        config["mcpServers"]["remote"]["headers"]["X-Trace"],
+        json!("example.test")
+    );
+    assert_eq!(
+        config["mcpServers"]["remote"]["tags"],
+        json!(["example.test", "literal", "8080"])
+    );
+
+    // Non-string scalars (numbers, bools, nulls) pass through untouched.
+    let mut mixed = json!({ "count": 42, "flag": true, "none": null });
+    expand_mcp_environment_variables(&mut mixed, &vars);
+    assert_eq!(mixed["count"], json!(42));
+    assert_eq!(mixed["flag"], json!(true));
+    assert_eq!(mixed["none"], serde_json::Value::Null);
 }
