@@ -29,7 +29,7 @@ impl From<CliMcpTransport> for McpTransport {
 
 #[derive(Debug, Parser)]
 #[command(name = "imrule")]
-#[command(version)]
+#[command(version = env!("IMRULE_VERSION"))]
 #[command(about = "ImRule — apply the same rules to all coding agents")]
 #[command(override_usage = "imrule <command> [options]")]
 #[command(subcommand_required = true, arg_required_else_help = true)]
