@@ -121,7 +121,7 @@ imrule apply --config custom.toml         # 사용자 지정 설정 파일 사�
 
 ### `imrule clear`
 
-`imrule apply`가 생성한 모든 자산을 제거합니다. 규칙 파일, `.bak` 백업, 스킬 디렉터리, gitignore 관리 블록, MCP 항목이 대상입니다. `clear`는 `default_agents` 설정과 무관하게 기본적으로 모든 에이전트를 대상으로 하며, `--agents`로 범위를 제한할 수 있습니다.
+`imrule apply`가 생성한 모든 자산을 제거합니다. 규칙 파일, `.bak` 백업, 스킬 디렉터리, gitignore 관리 블록, MCP 항목이 대상입니다. `clear`는 `agents` 설정과 무관하게 기본적으로 모든 에이전트를 대상으로 하며, `--agents`로 범위를 제한할 수 있습니다.
 
 `.imrule/` 원본 디렉터리는 기본적으로 보존됩니다. 원본까지 삭제하려면 `--remove-source`를 사용합니다.
 
@@ -182,6 +182,20 @@ imrule mcp remove github --global         # 전역 설정에서 제거
 imrule mcp remove github --dry-run        # 쓰기 없이 미리보기
 imrule mcp remove github --project-root ~/myproj
 ```
+
+#### `imrule mcp auth`
+
+원격(`http`/`sse`) MCP 서버의 OAuth 인증을 순차적으로 수행합니다. 각 서버에 대해 `mcp-remote` 브리지를 실행해 브라우저 인증 흐름을 시작합니다. stdio 서버와 정적 `headers`가 필요한 서버는 자동으로 건너뜁니다.
+
+인증에 사용할 `mcp-remote` 버전은 프로젝트 캐시(`.imrule/cache.json`)에서 읽거나, 캐시가 없으면 npm에서 해석해 고정한 뒤 캐시에 기록합니다. `$VAR`/`${VAR}` 환경 변수 참조도 `apply`와 동일하게 `.env`와 `.imrule/.env`, 실행 환경에서 치환합니다.
+
+```bash
+imrule mcp auth                            # 원격 서버 순차 인증
+imrule mcp auth --project-root ~/myproj    # 프로젝트 루트 지정
+imrule mcp auth --config custom.toml       # 사용자 지정 설정 파일 사용
+```
+
+> `[mcp] enabled = false`이면 인증을 수행하지 않습니다. 인증 대상이 없거나 모두 건너뛴 경우에도 정상 종료합니다.
 
 ### `imrule skills`
 
@@ -259,8 +273,8 @@ imrule skills ls                          # list 별칭
 ### `.imrule/imrule.toml`
 
 ```toml
-# --agents를 지정하지 않았을 때 기본 에이전트
-# default_agents = ["claude", "copilot"]
+# --agents를 지정하지 않았을 때 기본 에이전트(이전 키 이름 default_agents도 동일하게 동작)
+# agents = ["claude", "copilot"]
 
 # [agents.ClaudeCode]
 # enabled = true
