@@ -27,6 +27,16 @@ use crate::interface::cli::{parse_agents, Cli, Command, McpCommand, SkillsComman
 
 struct ProcessMcpRemoteRunner;
 
+/// Parses the JSON output of `npm view <pkg> version --json` into a version string.
+/// Expects a quoted JSON string like `"1.2.3"`.
+pub fn parse_npm_version_output(output: &str) -> Result<String, crate::domain::error::ImruleError> {
+    serde_json::from_str::<String>(output.trim()).map_err(|_| {
+        crate::domain::error::ImruleError::mcp(
+            "npm returned an invalid mcp-remote version response",
+        )
+    })
+}
+
 impl McpRemoteVersionResolverPort for ProcessMcpRemoteRunner {
     fn resolve_latest_version(&self) -> Result<String, crate::domain::error::ImruleError> {
         let output = ProcessCommand::new("npm")
@@ -42,14 +52,10 @@ impl McpRemoteVersionResolverPort for ProcessMcpRemoteRunner {
                 "npm could not resolve a concrete mcp-remote version",
             ));
         }
-        let output = std::str::from_utf8(&output.stdout).map_err(|_| {
+        let stdout = std::str::from_utf8(&output.stdout).map_err(|_| {
             crate::domain::error::ImruleError::mcp("npm returned a non-UTF-8 mcp-remote version")
         })?;
-        serde_json::from_str::<String>(output.trim()).map_err(|_| {
-            crate::domain::error::ImruleError::mcp(
-                "npm returned an invalid mcp-remote version response",
-            )
-        })
+        parse_npm_version_output(stdout)
     }
 }
 

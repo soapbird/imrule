@@ -8,6 +8,12 @@ use serde_json::{json, Map, Value};
 use crate::domain::agent::AgentDefinition;
 use crate::domain::config::{McpRemoteTransport, McpServerDefinition, McpStrategy, McpTransport};
 use crate::domain::constants::{MCP_REMOTE_LATEST_PACKAGE_SPEC, MCP_REMOTE_PACKAGE};
+
+/// Number of components in a concrete semver: major.minor.patch.
+const SEMVER_COMPONENT_COUNT: usize = 3;
+
+/// Byte overhead of `${` + `}` delimiters in a braced env-var reference.
+const BRACED_VAR_OVERHEAD: usize = 3;
 use crate::domain::error::ImruleError;
 
 /// Project-scoped resolution of the `mcp-remote` npm package.
@@ -122,7 +128,7 @@ fn is_concrete_npm_version(version: &str) -> bool {
     }
 
     let mut components = core.split('.');
-    (0..3).all(|_| components.next().is_some_and(is_valid_semver_number))
+    (0..SEMVER_COMPONENT_COUNT).all(|_| components.next().is_some_and(is_valid_semver_number))
         && components.next().is_none()
 }
 
@@ -227,7 +233,7 @@ pub fn filter_mcp_config_for_agent_with_version_cache(
     )
 }
 
-fn filter_mcp_config_for_agent_with_package_spec(
+pub fn filter_mcp_config_for_agent_with_package_spec(
     mcp_config: &Value,
     agent: &AgentDefinition,
     remote_transport: McpRemoteTransport,
@@ -467,7 +473,7 @@ fn expand_environment_references(value: &str, variables: &BTreeMap<String, Strin
                 remaining = after_dollar;
                 continue;
             };
-            (&braced[..end_index], end_index + 3)
+            (&braced[..end_index], end_index + BRACED_VAR_OVERHEAD)
         } else {
             let name_length = after_dollar
                 .chars()

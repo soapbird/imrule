@@ -28,6 +28,9 @@ pub enum ImruleError {
 
     #[error("gitignore error: {0}")]
     Gitignore(String),
+
+    #[error("git tracking error: {0}")]
+    GitTracking(String),
 }
 
 impl ImruleError {
@@ -61,5 +64,9 @@ impl ImruleError {
 
     pub fn gitignore(msg: impl Into<String>) -> Self {
         Self::Gitignore(msg.into())
+    }
+
+    pub fn git_tracking(msg: impl Into<String>) -> Self {
+        Self::GitTracking(msg.into())
     }
 }

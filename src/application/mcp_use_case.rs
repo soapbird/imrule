@@ -201,59 +201,21 @@ impl<'a> McpUseCase<'a> {
 
         if let Some(servers) = effective_mcp.get("mcpServers").and_then(Value::as_object) {
             for (server_name, server) in servers {
-                let Some(server) = server.as_object() else {
-                    result.skipped.push(McpAuthSkip {
+                let skip_reason = classify_auth_eligibility(server, &remote_transport);
+                match skip_reason {
+                    Some(reason) => result.skipped.push(McpAuthSkip {
                         server_name: server_name.clone(),
-                        reason: "server definition is not an object",
-                    });
-                    continue;
-                };
-                if server.contains_key("command") {
-                    result.skipped.push(McpAuthSkip {
-                        server_name: server_name.clone(),
-                        reason: "stdio servers do not use remote OAuth",
-                    });
-                    continue;
+                        reason,
+                    }),
+                    None => {
+                        let url = server
+                            .get("url")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string();
+                        eligible.push((server_name.clone(), url));
+                    }
                 }
-                let Some(url) = server.get("url").and_then(Value::as_str) else {
-                    result.skipped.push(McpAuthSkip {
-                        server_name: server_name.clone(),
-                        reason: "server does not have a remote URL",
-                    });
-                    continue;
-                };
-                if !matches!(
-                    server.get("type").and_then(Value::as_str),
-                    None | Some("http") | Some("sse")
-                ) {
-                    result.skipped.push(McpAuthSkip {
-                        server_name: server_name.clone(),
-                        reason: "server is not an HTTP/SSE remote",
-                    });
-                    continue;
-                }
-                if remote_transport == McpRemoteTransport::Native {
-                    result.skipped.push(McpAuthSkip {
-                        server_name: server_name.clone(),
-                        reason: "remote transport is configured as native",
-                    });
-                    continue;
-                }
-                if server.contains_key("headers") {
-                    result.skipped.push(McpAuthSkip {
-                        server_name: server_name.clone(),
-                        reason: "servers with static headers are not eligible for OAuth",
-                    });
-                    continue;
-                }
-                if has_unresolved_environment_reference(url) {
-                    result.skipped.push(McpAuthSkip {
-                        server_name: server_name.clone(),
-                        reason: "server URL contains an unresolved environment placeholder",
-                    });
-                    continue;
-                }
-                eligible.push((server_name.clone(), url.to_string()));
             }
         }
 
@@ -281,6 +243,35 @@ fn effective_project_root(project_root: PathBuf, global: bool) -> PathBuf {
     } else {
         project_root
     }
+}
+
+/// Classifies a server definition's eligibility for remote OAuth authentication.
+/// Returns `Some(reason)` if the server should be skipped, or `None` if eligible.
+fn classify_auth_eligibility(
+    server: &Value,
+    remote_transport: &McpRemoteTransport,
+) -> Option<&'static str> {
+    let server = server.as_object()?;
+    if server.contains_key("command") {
+        return Some("stdio servers do not use remote OAuth");
+    }
+    let url = server.get("url").and_then(Value::as_str)?;
+    if !matches!(
+        server.get("type").and_then(Value::as_str),
+        None | Some("http") | Some("sse")
+    ) {
+        return Some("server is not an HTTP/SSE remote");
+    }
+    if *remote_transport == McpRemoteTransport::Native {
+        return Some("remote transport is configured as native");
+    }
+    if server.contains_key("headers") {
+        return Some("servers with static headers are not eligible for OAuth");
+    }
+    if has_unresolved_environment_reference(url) {
+        return Some("server URL contains an unresolved environment placeholder");
+    }
+    None
 }
 
 fn build_definition(options: &McpAddOptions) -> Result<McpServerDefinition, ImruleError> {
@@ -337,25 +328,7 @@ fn load_mcp_environment(
     fs_port: &dyn FileSystemPort,
     project_root: &Path,
 ) -> Result<BTreeMap<String, String>, ImruleError> {
-    let mut variables = BTreeMap::new();
-    for path in [
-        project_root.join(".env"),
-        project_root.join(".imrule").join(".env"),
-    ] {
-        if !fs_port.file_exists(&path) {
-            continue;
-        }
-        for entry in dotenvy::from_path_iter(&path).map_err(|error| {
-            ImruleError::config(format!("failed to read {}: {error}", path.display()))
-        })? {
-            let (key, value) = entry.map_err(|error| {
-                ImruleError::config(format!("failed to parse {}: {error}", path.display()))
-            })?;
-            variables.insert(key, value);
-        }
-    }
-    variables.extend(std::env::vars());
-    Ok(variables)
+    crate::application::load_mcp_environment(fs_port, project_root)
 }
 
 /// Parses a `KEY=VALUE` string into its two parts.

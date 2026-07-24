@@ -48,8 +48,11 @@ impl GitTrackingPort for GitUntracker {
             .args(&relative_paths)
             .current_dir(project_root)
             .output()
-            .map_err(|e| ImruleError::gitignore(format!("failed to run git ls-files: {e}")))?;
+            .map_err(|e| ImruleError::git_tracking(format!("failed to run git ls-files: {e}")))?;
         if !output.status.success() {
+            // git ls-files failure is non-fatal: it may mean no tracked files
+            // match, or the repo is in an unusual state. Either way, there is
+            // nothing to untrack, so return an empty list.
             return Ok(Vec::new());
         }
 
@@ -72,9 +75,11 @@ impl GitTrackingPort for GitUntracker {
             .args(&tracked)
             .current_dir(project_root)
             .status()
-            .map_err(|e| ImruleError::gitignore(format!("failed to run git rm --cached: {e}")))?;
+            .map_err(|e| {
+                ImruleError::git_tracking(format!("failed to run git rm --cached: {e}"))
+            })?;
         if !status.success() {
-            return Err(ImruleError::gitignore(format!(
+            return Err(ImruleError::git_tracking(format!(
                 "git rm --cached failed with status {status}"
             )));
         }
