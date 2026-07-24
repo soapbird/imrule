@@ -60,10 +60,19 @@ fn mcp_add_http_server_writes_to_imrule_toml() {
     // Verify it is written to Claude's native config on apply.
     use imrule::application::apply_use_case::{ApplyOptions, ApplyUseCase};
     use imrule::infrastructure::agent_writer::DefaultAgentWriter;
+    use imrule::infrastructure::git_tracking::GitUntracker;
     use imrule::infrastructure::gitignore::GitignoreUpdater;
     let agent_writer = DefaultAgentWriter::new(&fs_port);
     let gitignore = GitignoreUpdater::new();
-    let apply = ApplyUseCase::new(&loader, &fs_port, &gitignore, &mcp_storage, &agent_writer);
+    let git_untracker = GitUntracker::new();
+    let apply = ApplyUseCase::new(
+        &loader,
+        &fs_port,
+        &gitignore,
+        &git_untracker,
+        &mcp_storage,
+        &agent_writer,
+    );
     let written_paths = apply
         .execute(ApplyOptions {
             project_root: root.to_path_buf(),
@@ -72,7 +81,8 @@ fn mcp_add_http_server_writes_to_imrule_toml() {
             dry_run: false,
             backup: false,
         })
-        .unwrap();
+        .unwrap()
+        .written;
 
     let claude_mcp_path = root.join(".mcp.json");
     assert!(written_paths.contains(&claude_mcp_path));
@@ -80,7 +90,11 @@ fn mcp_add_http_server_writes_to_imrule_toml() {
         serde_json::from_str(&fs::read_to_string(&claude_mcp_path).unwrap()).unwrap();
     assert_eq!(
         claude_mcp["mcpServers"]["linear"],
-        json!({ "type": "http", "url": "https://mcp.linear.app/mcp" })
+        json!({
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "mcp-remote@latest", "https://mcp.linear.app/mcp"]
+        })
     );
 }
 
@@ -285,4 +299,39 @@ fn parse_env_pairs_builds_map() {
     let map = parse_env_pairs(&pairs).unwrap();
     assert_eq!(map.get("A").map(String::as_str), Some("1"));
     assert_eq!(map.get("B").map(String::as_str), Some("2"));
+}
+
+#[test]
+fn parse_npm_version_output_accepts_quoted_string() {
+    use imrule::interface::cli_adapter::parse_npm_version_output;
+
+    assert_eq!(parse_npm_version_output("\"1.2.3\"").unwrap(), "1.2.3");
+    assert_eq!(parse_npm_version_output("\"1.2.3\"\n").unwrap(), "1.2.3");
+}
+
+#[test]
+fn parse_npm_version_output_rejects_malformed() {
+    use imrule::interface::cli_adapter::parse_npm_version_output;
+
+    assert!(parse_npm_version_output("not json").is_err());
+    assert!(parse_npm_version_output("").is_err());
+    assert!(parse_npm_version_output("1.2.3").is_err());
+    assert!(parse_npm_version_output("null").is_err());
+}
+
+#[test]
+fn load_mcp_environment_errors_on_malformed_env_file() {
+    use imrule::application::load_mcp_environment;
+    use imrule::infrastructure::file_system::FsFileSystem;
+
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(root.join(".imrule/.env"), "BROKEN_NO_EQUALS\n").unwrap();
+
+    let fs_port = FsFileSystem::new();
+    let result = load_mcp_environment(&fs_port, root);
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains(".env") || err.contains("parse"));
 }

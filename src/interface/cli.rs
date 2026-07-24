@@ -71,6 +71,8 @@ pub enum McpCommand {
     Add(McpAddArgs),
     /// Remove an MCP server definition from imrule.toml.
     Remove(McpRemoveArgs),
+    /// Authenticate eligible remote MCP servers sequentially.
+    Auth(McpAuthArgs),
 }
 
 #[derive(Debug, Args)]
@@ -136,6 +138,17 @@ pub struct McpRemoveArgs {
     /// Preview changes without writing files.
     #[arg(long = "dry-run", default_value_t = false)]
     pub dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct McpAuthArgs {
+    /// Project root directory.
+    #[arg(long = "project-root", value_name = "DIR")]
+    pub project_root: Option<PathBuf>,
+
+    /// Path to an alternate imrule.toml.
+    #[arg(long, value_name = "FILE")]
+    pub config: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]

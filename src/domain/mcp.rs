@@ -2,10 +2,156 @@
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::domain::agent::AgentDefinition;
-use crate::domain::config::{McpServerDefinition, McpStrategy, McpTransport};
+use crate::domain::config::{McpRemoteTransport, McpServerDefinition, McpStrategy, McpTransport};
+use crate::domain::constants::{MCP_REMOTE_LATEST_PACKAGE_SPEC, MCP_REMOTE_PACKAGE};
+
+/// Number of components in a concrete semver: major.minor.patch.
+const SEMVER_COMPONENT_COUNT: usize = 3;
+
+/// Byte overhead of `${` + `}` delimiters in a braced env-var reference.
+const BRACED_VAR_OVERHEAD: usize = 3;
+use crate::domain::error::ImruleError;
+
+/// Project-scoped resolution of the `mcp-remote` npm package.
+///
+/// The closed schema intentionally cannot represent server URLs, headers, tokens,
+/// or any other authentication material.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct McpRemoteVersionCache {
+    package: String,
+    resolved_version: String,
+    resolved_at: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct McpRemoteVersionCacheData {
+    package: String,
+    resolved_version: String,
+    resolved_at: u64,
+}
+
+impl TryFrom<McpRemoteVersionCacheData> for McpRemoteVersionCache {
+    type Error = ImruleError;
+
+    fn try_from(value: McpRemoteVersionCacheData) -> Result<Self, Self::Error> {
+        let cache = Self {
+            package: value.package,
+            resolved_version: value.resolved_version,
+            resolved_at: value.resolved_at,
+        };
+        cache.validate()?;
+        Ok(cache)
+    }
+}
+
+impl<'de> Deserialize<'de> for McpRemoteVersionCache {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = McpRemoteVersionCacheData::deserialize(deserializer)?;
+        Self::try_from(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl McpRemoteVersionCache {
+    /// Creates a cache value for a concrete `mcp-remote` version resolved at the
+    /// given Unix timestamp.
+    pub fn new(resolved_version: impl Into<String>, resolved_at: u64) -> Result<Self, ImruleError> {
+        let cache = Self {
+            package: MCP_REMOTE_PACKAGE.to_string(),
+            resolved_version: resolved_version.into(),
+            resolved_at,
+        };
+        cache.validate()?;
+        Ok(cache)
+    }
+
+    pub fn package(&self) -> &str {
+        &self.package
+    }
+
+    pub fn resolved_version(&self) -> &str {
+        &self.resolved_version
+    }
+
+    pub fn resolved_at(&self) -> u64 {
+        self.resolved_at
+    }
+
+    /// Returns the concrete npm package spec shared by apply and auth.
+    pub fn package_spec(&self) -> String {
+        format!("{}@{}", self.package, self.resolved_version)
+    }
+
+    /// Validates values deserialized from the on-disk cache.
+    pub fn validate(&self) -> Result<(), ImruleError> {
+        if self.package != MCP_REMOTE_PACKAGE {
+            return Err(ImruleError::mcp(format!(
+                "version cache package must be '{MCP_REMOTE_PACKAGE}'"
+            )));
+        }
+        if !is_concrete_npm_version(&self.resolved_version) {
+            return Err(ImruleError::mcp(
+                "version cache must contain a concrete mcp-remote version",
+            ));
+        }
+        if self.resolved_at == 0 {
+            return Err(ImruleError::mcp(
+                "version cache resolved_at timestamp must be greater than zero",
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn is_concrete_npm_version(version: &str) -> bool {
+    let (without_build, build) = version
+        .split_once('+')
+        .map_or((version, None), |(base, build)| (base, Some(build)));
+    if build.is_some_and(|build| !is_valid_semver_identifiers(build, false)) {
+        return false;
+    }
+
+    let (core, prerelease) = without_build
+        .split_once('-')
+        .map_or((without_build, None), |(core, prerelease)| {
+            (core, Some(prerelease))
+        });
+    if prerelease.is_some_and(|prerelease| !is_valid_semver_identifiers(prerelease, true)) {
+        return false;
+    }
+
+    let mut components = core.split('.');
+    (0..SEMVER_COMPONENT_COUNT).all(|_| components.next().is_some_and(is_valid_semver_number))
+        && components.next().is_none()
+}
+
+fn is_valid_semver_number(value: &str) -> bool {
+    !value.is_empty()
+        && (value == "0" || !value.starts_with('0'))
+        && value.chars().all(|character| character.is_ascii_digit())
+}
+
+fn is_valid_semver_identifiers(value: &str, reject_numeric_leading_zero: bool) -> bool {
+    !value.is_empty()
+        && value.split('.').all(|identifier| {
+            !identifier.is_empty()
+                && identifier
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '-')
+                && (!reject_numeric_leading_zero
+                    || !identifier
+                        .chars()
+                        .all(|character| character.is_ascii_digit())
+                    || is_valid_semver_number(identifier))
+        })
+}
 
 /// MCP transport capabilities for an agent.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -27,9 +173,72 @@ pub fn agent_supports_mcp(agent: &AgentDefinition) -> bool {
     let capabilities = get_agent_mcp_capabilities(agent);
     capabilities.supports_stdio || capabilities.supports_remote
 }
+/// Rejects static-header servers when the OAuth bridge mode cannot preserve them.
+pub fn validate_mcp_config_for_remote_transport(
+    mcp_config: &Value,
+    remote_transport: McpRemoteTransport,
+) -> Result<(), ImruleError> {
+    if remote_transport != McpRemoteTransport::McpRemote {
+        return Ok(());
+    }
 
-/// Filters standard `{ mcpServers }` config by agent capabilities.
-pub fn filter_mcp_config_for_agent(mcp_config: &Value, agent: &AgentDefinition) -> Option<Value> {
+    let Some(servers) = mcp_config.get("mcpServers").and_then(Value::as_object) else {
+        return Ok(());
+    };
+
+    for (server_name, server_config) in servers {
+        let Some(config) = server_config.as_object() else {
+            continue;
+        };
+        if config.contains_key("url")
+            && !config.contains_key("command")
+            && config.contains_key("headers")
+        {
+            return Err(ImruleError::mcp(format!(
+                "MCP server '{server_name}' uses static headers, which mcp-remote mode does not support; set [mcp] remote_transport = \"native\" for this server"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Filters standard `{ mcpServers }` config by agent capabilities and remote transport mode.
+pub fn filter_mcp_config_for_agent(
+    mcp_config: &Value,
+    agent: &AgentDefinition,
+    remote_transport: McpRemoteTransport,
+) -> Option<Value> {
+    filter_mcp_config_for_agent_with_package_spec(
+        mcp_config,
+        agent,
+        remote_transport,
+        MCP_REMOTE_LATEST_PACKAGE_SPEC,
+    )
+}
+
+/// Filters MCP config using the concrete bridge version from the project cache.
+pub fn filter_mcp_config_for_agent_with_version_cache(
+    mcp_config: &Value,
+    agent: &AgentDefinition,
+    remote_transport: McpRemoteTransport,
+    cache: &McpRemoteVersionCache,
+) -> Option<Value> {
+    let package_spec = cache.package_spec();
+    filter_mcp_config_for_agent_with_package_spec(
+        mcp_config,
+        agent,
+        remote_transport,
+        &package_spec,
+    )
+}
+
+pub fn filter_mcp_config_for_agent_with_package_spec(
+    mcp_config: &Value,
+    agent: &AgentDefinition,
+    remote_transport: McpRemoteTransport,
+    mcp_remote_package_spec: &str,
+) -> Option<Value> {
     let capabilities = get_agent_mcp_capabilities(agent);
     if !agent_supports_mcp(agent) {
         return None;
@@ -47,23 +256,37 @@ pub fn filter_mcp_config_for_agent(mcp_config: &Value, agent: &AgentDefinition) 
         let is_stdio = has_command && !has_url;
         let is_remote = has_url && !has_command;
 
-        if (is_stdio && capabilities.supports_stdio) || (is_remote && capabilities.supports_remote)
-        {
+        if is_stdio && capabilities.supports_stdio {
             filtered.insert(server_name.clone(), server_config.clone());
-        } else if is_remote && !capabilities.supports_remote && capabilities.supports_stdio {
-            let Some(url) = config.get("url").and_then(Value::as_str) else {
-                continue;
-            };
-            let mut transformed = Map::new();
-            transformed.insert("type".to_string(), json!("stdio"));
-            transformed.insert("command".to_string(), json!("npx"));
-            transformed.insert("args".to_string(), json!(["-y", "mcp-remote@latest", url]));
-            for (key, value) in config {
-                if key != "url" {
-                    transformed.insert(key.clone(), value.clone());
+            continue;
+        }
+        if !is_remote {
+            continue;
+        }
+
+        match remote_transport {
+            McpRemoteTransport::Native if capabilities.supports_remote => {
+                filtered.insert(server_name.clone(), server_config.clone());
+            }
+            McpRemoteTransport::Native if capabilities.supports_stdio => {
+                if let Some(transformed) =
+                    transform_remote_to_stdio(config, true, mcp_remote_package_spec)
+                {
+                    filtered.insert(server_name.clone(), transformed);
                 }
             }
-            filtered.insert(server_name.clone(), Value::Object(transformed));
+            McpRemoteTransport::McpRemote
+                if capabilities.supports_stdio
+                    && is_http_or_sse(config)
+                    && !config.contains_key("headers") =>
+            {
+                if let Some(transformed) =
+                    transform_remote_to_stdio(config, false, mcp_remote_package_spec)
+                {
+                    filtered.insert(server_name.clone(), transformed);
+                }
+            }
+            McpRemoteTransport::Native | McpRemoteTransport::McpRemote => {}
         }
     }
 
@@ -74,6 +297,39 @@ pub fn filter_mcp_config_for_agent(mcp_config: &Value, agent: &AgentDefinition) 
         result.insert("mcpServers".to_string(), Value::Object(filtered));
         Some(Value::Object(result))
     }
+}
+
+fn is_http_or_sse(config: &Map<String, Value>) -> bool {
+    match config.get("type") {
+        None => true,
+        Some(Value::String(transport)) => matches!(transport.as_str(), "http" | "sse"),
+        Some(_) => false,
+    }
+}
+
+fn transform_remote_to_stdio(
+    config: &Map<String, Value>,
+    preserve_metadata: bool,
+    mcp_remote_package_spec: &str,
+) -> Option<Value> {
+    let url = config.get("url").and_then(Value::as_str)?;
+    let mut transformed = Map::new();
+    transformed.insert("type".to_string(), json!("stdio"));
+    transformed.insert("command".to_string(), json!("npx"));
+    transformed.insert(
+        "args".to_string(),
+        json!(["-y", mcp_remote_package_spec, url]),
+    );
+
+    if preserve_metadata {
+        for (key, value) in config {
+            if !matches!(key.as_str(), "type" | "url" | "command" | "args") {
+                transformed.insert(key.clone(), value.clone());
+            }
+        }
+    }
+
+    Some(Value::Object(transformed))
 }
 
 /// Merges native and incoming MCP server configurations according to strategy.
@@ -184,4 +440,73 @@ pub fn build_imrule_mcp_config(
     let mut result = Map::new();
     result.insert("mcpServers".to_string(), Value::Object(servers));
     Some(Value::Object(result))
+}
+/// Replaces `$NAME` and `${NAME}` references in every MCP configuration string.
+pub fn expand_mcp_environment_variables(config: &mut Value, variables: &BTreeMap<String, String>) {
+    match config {
+        Value::String(value) => *value = expand_environment_references(value, variables),
+        Value::Array(items) => {
+            for item in items {
+                expand_mcp_environment_variables(item, variables);
+            }
+        }
+        Value::Object(entries) => {
+            for value in entries.values_mut() {
+                expand_mcp_environment_variables(value, variables);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn expand_environment_references(value: &str, variables: &BTreeMap<String, String>) -> String {
+    let mut expanded = String::with_capacity(value.len());
+    let mut remaining = value;
+
+    while let Some(dollar_index) = remaining.find('$') {
+        expanded.push_str(&remaining[..dollar_index]);
+        let after_dollar = &remaining[dollar_index + 1..];
+
+        let (name, consumed) = if let Some(braced) = after_dollar.strip_prefix('{') {
+            let Some(end_index) = braced.find('}') else {
+                expanded.push('$');
+                remaining = after_dollar;
+                continue;
+            };
+            (&braced[..end_index], end_index + BRACED_VAR_OVERHEAD)
+        } else {
+            let name_length = after_dollar
+                .chars()
+                .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+                .count();
+            if name_length == 0 {
+                expanded.push('$');
+                remaining = after_dollar;
+                continue;
+            }
+            (&after_dollar[..name_length], name_length + 1)
+        };
+
+        if is_environment_variable_name(name) {
+            if let Some(replacement) = variables.get(name) {
+                expanded.push_str(replacement);
+            } else {
+                expanded.push_str(&remaining[dollar_index..dollar_index + consumed]);
+            }
+            remaining = &remaining[dollar_index + consumed..];
+        } else {
+            expanded.push('$');
+            remaining = after_dollar;
+        }
+    }
+
+    expanded.push_str(remaining);
+    expanded
+}
+
+fn is_environment_variable_name(name: &str) -> bool {
+    name.starts_with(|character: char| character.is_ascii_alphabetic() || character == '_')
+        && name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
 }

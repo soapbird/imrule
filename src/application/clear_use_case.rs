@@ -61,7 +61,7 @@ impl<'a> ClearUseCase<'a> {
             options.config.as_deref(),
             options.agents.clone(),
         )?;
-        // clear defaults to ALL agents regardless of default_agents config.
+        // clear defaults to ALL agents regardless of agents config.
         // Only respect --agents when the user explicitly targets specific agents.
         let selected_agents = match options.agents.as_deref() {
             Some(agents) => resolve_selected_agents(&config, Some(agents))?,

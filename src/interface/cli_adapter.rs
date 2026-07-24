@@ -2,7 +2,7 @@
 
 use std::env;
 use std::path::PathBuf;
-use std::process::ExitCode;
+use std::process::{Command as ProcessCommand, ExitCode, Stdio};
 
 use clap::{CommandFactory, Parser};
 
@@ -10,17 +10,86 @@ use crate::application::apply_use_case::{ApplyOptions, ApplyUseCase};
 use crate::application::clear_use_case::{ClearOptions, ClearUseCase};
 use crate::application::init_use_case::{InitOptions, InitUseCase};
 use crate::application::mcp_use_case::{
-    parse_env_pairs, McpAddOptions, McpRemoveOptions, McpUseCase,
+    parse_env_pairs, McpAddOptions, McpAuthOptions, McpAuthRunnerPort,
+    McpRemoteVersionResolverPort, McpRemoveOptions, McpUseCase,
 };
 
 use crate::application::skills_add_use_case::{SkillsAddOptions, SkillsAddUseCase};
 use crate::infrastructure::agent_writer::DefaultAgentWriter;
 use crate::infrastructure::config_loader::TomlConfigLoader;
 use crate::infrastructure::file_system::FsFileSystem;
+use crate::infrastructure::git_tracking::GitUntracker;
 use crate::infrastructure::gitignore::GitignoreUpdater;
 use crate::infrastructure::mcp_storage::JsonMcpStorage;
 use crate::infrastructure::skill_fetcher::GitSkillFetcher;
+use crate::infrastructure::version_cache::JsonVersionCache;
 use crate::interface::cli::{parse_agents, Cli, Command, McpCommand, SkillsCommand};
+
+struct ProcessMcpRemoteRunner;
+
+/// Parses the JSON output of `npm view <pkg> version --json` into a version string.
+/// Expects a quoted JSON string like `"1.2.3"`.
+pub fn parse_npm_version_output(output: &str) -> Result<String, crate::domain::error::ImruleError> {
+    serde_json::from_str::<String>(output.trim()).map_err(|_| {
+        crate::domain::error::ImruleError::mcp(
+            "npm returned an invalid mcp-remote version response",
+        )
+    })
+}
+
+impl McpRemoteVersionResolverPort for ProcessMcpRemoteRunner {
+    fn resolve_latest_version(&self) -> Result<String, crate::domain::error::ImruleError> {
+        let output = ProcessCommand::new("npm")
+            .args(["view", "mcp-remote@latest", "version", "--json"])
+            .output()
+            .map_err(|error| {
+                crate::domain::error::ImruleError::mcp(format!(
+                    "could not start npm version resolution: {error}"
+                ))
+            })?;
+        if !output.status.success() {
+            return Err(crate::domain::error::ImruleError::mcp(
+                "npm could not resolve a concrete mcp-remote version",
+            ));
+        }
+        let stdout = std::str::from_utf8(&output.stdout).map_err(|_| {
+            crate::domain::error::ImruleError::mcp("npm returned a non-UTF-8 mcp-remote version")
+        })?;
+        parse_npm_version_output(stdout)
+    }
+}
+
+impl McpAuthRunnerPort for ProcessMcpRemoteRunner {
+    fn authenticate(
+        &self,
+        package_spec: &str,
+        url: &str,
+    ) -> Result<(), crate::domain::error::ImruleError> {
+        let mut child = ProcessCommand::new("npx")
+            .args(["-y", "-p", package_spec, "mcp-remote-client", url])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| {
+                crate::domain::error::ImruleError::mcp(format!(
+                    "could not start mcp-remote authentication: {error}"
+                ))
+            })?;
+
+        let status = child.wait().map_err(|error| {
+            crate::domain::error::ImruleError::mcp(format!(
+                "could not wait for mcp-remote authentication: {error}"
+            ))
+        })?;
+        if !status.success() {
+            return Err(crate::domain::error::ImruleError::mcp(
+                "mcp-remote authentication process failed",
+            ));
+        }
+        Ok(())
+    }
+}
 
 /// Entry point for the CLI.
 pub fn run() -> ExitCode {
@@ -52,7 +121,10 @@ fn run_inner() -> Result<(), CliError> {
     let fs = FsFileSystem::new();
     let config = TomlConfigLoader::new();
     let gitignore = GitignoreUpdater::new();
+    let git_untracker = GitUntracker::new();
     let mcp = JsonMcpStorage::new();
+    let version_cache = JsonVersionCache::new();
+    let mcp_remote_runner = ProcessMcpRemoteRunner;
 
     match cli.command {
         Command::Apply(args) => {
@@ -62,8 +134,16 @@ fn run_inner() -> Result<(), CliError> {
                 .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
             let agents = parse_agents(args.agents);
             let agent_writer = DefaultAgentWriter::new(&fs);
-            let use_case = ApplyUseCase::new(&config, &fs, &gitignore, &mcp, &agent_writer);
-            let written = use_case
+            let use_case = ApplyUseCase::new(
+                &config,
+                &fs,
+                &gitignore,
+                &git_untracker,
+                &mcp,
+                &agent_writer,
+            )
+            .with_mcp_remote_version_cache(&version_cache, &mcp_remote_runner);
+            let result = use_case
                 .execute(ApplyOptions {
                     project_root,
                     agents,
@@ -77,8 +157,17 @@ fn run_inner() -> Result<(), CliError> {
             } else {
                 println!("ImRule apply completed successfully.");
             }
+            if !result.untracked.is_empty() {
+                println!(
+                    "Removed {} generated file(s) from the git index (kept on disk):",
+                    result.untracked.len()
+                );
+                for path in &result.untracked {
+                    println!("  - {}", path.display());
+                }
+            }
             if args.verbose {
-                println!("Files considered: {}", written.len());
+                println!("Files considered: {}", result.written.len());
             }
             Ok(())
         }
@@ -176,6 +265,42 @@ fn run_inner() -> Result<(), CliError> {
                 }
                 Ok(())
             }
+            McpCommand::Auth(args) => {
+                init_tracing(false);
+                let project_root = args
+                    .project_root
+                    .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+                let use_case = McpUseCase::new(&config, &config);
+                let result = use_case
+                    .auth(
+                        McpAuthOptions {
+                            project_root,
+                            config_path: args.config,
+                        },
+                        &mcp,
+                        &fs,
+                        &version_cache,
+                        &mcp_remote_runner,
+                        &mcp_remote_runner,
+                    )
+                    .map_err(|err| CliError::new(1, err.to_string()))?;
+
+                for server_name in &result.authenticated {
+                    println!("Authenticated MCP server '{server_name}'.");
+                }
+                for skipped in &result.skipped {
+                    println!(
+                        "Skipped MCP server '{}': {}.",
+                        skipped.server_name, skipped.reason
+                    );
+                }
+                println!(
+                    "ImRule mcp auth completed: {} authenticated, {} skipped.",
+                    result.authenticated.len(),
+                    result.skipped.len()
+                );
+                Ok(())
+            }
         },
         Command::Completions(args) => {
             init_tracing(false);
@@ -251,8 +376,14 @@ fn run_inner() -> Result<(), CliError> {
                     println!("Syncing skills to agent directories (running apply)...");
                     // Run apply to sync skills to agent directories.
                     let agent_writer = DefaultAgentWriter::new(&fs);
-                    let apply_use_case =
-                        ApplyUseCase::new(&config, &fs, &gitignore, &mcp, &agent_writer);
+                    let apply_use_case = ApplyUseCase::new(
+                        &config,
+                        &fs,
+                        &gitignore,
+                        &git_untracker,
+                        &mcp,
+                        &agent_writer,
+                    );
                     let project_root_for_apply = args.project_root.clone().unwrap_or_else(|| {
                         env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
                     });

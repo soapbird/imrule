@@ -141,7 +141,7 @@ fn load_config_maps_toml_sections_and_resolves_output_paths() {
     fs::write(
         root.join(".imrule/imrule.toml"),
         r#"
-default_agents = ["agentsmd", "aider"]
+agents = ["agentsmd", "aider"]
 nested = true
 
 [mcp]
@@ -155,16 +155,16 @@ local = true
 [skills]
 enabled = false
 
-[agents]
+[subagents]
 enabled = true
 include_in_rules = true
 
-[agents.aider]
+[agent.aider]
 enabled = false
 output_path = "rules/AIDER_RULES.md"
 output_path_config = ".aider.conf.yml"
 
-[agents.aider.mcp]
+[agent.aider.mcp]
 enabled = true
 merge_strategy = "merge"
         "#,
@@ -176,7 +176,7 @@ merge_strategy = "merge"
         .load_config(root, None, Some(vec!["aider".to_string()]))
         .unwrap();
 
-    assert_eq!(loaded.default_agents.unwrap(), vec!["agentsmd", "aider"]);
+    assert_eq!(loaded.agents.unwrap(), vec!["agentsmd", "aider"]);
     assert_eq!(loaded.cli_agents.unwrap(), vec!["aider"]);
     assert!(loaded.nested);
     assert!(loaded.nested_defined);
@@ -207,7 +207,7 @@ fn load_config_without_file_returns_empty_native_sections() {
     let loader = TomlConfigLoader::new().with_xdg_home(xdg_home.path().to_path_buf());
     let loaded = loader.load_config(tmp.path(), None, None).unwrap();
 
-    assert!(loaded.default_agents.is_none());
+    assert!(loaded.agents.is_none());
     assert!(loaded.agent_configs.is_empty());
     let mcp = loaded.mcp.unwrap();
     assert_eq!(mcp.enabled, None);
@@ -301,6 +301,39 @@ headers = { Authorization = "Bearer xxx" }
 }
 
 #[test]
+fn load_config_infers_mcp_transport_from_url_or_command() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        r#"
+[mcp_servers.linear]
+url = "https://mcp.linear.app/mcp"
+
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+"#,
+    )
+    .unwrap();
+
+    let loader = TomlConfigLoader::new();
+    let loaded = loader.load_config(root, None, None).unwrap();
+
+    let linear = loaded.mcp_servers.get("linear").unwrap();
+    assert_eq!(linear.transport, imrule::domain::config::McpTransport::Http);
+    assert_eq!(linear.url.as_deref(), Some("https://mcp.linear.app/mcp"));
+
+    let github = loaded.mcp_servers.get("github").unwrap();
+    assert_eq!(
+        github.transport,
+        imrule::domain::config::McpTransport::Stdio
+    );
+    assert_eq!(github.command.as_deref(), Some("npx"));
+}
+
+#[test]
 fn load_config_falls_back_to_overridden_xdg_home() {
     let tmp = tempdir().unwrap();
     let xdg_home = tempdir().unwrap();
@@ -315,7 +348,7 @@ fn load_config_falls_back_to_overridden_xdg_home() {
     let loader = TomlConfigLoader::new().with_xdg_home(xdg_home.path().to_path_buf());
     let loaded = loader.load_config(tmp.path(), None, None).unwrap();
 
-    assert_eq!(loaded.default_agents.unwrap(), vec!["claude", "codex"]);
+    assert_eq!(loaded.agents.unwrap(), vec!["claude", "codex"]);
 }
 
 #[test]
@@ -397,7 +430,7 @@ enabled = false
 
     let loader = TomlConfigLoader::new();
     let loaded = loader.load_config(root, None, None).unwrap();
-    assert_eq!(loaded.default_agents.unwrap(), vec!["claude"]);
+    assert_eq!(loaded.agents.unwrap(), vec!["claude"]);
     assert_eq!(loaded.mcp.unwrap().enabled, Some(false));
 }
 
@@ -416,7 +449,7 @@ default_agents = ["copilot"]
 
     let loader = TomlConfigLoader::new();
     let loaded = loader.load_config(root, None, None).unwrap();
-    assert_eq!(loaded.default_agents.unwrap(), vec!["copilot"]);
+    assert_eq!(loaded.agents.unwrap(), vec!["copilot"]);
 }
 
 #[test]
@@ -438,7 +471,7 @@ fn load_config_prefers_imrule_toml_over_ruler_toml() {
 
     let loader = TomlConfigLoader::new();
     let loaded = loader.load_config(root, None, None).unwrap();
-    assert_eq!(loaded.default_agents.unwrap(), vec!["claude"]);
+    assert_eq!(loaded.agents.unwrap(), vec!["claude"]);
 }
 
 #[test]
@@ -457,10 +490,7 @@ fn load_config_walks_up_parent_dirs() {
     let loader = TomlConfigLoader::new();
     // Load config starting from a subdirectory — should walk up and find root's config.
     let loaded = loader.load_config(&subdir, None, None).unwrap();
-    assert_eq!(
-        loaded.default_agents.unwrap(),
-        vec!["codex", "claude", "kilocode"]
-    );
+    assert_eq!(loaded.agents.unwrap(), vec!["codex", "claude", "kilocode"]);
 }
 
 #[test]

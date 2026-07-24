@@ -1,25 +1,50 @@
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use imrule::application::apply_use_case::{ApplyOptions, ApplyUseCase};
+use imrule::application::mcp_use_case::McpRemoteVersionResolverPort;
 use imrule::application::ports::McpPort;
+use imrule::domain::error::ImruleError;
+use imrule::domain::mcp::McpRemoteVersionCache;
 use imrule::infrastructure::agent_writer::DefaultAgentWriter;
 use imrule::infrastructure::config_loader::TomlConfigLoader;
 use imrule::infrastructure::file_system::FsFileSystem;
+use imrule::infrastructure::git_tracking::GitUntracker;
 use imrule::infrastructure::gitignore::GitignoreUpdater;
 use imrule::infrastructure::mcp_storage::JsonMcpStorage;
+use imrule::infrastructure::version_cache::JsonVersionCache;
 use serde_json::json;
 use tempfile::tempdir;
+
+fn configure_native_remote_transport(root: &Path) {
+    let config_path = root.join(".imrule/imrule.toml");
+    let existing = fs::read_to_string(&config_path).unwrap();
+    fs::write(
+        config_path,
+        format!("{existing}\n[mcp]\nremote_transport = \"native\"\n"),
+    )
+    .unwrap();
+}
 
 fn apply_for(root: &Path, agents: &[&str]) -> Vec<std::path::PathBuf> {
     let xdg_home = tempdir().unwrap();
     let loader = TomlConfigLoader::new().with_xdg_home(xdg_home.path().to_path_buf());
     let fs_port = FsFileSystem::new();
     let gitignore = GitignoreUpdater::new();
+    let git_untracker = GitUntracker::new();
     let mcp_storage = JsonMcpStorage::new();
     let agent_writer = DefaultAgentWriter::new(&fs_port);
-    let apply = ApplyUseCase::new(&loader, &fs_port, &gitignore, &mcp_storage, &agent_writer);
+    let apply = ApplyUseCase::new(
+        &loader,
+        &fs_port,
+        &gitignore,
+        &git_untracker,
+        &mcp_storage,
+        &agent_writer,
+    );
 
+    configure_native_remote_transport(root);
     apply
         .execute(ApplyOptions {
             project_root: root.to_path_buf(),
@@ -29,6 +54,7 @@ fn apply_for(root: &Path, agents: &[&str]) -> Vec<std::path::PathBuf> {
             backup: false,
         })
         .unwrap()
+        .written
 }
 
 fn write_imrule_fixture(root: &Path) {
@@ -117,6 +143,47 @@ Authorization = "Bearer token"
     assert!(codex_config.contains("[mcp_servers.docs.http_headers]"));
     assert!(codex_config.contains("Authorization = \"Bearer token\""));
     assert!(!codex_config.contains("[mcp_servers.docs.headers]"));
+}
+#[test]
+fn apply_expands_mcp_variables_from_project_environment_files() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(root.join(".imrule/AGENTS.md"), "Project rules.").unwrap();
+    fs::write(
+        root.join(".env"),
+        "IMRULE_MCP_ROOT_TOKEN=root-secret\nIMRULE_MCP_OVERRIDE=root-value\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".imrule/.env"),
+        "IMRULE_MCP_LOCAL_TOKEN=local-secret\nIMRULE_MCP_OVERRIDE=imrule-value\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        r#"
+[mcp_servers.local]
+transport = "stdio"
+command = "npx"
+env = { ROOT_TOKEN = "${IMRULE_MCP_ROOT_TOKEN}", LOCAL_TOKEN = "$IMRULE_MCP_LOCAL_TOKEN", OVERRIDE = "${IMRULE_MCP_OVERRIDE}", MISSING = "${IMRULE_MCP_MISSING}" }
+
+[mcp_servers.remote]
+transport = "http"
+url = "https://example.test/mcp"
+headers = { Authorization = "Bearer ${IMRULE_MCP_LOCAL_TOKEN}" }
+"#,
+    )
+    .unwrap();
+
+    apply_for(root, &["codex"]);
+
+    let codex_config = fs::read_to_string(root.join(".codex/config.toml")).unwrap();
+    assert!(codex_config.contains("ROOT_TOKEN = \"root-secret\""));
+    assert!(codex_config.contains("LOCAL_TOKEN = \"local-secret\""));
+    assert!(codex_config.contains("OVERRIDE = \"imrule-value\""));
+    assert!(codex_config.contains("MISSING = \"${IMRULE_MCP_MISSING}\""));
+    assert!(codex_config.contains("Authorization = \"Bearer local-secret\""));
 }
 
 #[test]
@@ -369,17 +436,27 @@ fn try_apply_for(
     let loader = TomlConfigLoader::new().with_xdg_home(xdg_home.path().to_path_buf());
     let fs_port = FsFileSystem::new();
     let gitignore = GitignoreUpdater::new();
+    let git_untracker = GitUntracker::new();
     let mcp_storage = JsonMcpStorage::new();
     let agent_writer = DefaultAgentWriter::new(&fs_port);
-    let apply = ApplyUseCase::new(&loader, &fs_port, &gitignore, &mcp_storage, &agent_writer);
+    let apply = ApplyUseCase::new(
+        &loader,
+        &fs_port,
+        &gitignore,
+        &git_untracker,
+        &mcp_storage,
+        &agent_writer,
+    );
 
-    apply.execute(ApplyOptions {
-        project_root: root.to_path_buf(),
-        agents: Some(agents.iter().map(|agent| (*agent).to_string()).collect()),
-        config: None,
-        dry_run: false,
-        backup: false,
-    })
+    apply
+        .execute(ApplyOptions {
+            project_root: root.to_path_buf(),
+            agents: Some(agents.iter().map(|agent| (*agent).to_string()).collect()),
+            config: None,
+            dry_run: false,
+            backup: false,
+        })
+        .map(|result| result.written)
 }
 
 #[test]
@@ -459,4 +536,225 @@ fn codex_keeps_explicit_http_headers_over_headers_alias() {
         !written.contains("X-Alias"),
         "the headers alias must be dropped when http_headers is explicit"
     );
+}
+
+// --- Gap coverage: apply end-to-end with the mcp-remote version cache wired ---
+
+struct CountingResolver {
+    calls: AtomicUsize,
+}
+
+impl McpRemoteVersionResolverPort for CountingResolver {
+    fn resolve_latest_version(&self) -> Result<String, ImruleError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok("0.1.37".to_string())
+    }
+}
+
+#[test]
+fn apply_with_version_cache_writes_concrete_bridge_spec_and_persists_cache() {
+    // Most apply tests construct ApplyUseCase::new(...) WITHOUT
+    // .with_mcp_remote_version_cache(...), so the private
+    // `mcp_remote_version_cache()` method always returns Ok(None) and the
+    // `filter_mcp_config_for_agent_with_version_cache` branch is never reached
+    // through execute(). This wires the cache + resolver and asserts that:
+    //   1. apply resolves a concrete version on first run,
+    //   2. the bridged stdio args embed mcp-remote@<version> (not @latest),
+    //   3. the cache is persisted to .imrule/cache.json,
+    //   4. a second apply reuses the cache without re-resolving.
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    write_imrule_fixture(root);
+    // Do NOT set remote_transport = "native" — the default mcp-remote mode is
+    // what triggers version resolution.
+
+    let xdg_home = tempdir().unwrap();
+    let loader = TomlConfigLoader::new().with_xdg_home(xdg_home.path().to_path_buf());
+    let fs_port = FsFileSystem::new();
+    let gitignore = GitignoreUpdater::new();
+    let git_untracker = GitUntracker::new();
+    let mcp_storage = JsonMcpStorage::new();
+    let agent_writer = DefaultAgentWriter::new(&fs_port);
+    let version_cache = JsonVersionCache::new();
+    let resolver = CountingResolver {
+        calls: AtomicUsize::new(0),
+    };
+
+    let make_apply = || {
+        let apply = ApplyUseCase::new(
+            &loader,
+            &fs_port,
+            &gitignore,
+            &git_untracker,
+            &mcp_storage,
+            &agent_writer,
+        )
+        .with_mcp_remote_version_cache(&version_cache, &resolver);
+        apply
+            .execute(ApplyOptions {
+                project_root: root.to_path_buf(),
+                agents: Some(vec!["claude".to_string()]),
+                config: None,
+                dry_run: false,
+                backup: false,
+            })
+            .unwrap()
+    };
+
+    let first = make_apply();
+    assert!(first.written.iter().any(|p| p.ends_with(".mcp.json")));
+    assert_eq!(resolver.calls.load(Ordering::SeqCst), 1);
+
+    let claude_mcp: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join(".mcp.json")).unwrap()).unwrap();
+    // The cached concrete version replaces the @latest placeholder.
+    assert_eq!(
+        claude_mcp["mcpServers"]["linear"],
+        json!({
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "mcp-remote@0.1.37", "https://mcp.linear.app/mcp"]
+        })
+    );
+
+    // The cache was persisted.
+    let cache_path = root.join(".imrule/cache.json");
+    assert!(
+        cache_path.exists(),
+        "apply must persist the resolved version cache"
+    );
+    let cached: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&cache_path).unwrap()).unwrap();
+    assert_eq!(cached["resolved_version"], json!("0.1.37"));
+    assert_eq!(cached["package"], json!("mcp-remote"));
+
+    // Second apply reuses the cache — resolver is NOT called again.
+    let _second = make_apply();
+    assert_eq!(
+        resolver.calls.load(Ordering::SeqCst),
+        1,
+        "second apply must reuse the persisted cache"
+    );
+}
+
+#[test]
+fn apply_dry_run_does_not_persist_version_cache() {
+    // Dry-run must resolve the version (so the filtered output is accurate) but
+    // must NOT write the cache file — persist is gated on !options.dry_run.
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    write_imrule_fixture(root);
+
+    let xdg_home = tempdir().unwrap();
+    let loader = TomlConfigLoader::new().with_xdg_home(xdg_home.path().to_path_buf());
+    let fs_port = FsFileSystem::new();
+    let gitignore = GitignoreUpdater::new();
+    let git_untracker = GitUntracker::new();
+    let mcp_storage = JsonMcpStorage::new();
+    let agent_writer = DefaultAgentWriter::new(&fs_port);
+    let version_cache = JsonVersionCache::new();
+    let resolver = CountingResolver {
+        calls: AtomicUsize::new(0),
+    };
+    let apply = ApplyUseCase::new(
+        &loader,
+        &fs_port,
+        &gitignore,
+        &git_untracker,
+        &mcp_storage,
+        &agent_writer,
+    )
+    .with_mcp_remote_version_cache(&version_cache, &resolver);
+
+    let result = apply
+        .execute(ApplyOptions {
+            project_root: root.to_path_buf(),
+            agents: Some(vec!["claude".to_string()]),
+            config: None,
+            dry_run: true,
+            backup: false,
+        })
+        .unwrap();
+    assert!(result.written.iter().any(|p| p.ends_with(".mcp.json")));
+    // Resolver ran because dry-run still resolves to render accurate output.
+    assert_eq!(resolver.calls.load(Ordering::SeqCst), 1);
+    // But no cache file was written.
+    assert!(!root.join(".imrule/cache.json").exists());
+    // And no native MCP file was written either (dry-run).
+    assert!(!root.join(".mcp.json").exists());
+}
+
+#[test]
+fn apply_with_version_cache_skips_resolution_for_stdio_only_servers() {
+    // When no server is a remote URL, the version resolver must never be
+    // invoked even when the cache is wired — there is nothing to bridge.
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(root.join(".imrule/AGENTS.md"), "Project rules.").unwrap();
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        r#"
+[mcp_servers.local]
+transport = "stdio"
+command = "npx"
+args = ["-y", "demo"]
+"#,
+    )
+    .unwrap();
+
+    let xdg_home = tempdir().unwrap();
+    let loader = TomlConfigLoader::new().with_xdg_home(xdg_home.path().to_path_buf());
+    let fs_port = FsFileSystem::new();
+    let gitignore = GitignoreUpdater::new();
+    let git_untracker = GitUntracker::new();
+    let mcp_storage = JsonMcpStorage::new();
+    let agent_writer = DefaultAgentWriter::new(&fs_port);
+    let version_cache = JsonVersionCache::new();
+    let resolver = CountingResolver {
+        calls: AtomicUsize::new(0),
+    };
+    let apply = ApplyUseCase::new(
+        &loader,
+        &fs_port,
+        &gitignore,
+        &git_untracker,
+        &mcp_storage,
+        &agent_writer,
+    )
+    .with_mcp_remote_version_cache(&version_cache, &resolver);
+
+    apply
+        .execute(ApplyOptions {
+            project_root: root.to_path_buf(),
+            agents: Some(vec!["claude".to_string()]),
+            config: None,
+            dry_run: false,
+            backup: false,
+        })
+        .unwrap();
+
+    assert_eq!(
+        resolver.calls.load(Ordering::SeqCst),
+        0,
+        "resolver must not run when no remote servers need bridging"
+    );
+    assert!(!root.join(".imrule/cache.json").exists());
+}
+
+#[test]
+fn version_cache_struct_round_trip_through_serde_roundabout() {
+    // Validates the manual Deserialize impl + TryFrom path that runs whenever
+    // the on-disk cache is read: a well-formed value round-trips, and the
+    // deny_unknown_fields guard rejects extra keys at the serde layer.
+    let cache = McpRemoteVersionCache::new("1.2.3-rc.1+build.4", 1_700_000_001).unwrap();
+    let serialized = serde_json::to_string(&cache).unwrap();
+    let deserialized: McpRemoteVersionCache = serde_json::from_str(&serialized).unwrap();
+    assert_eq!(deserialized.resolved_version(), "1.2.3-rc.1+build.4");
+    assert_eq!(deserialized.resolved_at(), 1_700_000_001);
+
+    let with_extra = format!(
+        r#"{{"package":"mcp-remote","resolved_version":"0.1.0","resolved_at":1,"extra":"leak"}}"#
+    );
+    assert!(serde_json::from_str::<McpRemoteVersionCache>(&with_extra).is_err());
 }

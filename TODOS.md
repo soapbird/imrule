@@ -50,10 +50,11 @@ fixed in that PR; the items below are the related apply↔clear lifecycle harden
 
 - [ ] MCP coverage gaps (test-only)  
   **Priority:** P3  
-  **Note:** Untested paths from the coverage audit (gate passed at 82%): mcp `--dry-run`
-  early-return, mcp `--global` flag, `command = [array]` TOML parsing, CLI input-validation
-  errors (stdio-no-command / remote-multiple-URLs), sse transport + headers serialization
-  round-trip, and `build_imrule_mcp_config(None, empty)` → None.
+  **Note:** Remaining untested paths: mcp `--dry-run` early-return, `command = [array]` TOML
+  parsing, CLI input-validation errors (stdio-no-command / remote-multiple-URLs), sse transport
+  + headers serialization round-trip, and `build_imrule_mcp_config(None, empty)` → None.
+  (Partially addressed in v0.2.0.0: `mcp --global`, `mcp auth` CLI, `parse_npm_version_output`,
+  and `load_mcp_environment` error paths are now tested.)
 
 - [ ] Deduplicate toml↔json conversion helpers across mcp_storage modules  
   **Priority:** P3  
@@ -87,6 +88,47 @@ fixed in that PR; the items below are the related apply↔clear lifecycle harden
   (e.g. the ~11 agents writing root `AGENTS.md`) race on concurrent writes. Content is identical
   so it's benign today (and worse only with `--backup`), but dedup output paths like the MCP
   write now does. Pre-existing; MCP path dedup landed in v0.1.4.0.
+
+## Adversarial Review Follow-ups
+
+Deferred from the v0.2.0.0 adversarial review (develop → main, 2026-07-24).
+
+- [ ] `mcp auth` can hang forever with no output  
+  **Priority:** P2  
+  **Note:** `ProcessMcpRemoteRunner::authenticate` spawns `npx ... mcp-remote-client <url>`
+  with stdin/stdout/stderr set to `Stdio::null()` and `child.wait()` with no timeout. The user
+  gets zero feedback and if the OAuth flow never completes, the process blocks indefinitely.
+  Inherit stdio or capture for live output, and add a deadline on `wait()`.
+
+- [ ] Version cache never expires (stale pin forever)  
+  **Priority:** P2  
+  **Note:** `McpRemoteVersionCache` stores `resolved_at` but nothing checks age. Once pinned,
+  that exact `mcp-remote` version is reused until someone manually deletes `.imrule/cache.json`.
+  Add a TTL check (e.g. 7-30 days) and re-resolve on expiry.
+
+- [ ] Corrupt `cache.json` treated as hard failure by resolver  
+  **Priority:** P2  
+  **Note:** `resolve_mcp_remote_version` returns `Err` on any parse/validation failure of the
+  cache (including `deny_unknown_fields` rejecting a future-version key). Apply now catches this
+  and falls back to `@latest` (v0.2.0.0 fix), but `mcp auth` still propagates the error. Make
+  `mcp auth` also treat a corrupt cache as a cache miss.
+
+- [ ] `.bak` backups leak prior secret values and are not gitignored  
+  **Priority:** P2  
+  **Note:** `--backup` writes `<file>.bak` with previous content (which may hold old resolved
+  secrets). `.bak` files are not in the managed `.gitignore` block and `untrack_generated_files`
+  never touches them. Add `.bak` to gitignore paths or restrict backup to non-secret files.
+
+- [ ] `skills sync` path uses `@latest` instead of pinned version  
+  **Priority:** P3  
+  **Note:** The `skills add` code path constructs `ApplyUseCase` without
+  `.with_mcp_remote_version_cache(...)`, so `apply` within skills sync writes `mcp-remote@latest`
+  instead of the pinned version. Wire the version cache into the skills sync apply path too.
+
+- [ ] Transport inference misclassifies stdio servers with stray `url`  
+  **Priority:** P3  
+  **Note:** `infer_mcp_transport` returns `Http` whenever `url` is present. A stdio server with
+  a legacy `url` field is treated as HTTP. Consider inferring from `command` presence first.
 
 ## Coverage
 

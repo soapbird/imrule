@@ -1,18 +1,23 @@
 //! Native apply-engine use case.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
 
+use crate::application::mcp_use_case::{resolve_mcp_remote_version, McpRemoteVersionResolverPort};
 use crate::application::ports::{
-    AgentWriterPort, ConfigPort, FileSystemPort, GitignorePort, McpPort,
+    AgentWriterPort, CachePort, ConfigPort, FileSystemPort, GitTrackingPort, GitignorePort, McpPort,
 };
 use crate::domain::agent::{all_agents, AgentDefinition, AgentOutputPaths};
-use crate::domain::config::{AgentConfig, LoadedConfig, McpStrategy};
+use crate::domain::config::{AgentConfig, LoadedConfig, McpRemoteTransport, McpStrategy};
 use crate::domain::constants::normalize_path_separators;
 use crate::domain::error::ImruleError;
-use crate::domain::mcp::{build_imrule_mcp_config, filter_mcp_config_for_agent, merge_mcp};
+use crate::domain::mcp::{
+    build_imrule_mcp_config, expand_mcp_environment_variables, filter_mcp_config_for_agent,
+    filter_mcp_config_for_agent_with_package_spec, merge_mcp,
+    validate_mcp_config_for_remote_transport, McpRemoteVersionCache,
+};
 use crate::domain::rules::concatenate_rules;
 use crate::domain::skills::get_skills_gitignore_paths;
 use crate::infrastructure::skills::{copy_skills_directory, discover_skills};
@@ -27,13 +32,26 @@ pub struct ApplyOptions {
     pub backup: bool,
 }
 
+/// Outcome of an apply run.
+#[derive(Debug, Default)]
+pub struct ApplyResult {
+    /// Files written or considered during apply.
+    pub written: Vec<PathBuf>,
+    /// Generated files removed from the git index (kept on disk) because they
+    /// were tracked even though ImRule ignores them.
+    pub untracked: Vec<PathBuf>,
+}
+
 /// Apply use case orchestrating domain logic through ports.
 pub struct ApplyUseCase<'a> {
     config_port: &'a dyn ConfigPort,
     fs_port: &'a dyn FileSystemPort,
     gitignore_port: &'a dyn GitignorePort,
+    git_tracking_port: &'a dyn GitTrackingPort,
     mcp_port: &'a dyn McpPort,
     agent_writer: &'a dyn AgentWriterPort,
+    cache_port: Option<&'a dyn CachePort>,
+    version_resolver: Option<&'a dyn McpRemoteVersionResolverPort>,
 }
 
 impl<'a> ApplyUseCase<'a> {
@@ -41,6 +59,7 @@ impl<'a> ApplyUseCase<'a> {
         config_port: &'a dyn ConfigPort,
         fs_port: &'a dyn FileSystemPort,
         gitignore_port: &'a dyn GitignorePort,
+        git_tracking_port: &'a dyn GitTrackingPort,
         mcp_port: &'a dyn McpPort,
         agent_writer: &'a dyn AgentWriterPort,
     ) -> Self {
@@ -48,13 +67,27 @@ impl<'a> ApplyUseCase<'a> {
             config_port,
             fs_port,
             gitignore_port,
+            git_tracking_port,
             mcp_port,
             agent_writer,
+            cache_port: None,
+            version_resolver: None,
         }
     }
 
+    /// Enables project-scoped concrete `mcp-remote` version reuse.
+    pub fn with_mcp_remote_version_cache(
+        mut self,
+        cache_port: &'a dyn CachePort,
+        version_resolver: &'a dyn McpRemoteVersionResolverPort,
+    ) -> Self {
+        self.cache_port = Some(cache_port);
+        self.version_resolver = Some(version_resolver);
+        self
+    }
+
     /// Applies ImRule rules using the Rust-native engine.
-    pub fn execute(&self, options: ApplyOptions) -> Result<Vec<PathBuf>, ImruleError> {
+    pub fn execute(&self, options: ApplyOptions) -> Result<ApplyResult, ImruleError> {
         tracing::info!(
             project_root = %options.project_root.display(),
             dry_run = options.dry_run,
@@ -142,6 +175,7 @@ impl<'a> ApplyUseCase<'a> {
             .as_ref()
             .and_then(|gitignore| gitignore.enabled)
             .unwrap_or(true);
+        let mut untracked = Vec::new();
         if gitignore_enabled && !options.dry_run {
             let gitignore_paths = collapse_gitignore_paths(&written_paths, &options.project_root);
             self.gitignore_port.update_gitignore(
@@ -149,12 +183,32 @@ impl<'a> ApplyUseCase<'a> {
                 &gitignore_paths,
                 ".gitignore",
             )?;
+            // `.gitignore` has no effect on files git already tracks, so drop
+            // generated files from the index while keeping them on disk.
+            untracked = self
+                .git_tracking_port
+                .untrack_generated_files(&options.project_root, &written_paths)?;
+            if !untracked.is_empty() {
+                tracing::info!(count = untracked.len(), "untracked generated files");
+            }
         }
 
         tracing::info!(written_count = written_paths.len(), "apply completed");
-        Ok(written_paths)
+        Ok(ApplyResult {
+            written: written_paths,
+            untracked,
+        })
     }
 
+    /// Merges and writes MCP server configs to every selected agent's native config file.
+    ///
+    /// # Security note
+    ///
+    /// Environment variables referenced via `$TOKEN` in `.env` files are resolved
+    /// and written in plaintext to each agent's native MCP config. This means
+    /// resolved secret values are materialized on disk in multiple locations.
+    /// Generated files are added to `.gitignore` and untracked from the git index
+    /// to mitigate accidental commits.
     fn apply_mcp_configs(
         &self,
         options: &ApplyOptions,
@@ -164,25 +218,46 @@ impl<'a> ApplyUseCase<'a> {
         let json_mcp = self
             .mcp_port
             .read_imrule_mcp_config(&options.project_root)?;
-        let Some(imrule_mcp) = build_imrule_mcp_config(json_mcp.as_ref(), &config.mcp_servers)
+        let Some(mut imrule_mcp) = build_imrule_mcp_config(json_mcp.as_ref(), &config.mcp_servers)
         else {
             return Ok(Vec::new());
         };
+        let environment = self.load_mcp_environment(&options.project_root)?;
+        expand_mcp_environment_variables(&mut imrule_mcp, &environment);
         let strategy = config
             .mcp
             .as_ref()
             .map(|mcp| mcp.strategy)
             .unwrap_or(McpStrategy::Merge);
-        let candidates: Vec<_> = selected_agents
-            .par_iter()
-            .filter_map(|agent| {
-                let filtered = filter_mcp_config_for_agent(&imrule_mcp, agent)?;
-                let path = self
-                    .mcp_port
-                    .get_native_mcp_path(agent.name, &options.project_root)?;
-                Some((agent, filtered, path))
-            })
-            .collect();
+        let remote_transport = config
+            .mcp
+            .as_ref()
+            .map(|mcp| mcp.remote_transport)
+            .unwrap_or(McpRemoteTransport::McpRemote);
+        validate_mcp_config_for_remote_transport(&imrule_mcp, remote_transport)?;
+        let version_cache =
+            self.mcp_remote_version_cache(options, &imrule_mcp, selected_agents, remote_transport)?;
+        let candidates: Vec<_> = {
+            let cached_spec = version_cache.as_ref().map(|c| c.package_spec());
+            selected_agents
+                .par_iter()
+                .filter_map(|agent| {
+                    let filtered = match cached_spec.as_deref() {
+                        Some(spec) => filter_mcp_config_for_agent_with_package_spec(
+                            &imrule_mcp,
+                            agent,
+                            remote_transport,
+                            spec,
+                        )?,
+                        None => filter_mcp_config_for_agent(&imrule_mcp, agent, remote_transport)?,
+                    };
+                    let path = self
+                        .mcp_port
+                        .get_native_mcp_path(agent.name, &options.project_root)?;
+                    Some((agent, filtered, path))
+                })
+                .collect()
+        };
 
         // Dedup by target path. Several agent aliases (e.g. the Kimi trio
         // kimi/kimi-cli/kimi-code) resolve to the same native MCP file; writing
@@ -207,6 +282,64 @@ impl<'a> ApplyUseCase<'a> {
             })
             .collect();
         written
+    }
+
+    fn mcp_remote_version_cache(
+        &self,
+        options: &ApplyOptions,
+        mcp_config: &serde_json::Value,
+        selected_agents: &[AgentDefinition],
+        remote_transport: McpRemoteTransport,
+    ) -> Result<Option<McpRemoteVersionCache>, ImruleError> {
+        if remote_transport != McpRemoteTransport::McpRemote
+            || !selected_agents
+                .iter()
+                .any(|agent| agent.capabilities.mcp_stdio)
+            || !mcp_config
+                .get("mcpServers")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|servers| {
+                    servers.values().any(|server| {
+                        server.as_object().is_some_and(|server| {
+                            server.contains_key("url")
+                                && !server.contains_key("command")
+                                && matches!(
+                                    server.get("type").and_then(serde_json::Value::as_str),
+                                    None | Some("http") | Some("sse")
+                                )
+                        })
+                    })
+                })
+        {
+            return Ok(None);
+        }
+
+        match (self.cache_port, self.version_resolver) {
+            (Some(cache_port), Some(version_resolver)) => {
+                match resolve_mcp_remote_version(
+                    cache_port,
+                    version_resolver,
+                    &options.project_root,
+                    !options.dry_run,
+                ) {
+                    Ok(cache) => Ok(Some(cache)),
+                    Err(error) => {
+                        tracing::warn!(
+                            %error,
+                            "failed to resolve mcp-remote version; falling back to @latest"
+                        );
+                        Ok(None)
+                    }
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+    fn load_mcp_environment(
+        &self,
+        project_root: &Path,
+    ) -> Result<BTreeMap<String, String>, ImruleError> {
+        crate::application::load_mcp_environment(self.fs_port, project_root)
     }
 
     fn apply_subagents(
@@ -428,7 +561,7 @@ pub fn resolve_selected_agents(
 ) -> Result<Vec<AgentDefinition>, ImruleError> {
     let requested = cli_agents
         .map(|agents| agents.to_vec())
-        .or_else(|| config.default_agents.clone());
+        .or_else(|| config.agents.clone());
     let all = all_agents();
     let Some(requested) = requested else {
         return Ok(all);

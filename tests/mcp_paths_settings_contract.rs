@@ -1,11 +1,13 @@
 use std::fs;
 
-use imrule::application::ports::McpPort;
+use imrule::application::ports::{ConfigPort, McpPort};
 use imrule::domain::agent::all_agents;
-use imrule::domain::config::McpStrategy;
+use imrule::domain::config::{McpConfig, McpRemoteTransport, McpStrategy};
 use imrule::domain::mcp::{
-    agent_supports_mcp, filter_mcp_config_for_agent, get_agent_mcp_capabilities, merge_mcp,
+    agent_supports_mcp, expand_mcp_environment_variables, filter_mcp_config_for_agent,
+    get_agent_mcp_capabilities, merge_mcp, validate_mcp_config_for_remote_transport,
 };
+use imrule::infrastructure::config_loader::TomlConfigLoader;
 use imrule::infrastructure::mcp_storage::JsonMcpStorage;
 use imrule::infrastructure::vscode_settings::{
     get_vscode_settings_path, merge_augment_mcp_servers, transform_imrule_to_augment_mcp,
@@ -42,9 +44,12 @@ fn filters_mcp_by_agent_capabilities() {
         }
     });
 
-    assert_eq!(filter_mcp_config_for_agent(&config, cline), None);
     assert_eq!(
-        filter_mcp_config_for_agent(&config, firebase),
+        filter_mcp_config_for_agent(&config, cline, McpRemoteTransport::Native),
+        None
+    );
+    assert_eq!(
+        filter_mcp_config_for_agent(&config, firebase, McpRemoteTransport::Native),
         Some(json!({
             "mcpServers": {
                 "remote": { "url": "https://example.test/mcp", "headers": { "Authorization": "Bearer token" } },
@@ -53,13 +58,149 @@ fn filters_mcp_by_agent_capabilities() {
         }))
     );
     assert_eq!(
-        filter_mcp_config_for_agent(&config, copilot),
+        filter_mcp_config_for_agent(&config, copilot, McpRemoteTransport::Native),
         Some(json!({
             "mcpServers": {
                 "remote": { "url": "https://example.test/mcp", "headers": { "Authorization": "Bearer token" } },
                 "stdio": { "command": "node", "args": ["server.js"] }
             }
         }))
+    );
+}
+
+#[test]
+fn mcp_remote_mode_bridges_only_url_remote_servers_for_stdio_agents() {
+    assert_eq!(McpRemoteTransport::default(), McpRemoteTransport::McpRemote);
+    assert_eq!(
+        McpConfig::default().remote_transport,
+        McpRemoteTransport::McpRemote
+    );
+
+    let agents = all_agents();
+    let both = agents
+        .iter()
+        .find(|agent| agent.identifier == "firebase")
+        .unwrap()
+        .clone();
+    let mut stdio_only = both.clone();
+    stdio_only.capabilities.mcp_remote = false;
+    let mut remote_only = both.clone();
+    remote_only.capabilities.mcp_stdio = false;
+    let mut unsupported = both.clone();
+    unsupported.capabilities.mcp_stdio = false;
+    unsupported.capabilities.mcp_remote = false;
+
+    let config = json!({
+        "mcpServers": {
+            "http": {
+                "type": "http",
+                "url": "https://example.test/mcp"
+            },
+            "sse": {
+                "type": "sse",
+                "url": "https://example.test/events"
+            },
+            "stdio": {
+                "type": "stdio",
+                "command": "node",
+                "args": ["server.js"]
+            },
+            "headers": {
+                "type": "http",
+                "url": "https://secret.example.test/mcp",
+                "headers": { "Authorization": "Bearer secret" }
+            },
+            "mixed": {
+                "type": "http",
+                "url": "https://bad.example.test/mcp",
+                "command": "node"
+            },
+            "unknown-remote": {
+                "type": "websocket",
+                "url": "wss://bad.example.test/mcp"
+            }
+        }
+    });
+    let expected = Some(json!({
+        "mcpServers": {
+            "http": {
+                "type": "stdio",
+                "command": "npx",
+                "args": ["-y", "mcp-remote@latest", "https://example.test/mcp"]
+            },
+            "sse": {
+                "type": "stdio",
+                "command": "npx",
+                "args": ["-y", "mcp-remote@latest", "https://example.test/events"]
+            },
+            "stdio": {
+                "type": "stdio",
+                "command": "node",
+                "args": ["server.js"]
+            }
+        }
+    }));
+
+    assert_eq!(
+        filter_mcp_config_for_agent(&config, &both, McpRemoteTransport::McpRemote),
+        expected
+    );
+    assert_eq!(
+        filter_mcp_config_for_agent(&config, &stdio_only, McpRemoteTransport::McpRemote),
+        expected
+    );
+    assert_eq!(
+        filter_mcp_config_for_agent(&config, &remote_only, McpRemoteTransport::McpRemote),
+        None
+    );
+    assert_eq!(
+        filter_mcp_config_for_agent(&config, &unsupported, McpRemoteTransport::McpRemote),
+        None
+    );
+}
+#[test]
+fn mcp_remote_mode_rejects_static_headers() {
+    let config = json!({
+        "mcpServers": {
+            "protected": {
+                "type": "http",
+                "url": "https://example.test/mcp",
+                "headers": { "Authorization": "Bearer token" }
+            }
+        }
+    });
+
+    let error = validate_mcp_config_for_remote_transport(&config, McpRemoteTransport::McpRemote)
+        .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("set [mcp] remote_transport = \"native\""));
+    assert!(validate_mcp_config_for_remote_transport(&config, McpRemoteTransport::Native).is_ok());
+}
+
+#[test]
+fn loads_mcp_remote_transport_mode_from_mcp_config() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        "[mcp]\nremote_transport = \"mcp-remote\"\n",
+    )
+    .unwrap();
+
+    let loader = TomlConfigLoader::new().with_xdg_home(root.join("xdg"));
+    let loaded = loader.load_config(root, None, None).unwrap();
+    assert_eq!(
+        loaded.mcp.unwrap().remote_transport,
+        McpRemoteTransport::McpRemote
+    );
+
+    fs::write(root.join(".imrule/imrule.toml"), "[mcp]\nenabled = true\n").unwrap();
+    let loaded = loader.load_config(root, None, None).unwrap();
+    assert_eq!(
+        loaded.mcp.unwrap().remote_transport,
+        McpRemoteTransport::McpRemote
     );
 }
 
@@ -488,4 +629,83 @@ fn opencode_local_server_renames_env_to_environment() {
         written["mcp"]["local"]["command"],
         json!(["npx", "-y", "demo"])
     );
+}
+
+// --- Gap coverage: expand_mcp_environment_variables edge cases ---
+// The apply fixture exercises the common ${VAR} / $VAR / override / missing
+// cases, but the parser has several branches that are never directly asserted:
+// `$` at end of string, `$` followed by a digit (not a valid env name), an
+// unclosed `${`, and recursion through nested arrays/objects.
+
+#[test]
+fn expand_environment_variables_handles_dollar_edge_cases() {
+    let mut vars = std::collections::BTreeMap::new();
+    vars.insert("TOKEN".to_string(), "secret".to_string());
+
+    // `$` at end of string is preserved verbatim (no name follows).
+    let mut a = json!("prefix$");
+    expand_mcp_environment_variables(&mut a, &vars);
+    assert_eq!(a, json!("prefix$"));
+
+    // `$` followed by a digit is NOT a valid env name — left untouched.
+    let mut b = json!("price:$5");
+    expand_mcp_environment_variables(&mut b, &vars);
+    assert_eq!(b, json!("price:$5"));
+
+    // Unclosed `${` — the brace is never terminated; the literal is preserved.
+    let mut c = json!("${TOKEN");
+    expand_mcp_environment_variables(&mut c, &vars);
+    assert_eq!(c, json!("${TOKEN"));
+
+    // Empty `${}` is not a valid env name — left untouched.
+    let mut d = json!("${}");
+    expand_mcp_environment_variables(&mut d, &vars);
+    assert_eq!(d, json!("${}"));
+
+    // `${VAR}` and `$VAR` both expand; unknown vars are left as-is.
+    let mut e = json!("${TOKEN} and $TOKEN and $MISSING");
+    expand_mcp_environment_variables(&mut e, &vars);
+    assert_eq!(e, json!("secret and secret and $MISSING"));
+
+    // A bare `$` with no following identifier character is preserved.
+    let mut f = json!("cost $$ total");
+    expand_mcp_environment_variables(&mut f, &vars);
+    assert_eq!(f, json!("cost $$ total"));
+}
+
+#[test]
+fn expand_environment_variables_recurses_through_arrays_and_objects() {
+    let mut vars = std::collections::BTreeMap::new();
+    vars.insert("HOST".to_string(), "example.test".to_string());
+    vars.insert("PORT".to_string(), "8080".to_string());
+
+    let mut config = json!({
+        "mcpServers": {
+            "remote": {
+                "url": "https://${HOST}:${PORT}/mcp",
+                "headers": { "X-Trace": "$HOST" },
+                "tags": ["$HOST", "literal", "$PORT"]
+            }
+        }
+    });
+    expand_mcp_environment_variables(&mut config, &vars);
+    assert_eq!(
+        config["mcpServers"]["remote"]["url"],
+        json!("https://example.test:8080/mcp")
+    );
+    assert_eq!(
+        config["mcpServers"]["remote"]["headers"]["X-Trace"],
+        json!("example.test")
+    );
+    assert_eq!(
+        config["mcpServers"]["remote"]["tags"],
+        json!(["example.test", "literal", "8080"])
+    );
+
+    // Non-string scalars (numbers, bools, nulls) pass through untouched.
+    let mut mixed = json!({ "count": 42, "flag": true, "none": null });
+    expand_mcp_environment_variables(&mut mixed, &vars);
+    assert_eq!(mixed["count"], json!(42));
+    assert_eq!(mixed["flag"], json!(true));
+    assert_eq!(mixed["none"], serde_json::Value::Null);
 }

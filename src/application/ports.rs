@@ -7,6 +7,7 @@ use serde_json::Value;
 use crate::domain::agent::AgentDefinition;
 use crate::domain::config::{AgentConfig, LoadedConfig};
 use crate::domain::error::ImruleError;
+use crate::domain::mcp::McpRemoteVersionCache;
 use crate::domain::skills::RemoteSkillSource;
 
 /// Loads and parses ImRule configuration.
@@ -83,6 +84,36 @@ pub trait GitignorePort: Send + Sync {
         project_root: &Path,
         paths: &[PathBuf],
         ignore_file: &str,
+    ) -> Result<(), ImruleError>;
+}
+
+/// Removes generated files from the git index while keeping them on disk.
+pub trait GitTrackingPort: Send + Sync {
+    /// Untracks the given generated paths from git (`git rm --cached`).
+    /// Returns the file paths actually removed from the index.
+    /// Returns an empty vec when git is unavailable or the project is not
+    /// inside a git work tree.
+    fn untrack_generated_files(
+        &self,
+        project_root: &Path,
+        paths: &[PathBuf],
+    ) -> Result<Vec<PathBuf>, ImruleError>;
+}
+
+/// Reads and atomically records the project-scoped MCP package version cache.
+pub trait CachePort: Send + Sync {
+    /// Reads `.imrule/cache.json`, returning `None` when it does not exist.
+    fn read_mcp_remote_version(
+        &self,
+        project_root: &Path,
+    ) -> Result<Option<McpRemoteVersionCache>, ImruleError>;
+
+    /// Atomically replaces `.imrule/cache.json` with the supplied
+    /// closed-schema value.
+    fn write_mcp_remote_version_atomic(
+        &self,
+        project_root: &Path,
+        cache: &McpRemoteVersionCache,
     ) -> Result<(), ImruleError>;
 }
 
