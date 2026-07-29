@@ -530,6 +530,31 @@ impl<'a> ApplyUseCase<'a> {
             written.push(target_dir);
         }
 
+        // GJC gates native skill discovery behind opt-in settings that default
+        // to false, so copying skills to .gjc/skills/ is not enough — the agent
+        // must also be told to scan that directory. Enable project-scoped
+        // discovery by merging into .gjc/config.yml whenever gjc was processed.
+        let gjc_selected = selected_agents
+            .iter()
+            .any(|agent| agent.identifier == "gjc" && agent.capabilities.native_skills);
+        if gjc_selected {
+            let config_path = project_root.join(crate::domain::constants::GJC_CONFIG_PATH);
+            if dry_run {
+                written.push(config_path);
+            } else {
+                let existing = self.fs_port.read_text(&config_path).ok();
+                let merged = crate::infrastructure::gjc_config::enable_gjc_skill_discovery(
+                    existing.as_deref(),
+                )?;
+                self.fs_port
+                    .write_text(&config_path, &merged)
+                    .map_err(|e| {
+                        ImruleError::skills(format!("failed to write .gjc/config.yml: {e}"))
+                    })?;
+                written.push(config_path);
+            }
+        }
+
         let gitignore_skill_paths = get_skills_gitignore_paths(project_root, selected_agents);
         for path in gitignore_skill_paths {
             if !written.contains(&path) {

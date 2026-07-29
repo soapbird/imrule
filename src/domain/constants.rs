@@ -20,6 +20,7 @@ pub const WINDSURF_SKILLS_PATH: &str = ".windsurf/skills";
 pub const FACTORY_SKILLS_PATH: &str = ".factory/skills";
 pub const ANTIGRAVITY_SKILLS_PATH: &str = ".agent/skills";
 pub const GJC_SKILLS_PATH: &str = ".gjc/skills";
+pub const GJC_CONFIG_PATH: &str = ".gjc/config.yml";
 pub const SKILL_MD_FILENAME: &str = "SKILL.md";
 
 /// Legacy directory name from the pre-rebrand era (ruler → imrule).
