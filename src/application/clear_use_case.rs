@@ -191,6 +191,56 @@ impl<'a> ClearUseCase<'a> {
                 removed.push(skills_root);
             }
         }
+
+        // Undo the GJC skill-discovery enablement written by apply.
+        self.clear_gjc_skill_config(options, selected_agents, removed)?;
+
+        Ok(())
+    }
+
+    /// Strips ImRule-managed keys from `.gjc/config.yml`, deleting the file when
+    /// nothing meaningful remains. Only runs when gjc is among the selected
+    /// agents so `clear --agents <others>` leaves the GJC config untouched.
+    fn clear_gjc_skill_config(
+        &self,
+        options: &ClearOptions,
+        selected_agents: &[AgentDefinition],
+        removed: &mut Vec<PathBuf>,
+    ) -> Result<(), ImruleError> {
+        let gjc_selected = selected_agents
+            .iter()
+            .any(|agent| agent.identifier == "gjc" && agent.capabilities.native_skills);
+        if !gjc_selected {
+            return Ok(());
+        }
+
+        let config_path = options
+            .project_root
+            .join(crate::domain::constants::GJC_CONFIG_PATH);
+        if !self.fs_port.file_exists(&config_path) {
+            return Ok(());
+        }
+
+        if options.dry_run {
+            removed.push(config_path);
+            return Ok(());
+        }
+
+        let existing = self.fs_port.read_text(&config_path)?;
+        match crate::infrastructure::gjc_config::strip_gjc_skill_discovery(&existing)? {
+            Some(remaining) => {
+                self.fs_port.write_text(&config_path, &remaining).map_err(|e| {
+                    ImruleError::skills(format!("failed to rewrite .gjc/config.yml: {e}"))
+                })?;
+            }
+            None => {
+                self.fs_port.remove_file(&config_path)?;
+                if let Some(parent) = config_path.parent() {
+                    self.prune_empty_parents(parent, &options.project_root)?;
+                }
+                removed.push(config_path);
+            }
+        }
         Ok(())
     }
 
