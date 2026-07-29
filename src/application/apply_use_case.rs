@@ -543,14 +543,13 @@ impl<'a> ApplyUseCase<'a> {
                 written.push(config_path);
             } else {
                 let existing = self.fs_port.read_text(&config_path).ok();
-                let merged =
-                    crate::infrastructure::gjc_config::enable_gjc_skill_discovery(existing.as_deref())?;
+                let merged = crate::infrastructure::gjc_config::enable_gjc_skill_discovery(
+                    existing.as_deref(),
+                )?;
                 self.fs_port
                     .write_text(&config_path, &merged)
                     .map_err(|e| {
-                        ImruleError::skills(format!(
-                            "failed to write .gjc/config.yml: {e}"
-                        ))
+                        ImruleError::skills(format!("failed to write .gjc/config.yml: {e}"))
                     })?;
                 written.push(config_path);
             }

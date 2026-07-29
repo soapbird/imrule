@@ -19,10 +19,8 @@ const MANAGED_SKILL_KEYS: &[&str] = &["enabled", "enablePiProject"];
 /// empty a fresh document is produced.
 pub fn enable_gjc_skill_discovery(existing: Option<&str>) -> Result<String, ImruleError> {
     let mut root: serde_json::Value = match existing {
-        Some(content) if !content.trim().is_empty() => {
-            serde_norway::from_str(content)
-                .map_err(|e| ImruleError::skills(format!("failed to parse .gjc/config.yml: {e}")))?
-        }
+        Some(content) if !content.trim().is_empty() => serde_norway::from_str(content)
+            .map_err(|e| ImruleError::skills(format!("failed to parse .gjc/config.yml: {e}")))?,
         _ => serde_json::Value::Object(serde_json::Map::new()),
     };
 

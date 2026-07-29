@@ -158,7 +158,10 @@ fn apply_enables_gjc_skill_discovery_and_clear_removes_it() {
 
     assert!(root.join(".gjc/skills/my-skill/SKILL.md").exists());
     let config_path = root.join(".gjc/config.yml");
-    assert!(config_path.is_file(), ".gjc/config.yml should be written by apply");
+    assert!(
+        config_path.is_file(),
+        ".gjc/config.yml should be written by apply"
+    );
     let config: serde_json::Value =
         serde_norway::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
     assert_eq!(config["skills"]["enabled"], serde_json::Value::Bool(true));
@@ -197,11 +200,7 @@ fn apply_preserves_existing_gjc_config_when_enabling_skills() {
     )
     .unwrap();
     fs::create_dir_all(root.join(".gjc")).unwrap();
-    fs::write(
-        root.join(".gjc/config.yml"),
-        "theme:\n  dark: red-claw\n",
-    )
-    .unwrap();
+    fs::write(root.join(".gjc/config.yml"), "theme:\n  dark: red-claw\n").unwrap();
 
     Command::cargo_bin("imrule")
         .unwrap()
@@ -218,7 +217,10 @@ fn apply_preserves_existing_gjc_config_when_enabling_skills() {
     let config: serde_json::Value =
         serde_norway::from_str(&fs::read_to_string(root.join(".gjc/config.yml")).unwrap()).unwrap();
     assert_eq!(config["skills"]["enabled"], serde_json::Value::Bool(true));
-    assert_eq!(config["theme"]["dark"], serde_json::Value::String("red-claw".into()));
+    assert_eq!(
+        config["theme"]["dark"],
+        serde_json::Value::String("red-claw".into())
+    );
 
     Command::cargo_bin("imrule")
         .unwrap()
@@ -235,7 +237,10 @@ fn apply_preserves_existing_gjc_config_when_enabling_skills() {
     // Clear strips only imrule-managed keys; the user's theme config survives.
     let config: serde_json::Value =
         serde_norway::from_str(&fs::read_to_string(root.join(".gjc/config.yml")).unwrap()).unwrap();
-    assert_eq!(config["theme"]["dark"], serde_json::Value::String("red-claw".into()));
+    assert_eq!(
+        config["theme"]["dark"],
+        serde_json::Value::String("red-claw".into())
+    );
     assert!(config.get("skills").is_none());
 }
 

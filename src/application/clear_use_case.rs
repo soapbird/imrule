@@ -229,9 +229,11 @@ impl<'a> ClearUseCase<'a> {
         let existing = self.fs_port.read_text(&config_path)?;
         match crate::infrastructure::gjc_config::strip_gjc_skill_discovery(&existing)? {
             Some(remaining) => {
-                self.fs_port.write_text(&config_path, &remaining).map_err(|e| {
-                    ImruleError::skills(format!("failed to rewrite .gjc/config.yml: {e}"))
-                })?;
+                self.fs_port
+                    .write_text(&config_path, &remaining)
+                    .map_err(|e| {
+                        ImruleError::skills(format!("failed to rewrite .gjc/config.yml: {e}"))
+                    })?;
             }
             None => {
                 self.fs_port.remove_file(&config_path)?;

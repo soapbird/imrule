@@ -575,8 +575,14 @@ fn gjc_skill_config_merges_preserving_existing_keys() {
         parsed["skills"]["enablePiProject"],
         serde_json::Value::Bool(true)
     );
-    assert_eq!(parsed["theme"]["dark"], serde_json::Value::String("red-claw".into()));
-    assert_eq!(parsed["theme"]["light"], serde_json::Value::String("blue-crab".into()));
+    assert_eq!(
+        parsed["theme"]["dark"],
+        serde_json::Value::String("red-claw".into())
+    );
+    assert_eq!(
+        parsed["theme"]["light"],
+        serde_json::Value::String("blue-crab".into())
+    );
 }
 
 #[test]
@@ -601,15 +607,14 @@ fn gjc_skill_config_strip_returns_none_when_only_managed_keys() {
 
 #[test]
 fn gjc_skill_config_strip_preserves_unmanaged_keys() {
-    let yaml =
-        imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(Some("goal:\n  enabled: false\n"))
-            .unwrap();
-    let remaining =
-        imrule::infrastructure::gjc_config::strip_gjc_skill_discovery(&yaml).unwrap().unwrap();
+    let yaml = imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(Some(
+        "goal:\n  enabled: false\n",
+    ))
+    .unwrap();
+    let remaining = imrule::infrastructure::gjc_config::strip_gjc_skill_discovery(&yaml)
+        .unwrap()
+        .unwrap();
     let parsed: serde_json::Value = serde_norway::from_str(&remaining).unwrap();
-    assert_eq!(
-        parsed["goal"]["enabled"],
-        serde_json::Value::Bool(false)
-    );
+    assert_eq!(parsed["goal"]["enabled"], serde_json::Value::Bool(false));
     assert!(parsed.get("skills").is_none());
 }
