@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.1.0] - 2026-07-29
+
+### Added
+
+- **Gajae Code (GJC) skill discovery auto-enablement**: `apply` now writes `.gjc/config.yml` with `skills.enabled: true` and `skills.enablePiProject: true` when GJC is among the selected agents. GJC gates native skill discovery behind opt-in settings that default to `false`, so skills propagated to `.gjc/skills/` were copied correctly but never scanned at runtime. Existing user keys in `config.yml` are preserved via a non-destructive YAML merge.
+- `clear` strips only the ImRule-managed skill keys from `.gjc/config.yml`, keeping the rest of the user's GJC config intact and deleting the file only when nothing meaningful remains.
+
+### Changed
+
+- Added the `GJC_CONFIG_PATH` constant (`.gjc/config.yml`) and a new `infrastructure::gjc_config` module powering the merge/strip helpers.
+
+## [0.2.0.1] - 2026-07-24
+
+### Fixed
+
+- **`--version` was stuck at `0.1.0`**: `Cargo.toml` was never bumped alongside `VERSION` and `CHANGELOG.md`, so `imrule --version` reported the wrong version after every release. A new `build.rs` now reads the `VERSION` file at compile time and injects it into `clap`'s `--version` output, making `VERSION` the single source of truth for the full 4-component version (e.g. `0.2.0.1`). `Cargo.toml`'s semver `version` field is kept in sync with the major.minor.patch prefix.
+
 ## [0.2.0.0] - 2026-07-24
 
 ### Added

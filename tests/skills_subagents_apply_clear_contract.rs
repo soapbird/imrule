@@ -550,3 +550,71 @@ fn discover_subagents_prefers_imrule_over_ruler() {
     assert_eq!(discovered.subagents.len(), 1);
     assert_eq!(discovered.subagents[0].name, "primary");
 }
+
+// --- GJC skill discovery config tests ---
+
+#[test]
+fn gjc_skill_config_enables_discovery_from_scratch() {
+    let yaml = imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(None).unwrap();
+    let parsed: serde_json::Value = serde_norway::from_str(&yaml).unwrap();
+    assert_eq!(parsed["skills"]["enabled"], serde_json::Value::Bool(true));
+    assert_eq!(
+        parsed["skills"]["enablePiProject"],
+        serde_json::Value::Bool(true)
+    );
+}
+
+#[test]
+fn gjc_skill_config_merges_preserving_existing_keys() {
+    let existing = "theme:\n  dark: red-claw\n  light: blue-crab\n";
+    let yaml =
+        imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(Some(existing)).unwrap();
+    let parsed: serde_json::Value = serde_norway::from_str(&yaml).unwrap();
+    assert_eq!(parsed["skills"]["enabled"], serde_json::Value::Bool(true));
+    assert_eq!(
+        parsed["skills"]["enablePiProject"],
+        serde_json::Value::Bool(true)
+    );
+    assert_eq!(
+        parsed["theme"]["dark"],
+        serde_json::Value::String("red-claw".into())
+    );
+    assert_eq!(
+        parsed["theme"]["light"],
+        serde_json::Value::String("blue-crab".into())
+    );
+}
+
+#[test]
+fn gjc_skill_config_enable_is_idempotent() {
+    let once = imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(None).unwrap();
+    let twice =
+        imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(Some(&once)).unwrap();
+    let parsed: serde_json::Value = serde_norway::from_str(&twice).unwrap();
+    assert_eq!(parsed["skills"]["enabled"], serde_json::Value::Bool(true));
+    assert_eq!(
+        parsed["skills"]["enablePiProject"],
+        serde_json::Value::Bool(true)
+    );
+}
+
+#[test]
+fn gjc_skill_config_strip_returns_none_when_only_managed_keys() {
+    let yaml = imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(None).unwrap();
+    let result = imrule::infrastructure::gjc_config::strip_gjc_skill_discovery(&yaml).unwrap();
+    assert!(result.is_none());
+}
+
+#[test]
+fn gjc_skill_config_strip_preserves_unmanaged_keys() {
+    let yaml = imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(Some(
+        "goal:\n  enabled: false\n",
+    ))
+    .unwrap();
+    let remaining = imrule::infrastructure::gjc_config::strip_gjc_skill_discovery(&yaml)
+        .unwrap()
+        .unwrap();
+    let parsed: serde_json::Value = serde_norway::from_str(&remaining).unwrap();
+    assert_eq!(parsed["goal"]["enabled"], serde_json::Value::Bool(false));
+    assert!(parsed.get("skills").is_none());
+}
