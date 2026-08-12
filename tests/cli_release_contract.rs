@@ -134,6 +134,117 @@ fn apply_collapses_gjc_paths_to_dot_gjc_in_gitignore() {
 }
 
 #[test]
+fn apply_enables_gjc_skill_discovery_and_clear_removes_it() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule/skills/my-skill")).unwrap();
+    fs::write(
+        root.join(".imrule/skills/my-skill/SKILL.md"),
+        "---\nname: my-skill\ndescription: Test\n---\n# My Skill\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "apply",
+            "--project-root",
+            root.to_str().unwrap(),
+            "--agents",
+            "gjc",
+        ])
+        .assert()
+        .success();
+
+    assert!(root.join(".gjc/skills/my-skill/SKILL.md").exists());
+    let config_path = root.join(".gjc/config.yml");
+    assert!(
+        config_path.is_file(),
+        ".gjc/config.yml should be written by apply"
+    );
+    let config: serde_json::Value =
+        serde_norway::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+    assert_eq!(config["skills"]["enabled"], serde_json::Value::Bool(true));
+    assert_eq!(
+        config["skills"]["enablePiProject"],
+        serde_json::Value::Bool(true)
+    );
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "clear",
+            "--project-root",
+            root.to_str().unwrap(),
+            "--agents",
+            "gjc",
+        ])
+        .assert()
+        .success();
+
+    assert!(!root.join(".gjc/skills/my-skill/SKILL.md").exists());
+    assert!(
+        !config_path.exists(),
+        ".gjc/config.yml should be removed by clear when it had only imrule-managed keys"
+    );
+}
+
+#[test]
+fn apply_preserves_existing_gjc_config_when_enabling_skills() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule/skills/my-skill")).unwrap();
+    fs::write(
+        root.join(".imrule/skills/my-skill/SKILL.md"),
+        "---\nname: my-skill\ndescription: Test\n---\n# My Skill\n",
+    )
+    .unwrap();
+    fs::create_dir_all(root.join(".gjc")).unwrap();
+    fs::write(root.join(".gjc/config.yml"), "theme:\n  dark: red-claw\n").unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "apply",
+            "--project-root",
+            root.to_str().unwrap(),
+            "--agents",
+            "gjc",
+        ])
+        .assert()
+        .success();
+
+    let config: serde_json::Value =
+        serde_norway::from_str(&fs::read_to_string(root.join(".gjc/config.yml")).unwrap()).unwrap();
+    assert_eq!(config["skills"]["enabled"], serde_json::Value::Bool(true));
+    assert_eq!(
+        config["theme"]["dark"],
+        serde_json::Value::String("red-claw".into())
+    );
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "clear",
+            "--project-root",
+            root.to_str().unwrap(),
+            "--agents",
+            "gjc",
+        ])
+        .assert()
+        .success();
+
+    // Clear strips only imrule-managed keys; the user's theme config survives.
+    let config: serde_json::Value =
+        serde_norway::from_str(&fs::read_to_string(root.join(".gjc/config.yml")).unwrap()).unwrap();
+    assert_eq!(
+        config["theme"]["dark"],
+        serde_json::Value::String("red-claw".into())
+    );
+    assert!(config.get("skills").is_none());
+}
+
+#[test]
 fn apply_dry_run_does_not_write_outputs() {
     let tmp = tempdir().unwrap();
     fs::create_dir_all(tmp.path().join(".imrule")).unwrap();

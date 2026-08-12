@@ -5,6 +5,7 @@ pub mod config_loader;
 pub mod file_system;
 pub mod git_tracking;
 pub mod gitignore;
+pub mod gjc_config;
 pub mod mcp_storage;
 mod mcp_storage_openhands_toml;
 mod mcp_storage_toml;

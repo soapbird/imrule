@@ -18,8 +18,13 @@ use imrule::infrastructure::gitignore::GitignoreUpdater;
 use imrule::infrastructure::mcp_storage::JsonMcpStorage;
 use tempfile::tempdir;
 
+/// Runs `git` in `root` with the global excludes file disabled so a
+/// developer's `~/.gitignore_global` (e.g. an entry ignoring `mcp.json`)
+/// can't make `git add` reject paths these tests need to stage. Every git
+/// invocation in this file goes through here, keeping the tests hermetic.
 fn git(root: &Path, args: &[&str]) {
     let status = Command::new("git")
+        .args(["-c", "core.excludesFile="])
         .args(args)
         .current_dir(root)
         .status()
@@ -29,7 +34,7 @@ fn git(root: &Path, args: &[&str]) {
 
 fn git_tracked_files(root: &Path) -> Vec<String> {
     let output = Command::new("git")
-        .args(["ls-files"])
+        .args(["-c", "core.excludesFile=", "ls-files"])
         .current_dir(root)
         .output()
         .unwrap();
@@ -140,8 +145,9 @@ fn apply_untracks_generated_files_that_git_already_tracks() {
         backup: false,
     };
 
-    // First apply generates the file; simulate the user having committed it
-    // (`-f` because apply already added it to `.gitignore`).
+    // First apply generates the file AND adds it to the local .gitignore
+    // managed block, so `-f` is needed to stage it (simulating a user who
+    // committed the file before ImRule ignored it).
     let first = apply.execute(ApplyOptions { ..options.clone() }).unwrap();
     assert!(first.untracked.is_empty());
     git(root, &["add", "-f", "AGENTS.md"]);

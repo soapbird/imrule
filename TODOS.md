@@ -93,6 +93,30 @@ fixed in that PR; the items below are the related apply↔clear lifecycle harden
 
 Deferred from the v0.2.0.0 adversarial review (develop → main, 2026-07-24).
 
+### GJC skill discovery (v0.2.1.0)
+
+Surfaced during the develop → main release-promotion pre-landing review
+(2026-07-31). Two INFORMATIONAL findings; neither blocks the release.
+
+- [ ] GJC config write bypasses DefaultAgentWriter  
+  **Priority:** P2  
+  **Note:** `apply_use_case.rs` writes `.gjc/config.yml` via `fs_port.write_text`
+  with no content comparison (rewrites every apply even when unchanged) and no
+  `.bak`, unlike the `DefaultAgentWriter` idempotency/backup invariants codified
+  in AGENTS.md. Because the merge round-trips through `serde_json::Value` +
+  `serde_norway`, user comments/formatting in `config.yml` are silently dropped
+  on first apply with no backup. Route the GJC write through `DefaultAgentWriter`
+  (or replicate its compare-and-backup) so the project invariant holds. Confidence 7/10.
+
+- [ ] strip vs enable asymmetry on non-mapping YAML root  
+  **Priority:** P3  
+  **Note:** `gjc_config.rs` `enable_gjc_skill_discovery` returns `Err` when the
+  existing `config.yml` root is a non-mapping scalar/array, but `strip_gjc_skill_discovery`
+  returns `Ok(None)` for the identical condition (→ `clear` then deletes the file).
+  Unlikely for a documented-mapping file and uncovered by tests, but the
+  correctness inconsistency is real. Make `strip` also treat a non-mapping root
+  as an error (or a no-op) instead of deleting the file. Confidence 5/10.
+
 - [ ] `mcp auth` can hang forever with no output  
   **Priority:** P2  
   **Note:** `ProcessMcpRemoteRunner::authenticate` spawns `npx ... mcp-remote-client <url>`

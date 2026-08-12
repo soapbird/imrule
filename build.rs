@@ -7,8 +7,8 @@
 use std::fs;
 
 fn main() {
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR is always set by Cargo");
+    let manifest_dir =
+        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is always set by Cargo");
     let version_path = std::path::Path::new(&manifest_dir).join("VERSION");
 
     let version = fs::read_to_string(&version_path)
