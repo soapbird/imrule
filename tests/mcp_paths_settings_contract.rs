@@ -256,6 +256,40 @@ fn loads_mcp_remote_transport_mode_from_mcp_config() {
         loaded.mcp.unwrap().remote_transport,
         McpRemoteTransport::McpRemote
     );
+
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        "[mcp]\nremote_transport = \"native\"\n",
+    )
+    .unwrap();
+    let loaded = loader.load_config(root, None, None).unwrap();
+    assert_eq!(
+        loaded.mcp.unwrap().remote_transport,
+        McpRemoteTransport::Native,
+        "an explicit native mode still wins"
+    );
+
+    // A missing, empty, or unrecognized value falls back to the bridge rather
+    // than to each agent's native remote transport.
+    for contents in [
+        "",
+        "[mcp]\n",
+        "[mcp]\nremote_transport = \"\"\n",
+        "[mcp]\nremote_transport = \"nativ\"\n",
+        "[mcp]\nremote_transport = 3\n",
+    ] {
+        fs::write(root.join(".imrule/imrule.toml"), contents).unwrap();
+        let loaded = loader.load_config(root, None, None).unwrap();
+        let transport = loaded
+            .mcp
+            .map(|mcp| mcp.remote_transport)
+            .unwrap_or_default();
+        assert_eq!(
+            transport,
+            McpRemoteTransport::McpRemote,
+            "unset remote_transport should default to the bridge for {contents:?}"
+        );
+    }
 }
 
 #[test]
