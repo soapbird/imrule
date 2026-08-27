@@ -303,6 +303,55 @@ fn merges_mcp_configs_with_key_translation_and_strategy() {
 }
 
 #[test]
+fn merge_keeps_agent_written_oauth_credentials_on_managed_servers() {
+    // GJC's `/mcp reauth` writes the credential back into the native file under
+    // the same server name ImRule manages; `apply` must not drop it.
+    let native = json!({
+        "mcpServers": {
+            "notion": {
+                "type": "http",
+                "url": "https://mcp.notion.com/mcp",
+                "auth": { "type": "oauth", "credentialId": "cred-1", "tokenUrl": "https://example.test/token" },
+                "oauth": { "clientId": "client-1" }
+            }
+        }
+    });
+    let incoming = json!({
+        "mcpServers": {
+            "notion": { "type": "http", "url": "https://mcp.notion.com/mcp", "timeout": 15000 }
+        }
+    });
+
+    let merged = merge_mcp(&native, &incoming, McpStrategy::Merge, "mcpServers");
+    assert_eq!(
+        merged["mcpServers"]["notion"],
+        json!({
+            "type": "http",
+            "url": "https://mcp.notion.com/mcp",
+            "timeout": 15000,
+            "auth": { "type": "oauth", "credentialId": "cred-1", "tokenUrl": "https://example.test/token" },
+            "oauth": { "clientId": "client-1" }
+        })
+    );
+
+    // An incoming definition that declares its own auth still wins.
+    let explicit = json!({
+        "mcpServers": {
+            "notion": {
+                "type": "http",
+                "url": "https://mcp.notion.com/mcp",
+                "auth": { "type": "apikey" }
+            }
+        }
+    });
+    let merged = merge_mcp(&native, &explicit, McpStrategy::Merge, "mcpServers");
+    assert_eq!(
+        merged["mcpServers"]["notion"]["auth"],
+        json!({ "type": "apikey" })
+    );
+}
+
+#[test]
 fn native_mcp_paths_match_agent_candidates_and_io_contract() {
     let tmp = tempdir().unwrap();
     let root = tmp.path();

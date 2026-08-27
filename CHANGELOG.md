@@ -10,6 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Gajae Code (GJC) dropped every propagated MCP server at startup**: GJC blocks session start for only 250 ms when no server in the batch declares a `timeout`, and tears down everything still connecting at that point — an `npx`-spawned stdio server needs seconds, so every server ImRule wrote to `.gjc/mcp.json` died with "MCP server connection timed out during startup". `apply` now writes a default `timeout` of `15000` for every server that declares none, which keeps them connecting in the background while startup still blocks for at most 1.75 s.
 
+- **`apply` destroyed agent-written OAuth credentials**: an agent that runs its own OAuth flow (GJC's `/mcp reauth`) writes the resulting `auth`/`oauth` block back into the native MCP file, under the same server name ImRule manages. The merge replaced each server object wholesale, so the credential was dropped on the next `apply` and the server went back to `HTTP 401` for good. Those two keys now survive the merge unless the ImRule definition sets them itself.
+
 ### Added
 
 - **Per-server `timeout` for MCP definitions**: `[mcp_servers.<name>].timeout` in `imrule.toml` and `imrule mcp add --timeout <ms>` declare a connection window. `apply` fills in `15000` for every server that declares none, keeping an explicit value as written. The key is emitted only for agents whose native MCP format understands it (GJC, OpenCode, Kimi/Kimi CLI/Kimi Code) and stripped for the rest.

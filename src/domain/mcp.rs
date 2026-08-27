@@ -375,13 +375,44 @@ pub fn merge_mcp(base: &Value, incoming: &Value, strategy: McpStrategy, server_k
     }
 
     let mut merged = extract_servers(base, server_key);
-    for (key, value) in extract_servers(incoming, server_key) {
+    for (key, mut value) in extract_servers(incoming, server_key) {
+        if let Some(existing) = merged.get(&key) {
+            carry_over_agent_owned_keys(existing, &mut value);
+        }
         merged.insert(key, value);
     }
 
     let mut new_base = base.as_object().cloned().unwrap_or_default();
     new_base.insert(server_key.to_string(), Value::Object(merged));
     Value::Object(new_base)
+}
+
+/// Server keys the agent owns rather than ImRule.
+///
+/// An agent's own OAuth flow (GJC's `/mcp reauth`, for one) writes the resulting
+/// credential back into the native MCP file, under the same server name ImRule
+/// manages. Replacing the server object wholesale would drop that credential on
+/// every `apply`, leaving the server permanently unauthorized — so these keys
+/// survive the merge unless the incoming definition sets them itself.
+const AGENT_OWNED_SERVER_KEYS: &[&str] = &["auth", "oauth"];
+
+/// Copies agent-owned keys from the native config onto the incoming definition.
+fn carry_over_agent_owned_keys(existing: &Value, incoming: &mut Value) {
+    let Some(existing) = existing.as_object() else {
+        return;
+    };
+    let Some(incoming) = incoming.as_object_mut() else {
+        return;
+    };
+
+    for key in AGENT_OWNED_SERVER_KEYS {
+        if incoming.contains_key(*key) {
+            continue;
+        }
+        if let Some(value) = existing.get(*key) {
+            incoming.insert((*key).to_string(), value.clone());
+        }
+    }
 }
 
 fn extract_servers(config: &Value, server_key: &str) -> Map<String, Value> {
