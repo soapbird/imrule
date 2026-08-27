@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Gajae Code (GJC) dropped every propagated MCP server at startup**: GJC blocks session start for only 250 ms when no server in the batch declares a `timeout`, and tears down everything still connecting at that point — an `npx`-spawned stdio server needs seconds, so every server ImRule wrote to `.gjc/mcp.json` died with "MCP server connection timed out during startup". `apply` now writes a default `timeout` of `15000` for every server that declares none, which keeps them connecting in the background while startup still blocks for at most 1.75 s.
+
+### Added
+
+- **Per-server `timeout` for MCP definitions**: `[mcp_servers.<name>].timeout` in `imrule.toml` and `imrule mcp add --timeout <ms>` declare a connection window. `apply` fills in `15000` for every server that declares none, keeping an explicit value as written. The key is emitted only for agents whose native MCP format understands it (GJC, OpenCode, Kimi/Kimi CLI/Kimi Code) and stripped for the rest.
+
 ## [0.2.1.0] - 2026-07-29
 
 ### Added

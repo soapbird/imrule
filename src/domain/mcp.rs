@@ -293,10 +293,41 @@ pub fn filter_mcp_config_for_agent_with_package_spec(
     if filtered.is_empty() {
         None
     } else {
+        for server_config in filtered.values_mut() {
+            normalize_server_timeout(server_config, agent);
+        }
         let mut result = Map::new();
         result.insert("mcpServers".to_string(), Value::Object(filtered));
         Some(Value::Object(result))
     }
+}
+
+/// Connection window written for every server that declares none.
+///
+/// An agent that treats a missing `timeout` as "do not wait" kills servers that
+/// are merely slow to hand off. GJC is the sharp case: it blocks session startup
+/// for only 250 ms when no server in the batch declares a window, then tears
+/// down everything still connecting, so an `npx`-spawned stdio server (seconds
+/// to hand off) always died with "MCP server connection timed out during
+/// startup". A declared window keeps such a server connecting in the background
+/// instead, and costs nothing for servers that come up promptly.
+const DEFAULT_MCP_TIMEOUT_MS: u64 = 15_000;
+
+/// Drops `timeout` for agents whose native MCP format does not understand it,
+/// and fills in [`DEFAULT_MCP_TIMEOUT_MS`] for those that do.
+fn normalize_server_timeout(server_config: &mut Value, agent: &AgentDefinition) {
+    let Some(config) = server_config.as_object_mut() else {
+        return;
+    };
+
+    if !agent.capabilities.mcp_timeout {
+        config.remove("timeout");
+        return;
+    }
+
+    config
+        .entry("timeout".to_string())
+        .or_insert_with(|| json!(DEFAULT_MCP_TIMEOUT_MS));
 }
 
 fn is_http_or_sse(config: &Map<String, Value>) -> bool {
@@ -386,6 +417,9 @@ pub fn mcp_server_definition_to_json(def: &McpServerDefinition) -> Value {
                     .collect();
                 obj.insert("env".to_string(), Value::Object(env_map));
             }
+            if let Some(timeout) = def.timeout {
+                obj.insert("timeout".to_string(), json!(timeout));
+            }
             Value::Object(obj)
         }
         McpTransport::Http | McpTransport::Sse => {
@@ -406,6 +440,9 @@ pub fn mcp_server_definition_to_json(def: &McpServerDefinition) -> Value {
                     .map(|(k, v)| (k.clone(), Value::String(v.clone())))
                     .collect();
                 obj.insert("headers".to_string(), Value::Object(header_map));
+            }
+            if let Some(timeout) = def.timeout {
+                obj.insert("timeout".to_string(), json!(timeout));
             }
             Value::Object(obj)
         }

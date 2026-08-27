@@ -222,14 +222,16 @@ fn apply_writes_kimi_mcp_servers_to_project_config() {
         config["mcpServers"]["github"],
         json!({
             "command": "npx",
-            "args": ["-y", "@modelcontextprotocol/server-github"]
+            "args": ["-y", "@modelcontextprotocol/server-github"],
+            "timeout": 15000
         }),
         "Kimi stdio MCP servers do not use an explicit type field"
     );
     assert_eq!(
         config["mcpServers"]["linear"],
         json!({
-            "url": "https://mcp.linear.app/mcp"
+            "url": "https://mcp.linear.app/mcp",
+            "timeout": 15000
         }),
         "Kimi HTTP MCP servers use a plain url without an explicit type field"
     );
@@ -375,12 +377,14 @@ fn apply_writes_opencode_servers_under_native_mcp_key() {
             "github": {
                 "type": "local",
                 "command": ["npx", "-y", "@modelcontextprotocol/server-github"],
-                "enabled": true
+                "enabled": true,
+                "timeout": 15000
             },
             "linear": {
                 "type": "remote",
                 "url": "https://mcp.linear.app/mcp",
-                "enabled": true
+                "enabled": true,
+                "timeout": 15000
             }
         })
     );

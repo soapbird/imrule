@@ -69,6 +69,60 @@ fn filters_mcp_by_agent_capabilities() {
 }
 
 #[test]
+fn servers_without_a_declared_timeout_get_the_default_connection_window() {
+    let agents = all_agents();
+    let gjc = agents
+        .iter()
+        .find(|agent| agent.identifier == "gjc")
+        .unwrap();
+
+    let config = json!({
+        "mcpServers": {
+            "declared": { "type": "stdio", "command": "npx", "args": ["-y", "pkg"], "timeout": 30000 },
+            "stdio": { "type": "stdio", "command": "npx", "args": ["-y", "pkg"] },
+            "remote": { "type": "http", "url": "https://example.test/mcp" }
+        }
+    });
+
+    // GJC tears down anything still connecting 250 ms into startup unless the
+    // server declared a window, so ImRule writes a default for servers that
+    // declare none and preserves an explicit one.
+    assert_eq!(
+        filter_mcp_config_for_agent(&config, gjc, McpRemoteTransport::Native),
+        Some(json!({
+            "mcpServers": {
+                "declared": { "type": "stdio", "command": "npx", "args": ["-y", "pkg"], "timeout": 30000 },
+                "remote": { "type": "http", "url": "https://example.test/mcp", "timeout": 15000 },
+                "stdio": { "type": "stdio", "command": "npx", "args": ["-y", "pkg"], "timeout": 15000 }
+            }
+        }))
+    );
+
+    // Every timeout-aware agent gets the same treatment; the rest never see the key.
+    for agent in agents.iter().filter(|agent| agent_supports_mcp(agent)) {
+        let Some(filtered) =
+            filter_mcp_config_for_agent(&config, agent, McpRemoteTransport::Native)
+        else {
+            continue;
+        };
+        let id = agent.identifier;
+        for (name, server) in filtered["mcpServers"].as_object().unwrap() {
+            let timeout = server.get("timeout");
+            if agent.capabilities.mcp_timeout {
+                let expected = if name == "declared" { 30000 } else { 15000 };
+                assert_eq!(
+                    timeout.and_then(serde_json::Value::as_u64),
+                    Some(expected),
+                    "{id} server {name} timeout"
+                );
+            } else {
+                assert!(timeout.is_none(), "{id} server {name} kept a timeout");
+            }
+        }
+    }
+}
+
+#[test]
 fn mcp_remote_mode_bridges_only_url_remote_servers_for_stdio_agents() {
     assert_eq!(McpRemoteTransport::default(), McpRemoteTransport::McpRemote);
     assert_eq!(

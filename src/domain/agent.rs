@@ -390,7 +390,7 @@ const AGENT_DEFINITIONS: &[AgentDefinition] = &[
         name: "Gajae Code",
         output_template: AgentOutputTemplate::Multiple(GJC_PATHS),
         mcp_server_key: "mcpServers",
-        capabilities: caps(true, true, false, true, false),
+        capabilities: caps(true, true, true, true, false),
     },
 ];
 

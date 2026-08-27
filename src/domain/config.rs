@@ -55,6 +55,10 @@ pub struct McpServerDefinition {
     /// Optional headers for remote transports.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
+    /// Connection window in milliseconds, propagated to agents whose native MCP
+    /// format understands a per-server `timeout` (see `AgentCapabilities::mcp_timeout`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
 }
 
 impl McpServerDefinition {
@@ -66,6 +70,7 @@ impl McpServerDefinition {
             args,
             env: BTreeMap::new(),
             headers: BTreeMap::new(),
+            timeout: None,
         }
     }
 
@@ -77,6 +82,7 @@ impl McpServerDefinition {
             args: Vec::new(),
             env: BTreeMap::new(),
             headers: BTreeMap::new(),
+            timeout: None,
         }
     }
 }

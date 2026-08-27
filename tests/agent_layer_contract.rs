@@ -490,7 +490,7 @@ fn agent_registry_matches_native_names_paths_mcp_keys_and_capabilities() {
             "mcpServers",
             true,
             true,
-            false,
+            true,
             true,
             false,
         ),

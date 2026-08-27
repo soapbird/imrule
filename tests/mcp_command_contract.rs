@@ -35,6 +35,7 @@ fn mcp_add_http_server_writes_to_imrule_toml() {
             url: Some("https://mcp.linear.app/mcp".to_string()),
             env: Default::default(),
             headers: Default::default(),
+            timeout: None,
         })
         .unwrap();
 
@@ -124,6 +125,7 @@ fn mcp_add_stdio_server_writes_command_and_args() {
             url: None,
             env: Default::default(),
             headers: Default::default(),
+            timeout: None,
         })
         .unwrap();
 
@@ -166,6 +168,7 @@ fn mcp_add_records_environment_variables() {
             url: None,
             env,
             headers: Default::default(),
+            timeout: None,
         })
         .unwrap();
 
@@ -203,6 +206,7 @@ fn mcp_remove_deletes_server_from_imrule_toml() {
             url: Some("https://mcp.linear.app/mcp".to_string()),
             env: Default::default(),
             headers: Default::default(),
+            timeout: None,
         })
         .unwrap();
 
@@ -270,6 +274,7 @@ fn mcp_toml_servers_take_precedence_over_mcp_json() {
             url: Some("https://new.example/mcp".to_string()),
             env: Default::default(),
             headers: Default::default(),
+            timeout: None,
         })
         .unwrap();
 

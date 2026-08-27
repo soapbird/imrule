@@ -232,6 +232,7 @@ fn run_inner() -> Result<(), CliError> {
                         url,
                         env: env_map,
                         headers: header_map,
+                        timeout: args.timeout,
                     })
                     .map_err(|err| CliError::new(1, err.to_string()))?;
 
