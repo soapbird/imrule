@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0.0] - 2026-09-07
+
+### Added
+
+- **`imrule skills update`**: installed skills had no memory of where they came from, so the only way to pick up an upstream change was to remember the original source and run `imrule skills add` again. `imrule skills add` now records each installed skill's origin under `[skills.sources]` in `imrule.toml`, and `imrule skills update` re-fetches those sources — a fresh shallow clone for remote ones — and refreshes the installed copies. It accepts skill names to narrow the run, `--dry-run` to report without writing, and `--global` for `~/.config/imrule/skills/`; `up` is an alias. Any real change re-runs `apply`, so agent skill directories stay in sync.
+
+- Each skill is reported with what happened to it: `updated`, `unchanged`, `reinstalled` (recorded but missing on disk), `missing in source` (gone upstream, installed copy left alone) or `failed`. A source that cannot be fetched fails only its own skills — the rest of the run continues — and the command exits `1`.
+
+- **`[skills.sources]` in `imrule.toml`**: the skill source registry, written through `toml_edit` so surrounding comments and formatting survive. Skills installed before this release carry no entry; adding one by hand (`<skill-name> = "<source>"`) is enough to bring them under `update`.
+
+### Changed
+
+- An update replaces a skill directory rather than overlaying it, so files dropped upstream also disappear locally. The fetched tree is compared byte for byte first, so an unchanged skill is never removed and rewritten.
+
+- `save_config` no longer creates an empty `[mcp_servers]` table. Writing the config is no longer exclusive to `imrule mcp`, and a project with no MCP servers should not grow the table because a skill was installed.
+
 ## [0.3.0.0] - 2026-09-07
 
 ### Fixed
