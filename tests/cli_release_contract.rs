@@ -1038,6 +1038,16 @@ fn mcp_add_and_remove_persist_to_imrule_toml() {
     assert!(toml.contains("command = \"npx\""));
     assert!(toml.contains("GITHUB_TOKEN = \"xxx\""));
 
+    // Pin the bridge version. `apply` resolves `mcp-remote` from npm only when
+    // the project cache is empty, so seeding it keeps this test offline and
+    // deterministic — otherwise the expected `args` below would be whatever npm
+    // happened to publish last.
+    fs::write(
+        tmp.path().join(".imrule/cache.json"),
+        r#"{"package":"mcp-remote","resolved_version":"0.1.38","resolved_at":1700000000}"#,
+    )
+    .unwrap();
+
     Command::cargo_bin("imrule")
         .unwrap()
         .args([

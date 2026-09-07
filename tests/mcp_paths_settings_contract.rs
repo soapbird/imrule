@@ -131,16 +131,15 @@ fn mcp_remote_mode_bridges_only_url_remote_servers_for_stdio_agents() {
     );
 
     let agents = all_agents();
-    let both = agents
+    let both = *agents
         .iter()
         .find(|agent| agent.identifier == "firebase")
-        .unwrap()
-        .clone();
-    let mut stdio_only = both.clone();
+        .unwrap();
+    let mut stdio_only = both;
     stdio_only.capabilities.mcp_remote = false;
-    let mut remote_only = both.clone();
+    let mut remote_only = both;
     remote_only.capabilities.mcp_stdio = false;
-    let mut unsupported = both.clone();
+    let mut unsupported = both;
     unsupported.capabilities.mcp_stdio = false;
     unsupported.capabilities.mcp_remote = false;
 
