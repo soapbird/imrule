@@ -1,6 +1,6 @@
 //! Skills domain types and pure helpers.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::domain::agent::AgentDefinition;
@@ -172,4 +172,86 @@ pub fn get_skills_gitignore_paths(project_root: &Path, agents: &[AgentDefinition
         .filter(|(_, ids)| ids.iter().any(|id| selected.contains(id)))
         .map(|(path, _)| project_root.join(path))
         .collect()
+}
+
+/// The string recorded for a source in `[skills.sources]`. Local paths are
+/// stored resolved so a later `update` run from another working directory
+/// still points at the same tree.
+pub fn skill_source_key(source: &RemoteSkillSource, raw: &str) -> String {
+    match source {
+        RemoteSkillSource::Local { path } => path.to_string_lossy().to_string(),
+        _ => raw.trim().to_string(),
+    }
+}
+
+/// One recorded source together with the installed skills that came from it,
+/// so an update fetches each source exactly once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillUpdateGroup {
+    pub source: String,
+    pub skills: Vec<String>,
+}
+
+/// What an update did to one skill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillUpdateStatus {
+    /// The installed copy differed from the freshly fetched source.
+    Updated,
+    /// Recorded in the config but absent on disk, so it was installed again.
+    Reinstalled,
+    /// The fetched source is byte-identical to what is installed.
+    Unchanged,
+    /// The recorded source no longer contains a skill by that name.
+    MissingInSource,
+    /// The source could not be fetched or read.
+    Failed,
+}
+
+/// The outcome of updating one skill.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillUpdateOutcome {
+    pub name: String,
+    pub source: String,
+    pub status: SkillUpdateStatus,
+    /// Failure detail, set only for [`SkillUpdateStatus::Failed`].
+    pub detail: Option<String>,
+}
+
+/// Groups recorded skill sources for an update run, optionally narrowed to
+/// `requested` skill names. Errors when a requested name has no recorded
+/// source, since silently skipping it would look like a successful update.
+pub fn group_skill_sources(
+    sources: &BTreeMap<String, String>,
+    requested: Option<&[String]>,
+) -> Result<Vec<SkillUpdateGroup>, ImruleError> {
+    if let Some(requested) = requested {
+        let unknown: Vec<&str> = requested
+            .iter()
+            .filter(|name| !sources.contains_key(*name))
+            .map(String::as_str)
+            .collect();
+        if !unknown.is_empty() {
+            return Err(ImruleError::skills(format!(
+                "no recorded source for: {}. Run `imrule skills add <source>` first.",
+                unknown.join(", ")
+            )));
+        }
+    }
+
+    let mut groups: Vec<SkillUpdateGroup> = Vec::new();
+    for (name, source) in sources {
+        if let Some(requested) = requested {
+            if !requested.iter().any(|wanted| wanted == name) {
+                continue;
+            }
+        }
+        match groups.iter_mut().find(|group| &group.source == source) {
+            Some(group) => group.skills.push(name.clone()),
+            None => groups.push(SkillUpdateGroup {
+                source: source.clone(),
+                skills: vec![name.clone()],
+            }),
+        }
+    }
+    Ok(groups)
 }

@@ -118,6 +118,11 @@ pub struct GitignoreConfig {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillsConfig {
     pub enabled: Option<bool>,
+    /// Installed skill name -> the source `imrule skills add` fetched it from.
+    /// Recorded so `imrule skills update` can fetch that source again instead
+    /// of asking the user to remember where every skill came from.
+    #[serde(default)]
+    pub sources: BTreeMap<String, String>,
 }
 
 /// Native subagent propagation configuration.

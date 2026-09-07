@@ -216,6 +216,30 @@ imrule skills add ./local/path            # 로컬 디렉터리에서 설치
 imrule skills add git@github.com:org/repo # SSH URL로 설치
 ```
 
+설치한 스킬의 출처는 `imrule.toml`의 `[skills.sources]`에 기록됩니다. `imrule skills update`가 이 기록을 보고 같은 저장소를 다시 받아옵니다.
+
+#### `imrule skills update`
+
+`[skills.sources]`에 등록된 소스를 다시 fetch(원격은 새로 git clone)해서 설치된 스킬을 갱신합니다. 갱신된 스킬이 있으면 `imrule apply`를 자동 실행해 에이전트 디렉터리까지 동기화합니다.
+
+```bash
+imrule skills update                      # 등록된 모든 스킬 갱신
+imrule skills update name                 # 특정 스킬만 갱신(여러 개 나열 가능)
+imrule skills update --dry-run            # 무엇이 바뀌는지만 확인
+imrule skills update --global             # 전역 스킬 갱신(~/.config/imrule/skills/)
+imrule skills up                          # update 별칭
+```
+
+스킬별로 상태를 출력합니다.
+
+| 상태 | 의미 |
+|---|---|
+| `updated` | 소스 내용이 달라져 설치본을 교체했습니다(상위에서 삭제된 파일도 함께 사라집니다). |
+| `unchanged` | 소스와 설치본이 완전히 동일합니다. |
+| `reinstalled` | 설정에는 있으나 디스크에 없어 다시 설치했습니다. |
+| `missing in source` | 소스에 더 이상 해당 이름의 스킬이 없습니다(설치본은 그대로 둡니다). |
+| `failed` | 소스를 가져오지 못했습니다. 다른 소스는 계속 처리하고 종료 코드는 1입니다. |
+
 #### `imrule skills list`
 
 `.imrule/skills/`에 설치된 스킬을 조회합니다.
@@ -296,6 +320,10 @@ imrule skills ls                          # list 별칭
 
 # [skills]
 # enabled = true
+
+# imrule skills add가 기록하고 imrule skills update가 다시 받아오는 스킬 출처
+# [skills.sources]
+# my-skill = "org/repo"
 
 # [subagents]
 # enabled = true
@@ -386,6 +414,7 @@ GITHUB_TOKEN = "actual-secret"
 ```bash
 imrule skills add vercel-labs/skills      # GitHub에서 설치
 imrule skills add org/repo --skill name   # 특정 스킬 설치
+imrule skills update                      # 등록된 스킬을 소스에서 다시 받아 갱신
 ```
 
 ### `.imrule/agents/`

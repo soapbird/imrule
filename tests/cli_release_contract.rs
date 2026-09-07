@@ -1251,3 +1251,89 @@ fn mcp_auth_help_parses() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Authenticate"));
 }
+
+#[test]
+fn skills_add_registers_a_source_that_skills_update_refetches() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    let source = root.join("source-repo");
+    fs::create_dir_all(source.join("demo")).unwrap();
+    fs::write(source.join("demo/SKILL.md"), "v1").unwrap();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(root.join(".imrule/AGENTS.md"), "Always be concise.").unwrap();
+    fs::write(root.join(".imrule/imrule.toml"), "agents = [\"claude\"]\n").unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", root.join("xdg"))
+        .args([
+            "skills",
+            "add",
+            source.to_str().unwrap(),
+            "--project-root",
+            root.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(root.join(".claude/skills/demo/SKILL.md")).unwrap(),
+        "v1"
+    );
+
+    // The source moved on; update re-fetches it and re-syncs the agent copies.
+    fs::write(source.join("demo/SKILL.md"), "v2").unwrap();
+
+    let dry_run = Command::cargo_bin("imrule")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", root.join("xdg"))
+        .args([
+            "skills",
+            "update",
+            "--project-root",
+            root.to_str().unwrap(),
+            "--dry-run",
+        ])
+        .output()
+        .unwrap();
+    assert!(dry_run.status.success());
+    assert!(String::from_utf8_lossy(&dry_run.stdout).contains("would update"));
+    assert_eq!(
+        fs::read_to_string(root.join(".imrule/skills/demo/SKILL.md")).unwrap(),
+        "v1"
+    );
+
+    let updated = Command::cargo_bin("imrule")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", root.join("xdg"))
+        .args(["skills", "update", "--project-root", root.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(updated.status.success());
+    assert!(String::from_utf8_lossy(&updated.stdout).contains("[updated]"));
+    assert_eq!(
+        fs::read_to_string(root.join(".imrule/skills/demo/SKILL.md")).unwrap(),
+        "v2"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".claude/skills/demo/SKILL.md")).unwrap(),
+        "v2"
+    );
+}
+
+#[test]
+fn skills_update_reports_an_empty_registry_instead_of_failing() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(root.join(".imrule/imrule.toml"), "agents = [\"claude\"]\n").unwrap();
+
+    let output = Command::cargo_bin("imrule")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", root.join("xdg"))
+        .args(["skills", "update", "--project-root", root.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("No registered skill sources"));
+}

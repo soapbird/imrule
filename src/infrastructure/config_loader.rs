@@ -313,8 +313,23 @@ fn parse_gitignore_config(table: &toml::map::Map<String, Value>) -> GitignoreCon
 }
 
 fn parse_skills_config(table: &toml::map::Map<String, Value>) -> SkillsConfig {
+    let sources = table
+        .get("sources")
+        .and_then(|value| value.as_table())
+        .map(|sources| {
+            sources
+                .iter()
+                .filter_map(|(name, value)| {
+                    value
+                        .as_str()
+                        .map(|source| (name.clone(), source.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     SkillsConfig {
         enabled: table.get("enabled").and_then(|value| value.as_bool()),
+        sources,
     }
 }
 
@@ -449,6 +464,7 @@ impl ConfigWritePort for TomlConfigLoader {
 
         // Synchronise the [mcp_servers] table without touching other sections.
         sync_mcp_servers_table(&mut document, &config.mcp_servers);
+        sync_skills_sources_table(&mut document, config.skills.as_ref());
 
         if let Some(parent) = config_file.parent() {
             fs::create_dir_all(parent).map_err(|e| {
@@ -468,6 +484,51 @@ impl ConfigWritePort for TomlConfigLoader {
     }
 }
 
+/// Synchronises `[skills.sources]` — the record of where each installed skill
+/// came from — leaving the rest of `[skills]` untouched. Absent when there is
+/// nothing to record, so an unrelated config write never grows an empty table.
+fn sync_skills_sources_table(document: &mut toml_edit::DocumentMut, skills: Option<&SkillsConfig>) {
+    let Some(skills) = skills else {
+        return;
+    };
+    let root = document.as_table_mut();
+    let existing_sources = root
+        .get("skills")
+        .and_then(toml_edit::Item::as_table)
+        .map(|table| table.contains_key("sources"))
+        .unwrap_or(false);
+    if skills.sources.is_empty() && !existing_sources {
+        return;
+    }
+
+    let created_skills = !root.contains_key("skills");
+    if created_skills {
+        root.insert("skills", toml_edit::Item::Table(toml_edit::Table::new()));
+    }
+    let Some(skills_table) = root
+        .get_mut("skills")
+        .and_then(toml_edit::Item::as_table_mut)
+    else {
+        return;
+    };
+    if created_skills {
+        // No other [skills] keys yet, so keep the header out of the file.
+        skills_table.set_implicit(true);
+    }
+
+    let sources_table = skills_table
+        .entry("sources")
+        .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+    let mut replacement = toml_edit::Table::new();
+    for (name, source) in &skills.sources {
+        replacement.insert(
+            name,
+            toml_edit::Item::Value(toml_edit::Value::from(source.clone())),
+        );
+    }
+    *sources_table = toml_edit::Item::Table(replacement);
+}
+
 fn sync_mcp_servers_table(
     document: &mut toml_edit::DocumentMut,
     servers: &BTreeMap<String, McpServerDefinition>,
@@ -475,8 +536,13 @@ fn sync_mcp_servers_table(
     let root = document.as_table_mut();
 
     // Ensure the parent [mcp_servers] table exists without replacing it, so
-    // comments/decorations attached to the header are preserved.
+    // comments/decorations attached to the header are preserved. A config with
+    // no servers keeps no empty table: writes triggered by other sections
+    // (`skills add`, say) must not leave one behind.
     if !root.contains_key("mcp_servers") {
+        if servers.is_empty() {
+            return;
+        }
         root.insert(
             "mcp_servers",
             toml_edit::Item::Table(toml_edit::Table::new()),

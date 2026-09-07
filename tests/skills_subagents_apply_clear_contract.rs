@@ -11,6 +11,7 @@ use imrule::domain::subagent::{
     build_claude_file, build_codex_file, build_copilot_file, build_cursor_file,
     map_tools_for_copilot, parse_frontmatter, validate_frontmatter,
 };
+use imrule::infrastructure::config_loader::TomlConfigLoader;
 use imrule::infrastructure::file_system::FsFileSystem;
 use imrule::infrastructure::skills::{copy_skills_directory, discover_skills};
 use imrule::infrastructure::subagents::{
@@ -351,8 +352,11 @@ fn installs_skills_from_local_source_to_imrule_skills_dir() {
 
     let fs_port = FsFileSystem::new();
     let fetcher = LocalFetcher;
-    let use_case =
-        imrule::application::skills_add_use_case::SkillsAddUseCase::new(&fetcher, &fs_port);
+    // Isolated XDG home so recording sources never touches the caller's global config.
+    let loader = TomlConfigLoader::new().with_xdg_home(root.join("xdg"));
+    let use_case = imrule::application::skills_add_use_case::SkillsAddUseCase::new(
+        &fetcher, &fs_port, &loader, &loader,
+    );
 
     let result = use_case
         .execute(imrule::application::skills_add_use_case::SkillsAddOptions {
@@ -408,8 +412,11 @@ fn lists_skills_without_installing() {
 
     let fs_port = FsFileSystem::new();
     let fetcher = LocalFetcher;
-    let use_case =
-        imrule::application::skills_add_use_case::SkillsAddUseCase::new(&fetcher, &fs_port);
+    // Isolated XDG home so recording sources never touches the caller's global config.
+    let loader = TomlConfigLoader::new().with_xdg_home(root.join("xdg"));
+    let use_case = imrule::application::skills_add_use_case::SkillsAddUseCase::new(
+        &fetcher, &fs_port, &loader, &loader,
+    );
 
     let result = use_case
         .execute(imrule::application::skills_add_use_case::SkillsAddOptions {
@@ -467,8 +474,11 @@ fn filters_skills_by_name_when_adding() {
 
     let fs_port = FsFileSystem::new();
     let fetcher = LocalFetcher;
-    let use_case =
-        imrule::application::skills_add_use_case::SkillsAddUseCase::new(&fetcher, &fs_port);
+    // Isolated XDG home so recording sources never touches the caller's global config.
+    let loader = TomlConfigLoader::new().with_xdg_home(root.join("xdg"));
+    let use_case = imrule::application::skills_add_use_case::SkillsAddUseCase::new(
+        &fetcher, &fs_port, &loader, &loader,
+    );
 
     let result = use_case
         .execute(imrule::application::skills_add_use_case::SkillsAddOptions {
@@ -617,4 +627,234 @@ fn gjc_skill_config_strip_preserves_unmanaged_keys() {
     let parsed: serde_json::Value = serde_norway::from_str(&remaining).unwrap();
     assert_eq!(parsed["goal"]["enabled"], serde_json::Value::Bool(false));
     assert!(parsed.get("skills").is_none());
+}
+
+// --- Skill source registry and `imrule skills update` ---
+
+/// Builds a local source repo holding one skill with the given SKILL.md body.
+fn write_source_skill(source_dir: &std::path::Path, name: &str, body: &str) {
+    let skill_dir = source_dir.join(name);
+    fs::create_dir_all(&skill_dir).unwrap();
+    fs::write(skill_dir.join("SKILL.md"), body).unwrap();
+}
+
+fn skills_fixture() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
+    let source_dir = root.join("source-repo");
+    write_source_skill(&source_dir, "my-skill", "v1");
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(root.join(".imrule/AGENTS.md"), "# Rules\n").unwrap();
+    (tmp, root, source_dir)
+}
+
+#[test]
+fn records_the_source_of_every_installed_skill_in_the_config() {
+    let (_tmp, root, source_dir) = skills_fixture();
+    let fs_port = FsFileSystem::new();
+    let fetcher = imrule::infrastructure::skill_fetcher::GitSkillFetcher::new().unwrap();
+    let loader = TomlConfigLoader::new().with_xdg_home(root.join("xdg"));
+    let use_case = imrule::application::skills_add_use_case::SkillsAddUseCase::new(
+        &fetcher, &fs_port, &loader, &loader,
+    );
+
+    use_case
+        .execute(imrule::application::skills_add_use_case::SkillsAddOptions {
+            project_root: root.clone(),
+            source: source_dir.to_string_lossy().to_string(),
+            skill_names: None,
+            list_only: false,
+            global: false,
+        })
+        .unwrap();
+
+    let written = fs::read_to_string(root.join(".imrule/imrule.toml")).unwrap();
+    assert!(
+        written.contains("[skills.sources]"),
+        "expected a source registry, got:\n{written}"
+    );
+    assert!(written.contains("my-skill = "));
+
+    // The registry survives a reload as a usable source string.
+    let config =
+        imrule::application::ports::ConfigPort::load_config(&loader, &root, None, None).unwrap();
+    assert_eq!(
+        config.skills.unwrap().sources.get("my-skill"),
+        Some(&source_dir.to_string_lossy().to_string())
+    );
+}
+
+#[test]
+fn update_refetches_registered_sources_and_reports_per_skill_status() {
+    use imrule::application::skills_update_use_case::{SkillsUpdateOptions, SkillsUpdateUseCase};
+    use imrule::domain::skills::SkillUpdateStatus;
+
+    let (_tmp, root, source_dir) = skills_fixture();
+    let fs_port = FsFileSystem::new();
+    let fetcher = imrule::infrastructure::skill_fetcher::GitSkillFetcher::new().unwrap();
+    let loader = TomlConfigLoader::new().with_xdg_home(root.join("xdg"));
+
+    imrule::application::skills_add_use_case::SkillsAddUseCase::new(
+        &fetcher, &fs_port, &loader, &loader,
+    )
+    .execute(imrule::application::skills_add_use_case::SkillsAddOptions {
+        project_root: root.clone(),
+        source: source_dir.to_string_lossy().to_string(),
+        skill_names: None,
+        list_only: false,
+        global: false,
+    })
+    .unwrap();
+
+    let installed = root.join(".imrule/skills/my-skill/SKILL.md");
+    assert_eq!(fs::read_to_string(&installed).unwrap(), "v1");
+
+    let updater = SkillsUpdateUseCase::new(&fetcher, &fs_port, &loader);
+    let options = |dry_run: bool| SkillsUpdateOptions {
+        project_root: root.clone(),
+        skill_names: None,
+        global: false,
+        dry_run,
+    };
+
+    // Nothing changed upstream yet.
+    let result = updater.execute(options(false)).unwrap();
+    assert_eq!(result.outcomes.len(), 1);
+    assert_eq!(result.outcomes[0].status, SkillUpdateStatus::Unchanged);
+    assert!(!result.changed());
+
+    // Upstream moves on: a changed file and a dropped file.
+    fs::write(source_dir.join("my-skill/SKILL.md"), "v2").unwrap();
+    fs::write(
+        root.join(".imrule/skills/my-skill/stale.md"),
+        "gone upstream",
+    )
+    .unwrap();
+
+    // A dry run reports the update without touching the installed copy.
+    let result = updater.execute(options(true)).unwrap();
+    assert_eq!(result.outcomes[0].status, SkillUpdateStatus::Updated);
+    assert!(result.changed());
+    assert_eq!(fs::read_to_string(&installed).unwrap(), "v1");
+
+    let result = updater.execute(options(false)).unwrap();
+    assert_eq!(result.outcomes[0].status, SkillUpdateStatus::Updated);
+    assert_eq!(fs::read_to_string(&installed).unwrap(), "v2");
+    assert!(
+        !root.join(".imrule/skills/my-skill/stale.md").exists(),
+        "an update replaces the skill instead of overlaying it"
+    );
+
+    // A skill deleted from disk is installed again from its recorded source.
+    fs::remove_dir_all(root.join(".imrule/skills/my-skill")).unwrap();
+    let result = updater.execute(options(false)).unwrap();
+    assert_eq!(result.outcomes[0].status, SkillUpdateStatus::Reinstalled);
+    assert_eq!(fs::read_to_string(&installed).unwrap(), "v2");
+
+    // A skill that vanished upstream is reported, not silently reported as fresh.
+    fs::remove_dir_all(source_dir.join("my-skill")).unwrap();
+    let result = updater.execute(options(false)).unwrap();
+    assert_eq!(
+        result.outcomes[0].status,
+        SkillUpdateStatus::MissingInSource
+    );
+    assert!(installed.exists(), "the installed copy is left in place");
+}
+
+#[test]
+fn update_reports_an_unreachable_source_without_aborting_the_run() {
+    use imrule::application::skills_update_use_case::{SkillsUpdateOptions, SkillsUpdateUseCase};
+    use imrule::domain::skills::SkillUpdateStatus;
+
+    let (_tmp, root, source_dir) = skills_fixture();
+    let fs_port = FsFileSystem::new();
+    let fetcher = imrule::infrastructure::skill_fetcher::GitSkillFetcher::new().unwrap();
+    let loader = TomlConfigLoader::new().with_xdg_home(root.join("xdg"));
+
+    imrule::application::skills_add_use_case::SkillsAddUseCase::new(
+        &fetcher, &fs_port, &loader, &loader,
+    )
+    .execute(imrule::application::skills_add_use_case::SkillsAddOptions {
+        project_root: root.clone(),
+        source: source_dir.to_string_lossy().to_string(),
+        skill_names: None,
+        list_only: false,
+        global: false,
+    })
+    .unwrap();
+
+    fs::remove_dir_all(&source_dir).unwrap();
+
+    let result = SkillsUpdateUseCase::new(&fetcher, &fs_port, &loader)
+        .execute(SkillsUpdateOptions {
+            project_root: root.clone(),
+            skill_names: None,
+            global: false,
+            dry_run: false,
+        })
+        .unwrap();
+    assert_eq!(result.outcomes[0].status, SkillUpdateStatus::Failed);
+    assert!(result.outcomes[0].detail.is_some());
+    assert!(result.has_failures());
+}
+
+#[test]
+fn groups_recorded_sources_and_rejects_unregistered_names() {
+    use imrule::domain::skills::{group_skill_sources, SkillUpdateGroup};
+    use std::collections::BTreeMap;
+
+    let sources: BTreeMap<String, String> = [
+        ("a".to_string(), "org/one".to_string()),
+        ("b".to_string(), "org/two".to_string()),
+        ("c".to_string(), "org/one".to_string()),
+    ]
+    .into_iter()
+    .collect();
+
+    // One fetch per source, however many skills came from it.
+    assert_eq!(
+        group_skill_sources(&sources, None).unwrap(),
+        vec![
+            SkillUpdateGroup {
+                source: "org/one".to_string(),
+                skills: vec!["a".to_string(), "c".to_string()],
+            },
+            SkillUpdateGroup {
+                source: "org/two".to_string(),
+                skills: vec!["b".to_string()],
+            },
+        ]
+    );
+
+    let narrowed = group_skill_sources(&sources, Some(&["c".to_string()])).unwrap();
+    assert_eq!(narrowed.len(), 1);
+    assert_eq!(narrowed[0].skills, vec!["c".to_string()]);
+
+    let error = group_skill_sources(&sources, Some(&["nope".to_string()])).unwrap_err();
+    assert!(error.to_string().contains("nope"));
+
+    assert!(group_skill_sources(&BTreeMap::new(), None)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn skill_trees_match_compares_contents_not_timestamps() {
+    use imrule::infrastructure::skills::skill_trees_match;
+
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    for name in ["left", "right"] {
+        fs::create_dir_all(root.join(name).join("nested")).unwrap();
+        fs::write(root.join(name).join("SKILL.md"), "same").unwrap();
+        fs::write(root.join(name).join("nested/extra.md"), "same").unwrap();
+    }
+    assert!(skill_trees_match(&root.join("left"), &root.join("right")).unwrap());
+
+    fs::write(root.join("right/nested/extra.md"), "different").unwrap();
+    assert!(!skill_trees_match(&root.join("left"), &root.join("right")).unwrap());
+
+    fs::write(root.join("right/nested/extra.md"), "same").unwrap();
+    fs::write(root.join("right/added.md"), "new file").unwrap();
+    assert!(!skill_trees_match(&root.join("left"), &root.join("right")).unwrap());
 }
