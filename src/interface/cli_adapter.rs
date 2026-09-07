@@ -20,6 +20,7 @@ use crate::infrastructure::config_loader::TomlConfigLoader;
 use crate::infrastructure::file_system::FsFileSystem;
 use crate::infrastructure::git_tracking::GitUntracker;
 use crate::infrastructure::gitignore::GitignoreUpdater;
+use crate::infrastructure::manifest::JsonApplyManifest;
 use crate::infrastructure::mcp_storage::JsonMcpStorage;
 use crate::infrastructure::skill_fetcher::GitSkillFetcher;
 use crate::infrastructure::version_cache::JsonVersionCache;
@@ -124,6 +125,7 @@ fn run_inner() -> Result<(), CliError> {
     let git_untracker = GitUntracker::new();
     let mcp = JsonMcpStorage::new();
     let version_cache = JsonVersionCache::new();
+    let manifest = JsonApplyManifest::new();
     let mcp_remote_runner = ProcessMcpRemoteRunner;
 
     match cli.command {
@@ -142,6 +144,7 @@ fn run_inner() -> Result<(), CliError> {
                 &mcp,
                 &agent_writer,
             )
+            .with_manifest(&manifest)
             .with_mcp_remote_version_cache(&version_cache, &mcp_remote_runner);
             let result = use_case
                 .execute(ApplyOptions {
@@ -322,7 +325,8 @@ fn run_inner() -> Result<(), CliError> {
             let project_root = args
                 .project_root
                 .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-            let use_case = ClearUseCase::new(&config, &fs, &gitignore, &mcp);
+            let use_case =
+                ClearUseCase::new(&config, &fs, &gitignore, &mcp).with_manifest(&manifest);
             let removed = use_case
                 .execute(ClearOptions {
                     project_root,
@@ -384,7 +388,8 @@ fn run_inner() -> Result<(), CliError> {
                         &git_untracker,
                         &mcp,
                         &agent_writer,
-                    );
+                    )
+                    .with_manifest(&manifest);
                     let project_root_for_apply = args.project_root.clone().unwrap_or_else(|| {
                         env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
                     });

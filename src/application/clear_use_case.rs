@@ -5,14 +5,16 @@ use std::path::{Path, PathBuf};
 use rayon::prelude::*;
 
 use crate::application::apply_use_case::{instruction_output_path, resolve_selected_agents};
-use crate::application::ports::{ConfigPort, FileSystemPort, GitignorePort, McpPort};
+use crate::application::ports::{ConfigPort, FileSystemPort, GitignorePort, ManifestPort, McpPort};
 use crate::domain::agent::{all_agents, AgentDefinition};
 use crate::domain::config::LoadedConfig;
 use crate::domain::constants::{
     CLAUDE_SUBAGENTS_PATH, CODEX_SUBAGENTS_PATH, COPILOT_SUBAGENTS_PATH, CURSOR_SUBAGENTS_PATH,
-    GENERATED_BY_IMRULE_MARKER, LEGACY_DIR_NAME,
+    GENERATED_BY_IMRULE_MARKER, IMRULE_CACHE_PATH, LEGACY_DIR_NAME,
 };
 use crate::domain::error::ImruleError;
+use crate::domain::manifest::ApplyManifest;
+use crate::domain::mcp::is_native_mcp_content_empty;
 
 /// Runtime options for `imrule clear`.
 #[derive(Debug, Clone)]
@@ -31,6 +33,7 @@ pub struct ClearUseCase<'a> {
     fs_port: &'a dyn FileSystemPort,
     gitignore_port: &'a dyn GitignorePort,
     mcp_port: &'a dyn McpPort,
+    manifest_port: Option<&'a dyn ManifestPort>,
 }
 
 impl<'a> ClearUseCase<'a> {
@@ -45,7 +48,16 @@ impl<'a> ClearUseCase<'a> {
             fs_port,
             gitignore_port,
             mcp_port,
+            manifest_port: None,
         }
+    }
+
+    /// Lets clear reach outputs the current configuration no longer describes —
+    /// MCP servers deleted from `imrule.toml` after they were propagated, for
+    /// instance — by consulting what the last apply recorded.
+    pub fn with_manifest(mut self, manifest_port: &'a dyn ManifestPort) -> Self {
+        self.manifest_port = Some(manifest_port);
+        self
     }
 
     /// Removes all imrule-generated files for selected agents.
@@ -69,7 +81,22 @@ impl<'a> ClearUseCase<'a> {
         };
 
         // Collect MCP keys before any deletion so native configs can be cleaned.
-        let imrule_mcp_keys = self.collect_mcp_keys(&options.project_root, &config)?;
+        // The current config only describes servers that still exist; the last
+        // apply's manifest also names the ones since deleted from it, which are
+        // exactly the ones that would otherwise stay orphaned in agent configs.
+        // `--agents` narrows a clear to the agents named, so the manifest — which
+        // spans every agent — is only safe to act on for a full clear.
+        let full_clear = options.agents.is_none();
+        let manifest = match (full_clear, self.manifest_port) {
+            (true, Some(port)) => port.read_manifest(&options.project_root)?,
+            _ => None,
+        };
+        let mut imrule_mcp_keys = self.collect_mcp_keys(&options.project_root, &config)?;
+        if let Some(manifest) = &manifest {
+            imrule_mcp_keys.extend(manifest.mcp_servers.iter().cloned());
+            imrule_mcp_keys.sort();
+            imrule_mcp_keys.dedup();
+        }
 
         // Resolve output paths using the same logic as apply (respects custom output_path from config).
         let output_paths =
@@ -99,6 +126,14 @@ impl<'a> ClearUseCase<'a> {
         // Remove imrule-managed keys from native MCP configs and delete empty ones.
         self.clear_mcp_configs(&options, &selected_agents, &imrule_mcp_keys, &mut removed)?;
 
+        // Also clean the exact files the last apply wrote. `get_native_mcp_path`
+        // resolves today's preferred location, which can differ from where an
+        // earlier version wrote, and an agent dropped from the config is not in
+        // `selected_agents` at all when `--agents` narrows the run.
+        if let Some(manifest) = &manifest {
+            self.clear_recorded_mcp_targets(&options, manifest, &imrule_mcp_keys, &mut removed)?;
+        }
+
         // Prune empty parent directories left after all file removals.
         if !options.dry_run {
             for path in &output_paths {
@@ -112,6 +147,20 @@ impl<'a> ClearUseCase<'a> {
         if !options.dry_run {
             self.gitignore_port
                 .update_gitignore(&options.project_root, &[], ".gitignore")?;
+        }
+
+        // Drop the apply state files: with every generated asset gone there is
+        // nothing left for them to describe. A narrowed clear leaves them, since
+        // the agents it skipped still have assets the manifest accounts for.
+        if !options.dry_run && full_clear {
+            if let Some(port) = self.manifest_port {
+                port.remove_manifest(&options.project_root)?;
+            }
+            let cache = options.project_root.join(IMRULE_CACHE_PATH);
+            if self.fs_port.file_exists(&cache) {
+                self.fs_port.remove_file(&cache)?;
+                removed.push(cache);
+            }
         }
 
         // Optionally remove .imrule/ (and legacy .ruler/) source directories.
@@ -285,6 +334,40 @@ impl<'a> ClearUseCase<'a> {
         Ok(())
     }
 
+    /// Strips imrule-managed keys from the native MCP files the last apply
+    /// actually wrote, whatever the current config says about them.
+    fn clear_recorded_mcp_targets(
+        &self,
+        options: &ClearOptions,
+        manifest: &ApplyManifest,
+        imrule_mcp_keys: &[String],
+        removed: &mut Vec<PathBuf>,
+    ) -> Result<(), ImruleError> {
+        if imrule_mcp_keys.is_empty() {
+            return Ok(());
+        }
+        for target in &manifest.mcp_targets {
+            let native_path = options.project_root.join(&target.path);
+            if !self.fs_port.file_exists(&native_path) {
+                continue;
+            }
+            if removed.contains(&native_path) {
+                continue;
+            }
+            if options.dry_run {
+                removed.push(native_path);
+                continue;
+            }
+            self.remove_mcp_keys(&native_path, &target.server_key, imrule_mcp_keys)?;
+            self.remove_mcp_file_if_empty(&native_path)?;
+            removed.push(native_path.clone());
+            if let Some(parent) = native_path.parent() {
+                self.prune_empty_parents(parent, &options.project_root)?;
+            }
+        }
+        Ok(())
+    }
+
     fn remove_if_generated(&self, path: &Path, dry_run: bool) -> Result<bool, ImruleError> {
         let content = match self.fs_port.read_text(path) {
             Ok(c) => c,
@@ -429,28 +512,10 @@ impl<'a> ClearUseCase<'a> {
             return Ok(());
         }
         let content = self.fs_port.read_text(native_path)?;
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-            if is_json_effectively_empty(&val) {
-                self.fs_port.remove_file(native_path)?;
-            }
+        if is_native_mcp_content_empty(&content) {
+            self.fs_port.remove_file(native_path)?;
         }
         Ok(())
-    }
-}
-
-/// Returns true if a JSON value contains no meaningful data (only empty objects/arrays/nulls).
-fn is_json_effectively_empty(val: &serde_json::Value) -> bool {
-    match val {
-        serde_json::Value::Null => true,
-        // A file is "empty" only when it has no keys, or every value is itself
-        // empty. A `$schema` (or any other) key with a non-empty value counts as
-        // meaningful user data — imrule never writes `$schema`, so it is always
-        // user/tool-authored and must not trigger deletion of the file.
-        serde_json::Value::Object(map) => {
-            map.is_empty() || map.values().all(is_json_effectively_empty)
-        }
-        serde_json::Value::Array(arr) => arr.is_empty(),
-        _ => false,
     }
 }
 

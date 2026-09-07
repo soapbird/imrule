@@ -578,3 +578,47 @@ fn is_environment_variable_name(name: &str) -> bool {
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
+
+/// Returns true when a JSON value carries no meaningful data (only empty
+/// objects, arrays, or nulls).
+///
+/// A `$schema` key — or any other key with a non-empty value — counts as
+/// meaningful: ImRule never writes one, so it is always user- or tool-authored
+/// and must not let a cleanup delete the file.
+pub fn is_json_effectively_empty(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::Object(map) => map.is_empty() || map.values().all(is_json_effectively_empty),
+        Value::Array(items) => items.is_empty(),
+        _ => false,
+    }
+}
+
+/// Returns true when a native MCP config file holds nothing worth keeping.
+///
+/// Native configs come in two shapes — JSON for most agents, TOML for Codex and
+/// Mistral — so both are tried before concluding the file still has content.
+/// Anything that parses as neither is reported as non-empty, since an
+/// unrecognized file is more likely the user's than ImRule's.
+pub fn is_native_mcp_content_empty(content: &str) -> bool {
+    if content.trim().is_empty() {
+        return true;
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(content) {
+        return is_json_effectively_empty(&value);
+    }
+    if let Ok(value) = toml::from_str::<toml::Value>(content) {
+        return is_toml_effectively_empty(&value);
+    }
+    false
+}
+
+fn is_toml_effectively_empty(value: &toml::Value) -> bool {
+    match value {
+        toml::Value::Table(table) => {
+            table.is_empty() || table.values().all(is_toml_effectively_empty)
+        }
+        toml::Value::Array(items) => items.is_empty(),
+        _ => false,
+    }
+}
