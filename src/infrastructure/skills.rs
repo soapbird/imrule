@@ -100,3 +100,35 @@ fn copy_recursive(src: &Path, dest: &Path) -> io::Result<()> {
     }
     Ok(())
 }
+
+/// Compares two skill trees byte for byte. Used by `imrule skills update` to
+/// tell an actual update from a re-fetch that changed nothing, so an unchanged
+/// skill is never removed and rewritten.
+pub fn skill_trees_match(left: &Path, right: &Path) -> io::Result<bool> {
+    if left.is_dir() != right.is_dir() {
+        return Ok(false);
+    }
+    if !left.is_dir() {
+        return Ok(fs::read(left)? == fs::read(right)?);
+    }
+
+    let left_entries = sorted_entry_names(left)?;
+    let right_entries = sorted_entry_names(right)?;
+    if left_entries != right_entries {
+        return Ok(false);
+    }
+    for name in left_entries {
+        if !skill_trees_match(&left.join(&name), &right.join(&name))? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn sorted_entry_names(dir: &Path) -> io::Result<Vec<std::ffi::OsString>> {
+    let mut names: Vec<_> = fs::read_dir(dir)?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<Result<_, _>>()?;
+    names.sort();
+    Ok(names)
+}

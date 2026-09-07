@@ -63,6 +63,9 @@ pub enum SkillsCommand {
     /// List installed skills.
     #[command(alias = "ls")]
     List(SkillsListArgs),
+    /// Re-fetch registered skill sources and refresh installed skills.
+    #[command(alias = "up")]
+    Update(SkillsUpdateArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -177,6 +180,25 @@ pub struct SkillsAddArgs {
     /// Project root directory.
     #[arg(long = "project-root", value_name = "DIR")]
     pub project_root: Option<PathBuf>,
+    /// Enable verbose logging.
+    #[arg(long, short = 'v', default_value_t = false)]
+    pub verbose: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct SkillsUpdateArgs {
+    /// Skills to update by name; updates every registered skill when omitted.
+    #[arg(value_name = "NAME")]
+    pub skills: Vec<String>,
+    /// Update skills in the global config directory instead of the project.
+    #[arg(long, short = 'g', default_value_t = false)]
+    pub global: bool,
+    /// Project root directory.
+    #[arg(long = "project-root", value_name = "DIR")]
+    pub project_root: Option<PathBuf>,
+    /// Report what would change without writing files.
+    #[arg(long = "dry-run", default_value_t = false)]
+    pub dry_run: bool,
     /// Enable verbose logging.
     #[arg(long, short = 'v', default_value_t = false)]
     pub verbose: bool,

@@ -15,6 +15,8 @@ use crate::application::mcp_use_case::{
 };
 
 use crate::application::skills_add_use_case::{SkillsAddOptions, SkillsAddUseCase};
+use crate::application::skills_update_use_case::{SkillsUpdateOptions, SkillsUpdateUseCase};
+use crate::domain::skills::SkillUpdateStatus;
 use crate::infrastructure::agent_writer::DefaultAgentWriter;
 use crate::infrastructure::config_loader::TomlConfigLoader;
 use crate::infrastructure::file_system::FsFileSystem;
@@ -114,6 +116,34 @@ fn init_tracing(verbose: bool) {
         .with_writer(std::io::stderr)
         .with_target(false)
         .init();
+}
+
+/// Runs `apply` so freshly installed or updated skills reach every agent's
+/// native skills directory. Both `skills add` and `skills update` end here.
+#[allow(clippy::too_many_arguments)]
+fn sync_skills_to_agents(
+    fs: &FsFileSystem,
+    config: &TomlConfigLoader,
+    gitignore: &GitignoreUpdater,
+    git_untracker: &GitUntracker,
+    mcp: &JsonMcpStorage,
+    manifest: &JsonApplyManifest,
+    project_root: PathBuf,
+) -> Result<(), CliError> {
+    println!("Syncing skills to agent directories (running apply)...");
+    let agent_writer = DefaultAgentWriter::new(fs);
+    ApplyUseCase::new(config, fs, gitignore, git_untracker, mcp, &agent_writer)
+        .with_manifest(manifest)
+        .execute(ApplyOptions {
+            project_root,
+            agents: None,
+            config: None,
+            dry_run: false,
+            backup: false,
+        })
+        .map_err(|err| CliError::new(1, err.to_string()))?;
+    println!("Skills synced to agent directories.");
+    Ok(())
 }
 
 fn run_inner() -> Result<(), CliError> {
@@ -355,7 +385,7 @@ fn run_inner() -> Result<(), CliError> {
                     .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
                 let fetcher =
                     GitSkillFetcher::new().map_err(|e| CliError::new(1, e.to_string()))?;
-                let use_case = SkillsAddUseCase::new(&fetcher, &fs);
+                let use_case = SkillsAddUseCase::new(&fetcher, &fs, &config, &config);
                 let result = use_case
                     .execute(SkillsAddOptions {
                         project_root,
@@ -378,31 +408,81 @@ fn run_inner() -> Result<(), CliError> {
                         println!("  - {name}");
                     }
 
-                    println!("Syncing skills to agent directories (running apply)...");
-                    // Run apply to sync skills to agent directories.
-                    let agent_writer = DefaultAgentWriter::new(&fs);
-                    let apply_use_case = ApplyUseCase::new(
-                        &config,
-                        &fs,
-                        &gitignore,
-                        &git_untracker,
-                        &mcp,
-                        &agent_writer,
-                    )
-                    .with_manifest(&manifest);
                     let project_root_for_apply = args.project_root.clone().unwrap_or_else(|| {
                         env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
                     });
-                    apply_use_case
-                        .execute(ApplyOptions {
-                            project_root: project_root_for_apply,
-                            agents: None,
-                            config: None,
-                            dry_run: false,
-                            backup: false,
-                        })
-                        .map_err(|err| CliError::new(1, err.to_string()))?;
-                    println!("Skills synced to agent directories.");
+                    sync_skills_to_agents(
+                        &fs,
+                        &config,
+                        &gitignore,
+                        &git_untracker,
+                        &mcp,
+                        &manifest,
+                        project_root_for_apply,
+                    )?;
+                }
+                Ok(())
+            }
+            SkillsCommand::Update(args) => {
+                init_tracing(args.verbose);
+                let project_root = args
+                    .project_root
+                    .clone()
+                    .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+                let fetcher =
+                    GitSkillFetcher::new().map_err(|e| CliError::new(1, e.to_string()))?;
+                let use_case = SkillsUpdateUseCase::new(&fetcher, &fs, &config);
+                let skill_names = if args.skills.is_empty() {
+                    None
+                } else {
+                    Some(args.skills.clone())
+                };
+                let result = use_case
+                    .execute(SkillsUpdateOptions {
+                        project_root: project_root.clone(),
+                        skill_names,
+                        global: args.global,
+                        dry_run: args.dry_run,
+                    })
+                    .map_err(|err| CliError::new(1, err.to_string()))?;
+
+                if result.outcomes.is_empty() {
+                    println!(
+                        "No registered skill sources. Run `imrule skills add <source>` first."
+                    );
+                    return Ok(());
+                }
+
+                for outcome in &result.outcomes {
+                    let label = match outcome.status {
+                        SkillUpdateStatus::Updated if args.dry_run => "would update",
+                        SkillUpdateStatus::Updated => "updated",
+                        SkillUpdateStatus::Reinstalled if args.dry_run => "would reinstall",
+                        SkillUpdateStatus::Reinstalled => "reinstalled",
+                        SkillUpdateStatus::Unchanged => "unchanged",
+                        SkillUpdateStatus::MissingInSource => "missing in source",
+                        SkillUpdateStatus::Failed => "failed",
+                    };
+                    println!("  - {} [{label}] ({})", outcome.name, outcome.source);
+                    if let Some(detail) = &outcome.detail {
+                        println!("      {detail}");
+                    }
+                }
+
+                if result.changed() && !args.dry_run {
+                    sync_skills_to_agents(
+                        &fs,
+                        &config,
+                        &gitignore,
+                        &git_untracker,
+                        &mcp,
+                        &manifest,
+                        project_root,
+                    )?;
+                }
+
+                if result.has_failures() {
+                    return Err(CliError::new(1, "some skill sources could not be fetched"));
                 }
                 Ok(())
             }

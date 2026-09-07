@@ -2,10 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::application::ports::{FileSystemPort, SkillFetcherPort};
+use crate::application::ports::{ConfigPort, ConfigWritePort, FileSystemPort, SkillFetcherPort};
 use crate::domain::config::SkillInfo;
 use crate::domain::error::ImruleError;
-use crate::domain::skills::parse_skill_source;
+use crate::domain::skills::{parse_skill_source, skill_source_key};
 use crate::infrastructure::skills::{copy_skills_directory, walk_skills_tree};
 
 /// Runtime options for `imrule skills add`.
@@ -29,11 +29,23 @@ pub struct SkillsAddResult {
 pub struct SkillsAddUseCase<'a> {
     fetcher: &'a dyn SkillFetcherPort,
     fs_port: &'a dyn FileSystemPort,
+    config_port: &'a dyn ConfigPort,
+    config_write_port: &'a dyn ConfigWritePort,
 }
 
 impl<'a> SkillsAddUseCase<'a> {
-    pub fn new(fetcher: &'a dyn SkillFetcherPort, fs_port: &'a dyn FileSystemPort) -> Self {
-        Self { fetcher, fs_port }
+    pub fn new(
+        fetcher: &'a dyn SkillFetcherPort,
+        fs_port: &'a dyn FileSystemPort,
+        config_port: &'a dyn ConfigPort,
+        config_write_port: &'a dyn ConfigWritePort,
+    ) -> Self {
+        Self {
+            fetcher,
+            fs_port,
+            config_port,
+            config_write_port,
+        }
     }
 
     pub fn execute(&self, options: SkillsAddOptions) -> Result<SkillsAddResult, ImruleError> {
@@ -80,16 +92,7 @@ impl<'a> SkillsAddUseCase<'a> {
         }
 
         // Determine target directory.
-        let skills_base = if options.global {
-            let xdg = crate::domain::constants::xdg_config_home().join("imrule");
-            xdg.join("skills")
-        } else {
-            let imrule_dir = self
-                .fs_port
-                .find_imrule_dir(&options.project_root, true)
-                .unwrap_or_else(|| options.project_root.join(".imrule"));
-            imrule_dir.join("skills")
-        };
+        let skills_base = resolve_skills_base(self.fs_port, &options.project_root, options.global);
 
         self.fs_port
             .ensure_dir_exists(&skills_base)
@@ -104,16 +107,70 @@ impl<'a> SkillsAddUseCase<'a> {
             installed.push(skill.name.clone());
         }
 
+        self.record_sources(
+            &options,
+            &skill_source_key(&source, &options.source),
+            &installed,
+        )?;
+
         Ok(SkillsAddResult {
             listed: Vec::new(),
             installed,
         })
     }
+
+    /// Records where each installed skill came from, so `imrule skills update`
+    /// can fetch the same source again later.
+    fn record_sources(
+        &self,
+        options: &SkillsAddOptions,
+        source_key: &str,
+        installed: &[String],
+    ) -> Result<(), ImruleError> {
+        if installed.is_empty() {
+            return Ok(());
+        }
+        let config_root = effective_config_root(&options.project_root, options.global);
+        let mut config = self.config_port.load_config(&config_root, None, None)?;
+        let skills = config.skills.get_or_insert_with(Default::default);
+        for name in installed {
+            skills.sources.insert(name.clone(), source_key.to_string());
+        }
+        self.config_write_port
+            .save_config(&config_root, None, &config)
+    }
+}
+
+/// Resolves the directory installed skills live in.
+pub fn resolve_skills_base(
+    fs_port: &dyn FileSystemPort,
+    project_root: &Path,
+    global: bool,
+) -> PathBuf {
+    if global {
+        crate::domain::constants::xdg_config_home()
+            .join("imrule")
+            .join("skills")
+    } else {
+        let imrule_dir = fs_port
+            .find_imrule_dir(project_root, true)
+            .unwrap_or_else(|| project_root.join(".imrule"));
+        imrule_dir.join("skills")
+    }
+}
+
+/// Resolves the root the skill source registry is read from and written to.
+pub fn effective_config_root(project_root: &Path, global: bool) -> PathBuf {
+    if global {
+        crate::domain::constants::xdg_config_home().join("imrule")
+    } else {
+        project_root.to_path_buf()
+    }
 }
 
 /// Discovers skills from a fetched remote/local source directory.
 /// Searches for SKILL.md files in common locations compatible with vercel-labs/skills format.
-fn discover_remote_skills(root: &Path) -> Result<Vec<SkillInfo>, ImruleError> {
+pub fn discover_remote_skills(root: &Path) -> Result<Vec<SkillInfo>, ImruleError> {
     let mut all_skills = Vec::new();
 
     // Direct walk of the root — finds skills at any depth.
