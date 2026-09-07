@@ -540,3 +540,60 @@ fn find_all_imrule_dirs_discovers_ruler_dirs() {
     assert!(rels.contains(&".ruler".to_string()));
     assert!(rels.contains(&"subdir/.imrule".to_string()));
 }
+
+#[test]
+fn skills_sources_round_trip_through_the_config_file() {
+    use imrule::application::ports::ConfigWritePort;
+
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        "# keep me\nagents = [\"claude\"]\n\n[skills]\nenabled = true\n\n[skills.sources]\nalpha = \"org/one\"\n",
+    )
+    .unwrap();
+
+    let loader = TomlConfigLoader::new().with_xdg_home(root.join("xdg"));
+    let mut config = loader.load_config(root, None, None).unwrap();
+    let skills = config.skills.clone().unwrap();
+    assert_eq!(skills.enabled, Some(true));
+    assert_eq!(skills.sources.get("alpha"), Some(&"org/one".to_string()));
+
+    config
+        .skills
+        .as_mut()
+        .unwrap()
+        .sources
+        .insert("beta".to_string(), "org/two".to_string());
+    loader.save_config(root, None, &config).unwrap();
+
+    let written = fs::read_to_string(root.join(".imrule/imrule.toml")).unwrap();
+    assert!(written.contains("# keep me"), "comments survive the write");
+    assert!(written.contains("enabled = true"), "[skills] keys survive");
+    assert!(written.contains("beta = \"org/two\""));
+    assert!(written.contains("alpha = \"org/one\""));
+
+    let reloaded = loader.load_config(root, None, None).unwrap();
+    assert_eq!(reloaded.skills.unwrap().sources.len(), 2);
+}
+
+#[test]
+fn save_config_leaves_the_skills_table_out_when_nothing_is_registered() {
+    use imrule::application::ports::ConfigWritePort;
+
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(root.join(".imrule/imrule.toml"), "agents = [\"claude\"]\n").unwrap();
+
+    let loader = TomlConfigLoader::new().with_xdg_home(root.join("xdg"));
+    let config = loader.load_config(root, None, None).unwrap();
+    loader.save_config(root, None, &config).unwrap();
+
+    let written = fs::read_to_string(root.join(".imrule/imrule.toml")).unwrap();
+    assert!(
+        !written.contains("[skills"),
+        "an unrelated write must not grow an empty registry:\n{written}"
+    );
+}
