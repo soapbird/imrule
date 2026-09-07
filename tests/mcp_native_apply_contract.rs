@@ -222,14 +222,16 @@ fn apply_writes_kimi_mcp_servers_to_project_config() {
         config["mcpServers"]["github"],
         json!({
             "command": "npx",
-            "args": ["-y", "@modelcontextprotocol/server-github"]
+            "args": ["-y", "@modelcontextprotocol/server-github"],
+            "timeout": 15000
         }),
         "Kimi stdio MCP servers do not use an explicit type field"
     );
     assert_eq!(
         config["mcpServers"]["linear"],
         json!({
-            "url": "https://mcp.linear.app/mcp"
+            "url": "https://mcp.linear.app/mcp",
+            "timeout": 15000
         }),
         "Kimi HTTP MCP servers use a plain url without an explicit type field"
     );
@@ -375,12 +377,14 @@ fn apply_writes_opencode_servers_under_native_mcp_key() {
             "github": {
                 "type": "local",
                 "command": ["npx", "-y", "@modelcontextprotocol/server-github"],
-                "enabled": true
+                "enabled": true,
+                "timeout": 15000
             },
             "linear": {
                 "type": "remote",
                 "url": "https://mcp.linear.app/mcp",
-                "enabled": true
+                "enabled": true,
+                "timeout": 15000
             }
         })
     );
@@ -753,8 +757,7 @@ fn version_cache_struct_round_trip_through_serde_roundabout() {
     assert_eq!(deserialized.resolved_version(), "1.2.3-rc.1+build.4");
     assert_eq!(deserialized.resolved_at(), 1_700_000_001);
 
-    let with_extra = format!(
-        r#"{{"package":"mcp-remote","resolved_version":"0.1.0","resolved_at":1,"extra":"leak"}}"#
-    );
-    assert!(serde_json::from_str::<McpRemoteVersionCache>(&with_extra).is_err());
+    let with_extra =
+        r#"{"package":"mcp-remote","resolved_version":"0.1.0","resolved_at":1,"extra":"leak"}"#;
+    assert!(serde_json::from_str::<McpRemoteVersionCache>(with_extra).is_err());
 }

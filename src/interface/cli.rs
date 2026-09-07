@@ -105,6 +105,10 @@ pub struct McpAddArgs {
     #[arg(long, value_name = "KEY=VALUE")]
     pub header: Option<Vec<String>>,
 
+    /// Connection window in milliseconds, for agents whose MCP format honors it.
+    #[arg(long, value_name = "MS")]
+    pub timeout: Option<u64>,
+
     /// Project root directory.
     #[arg(long = "project-root", value_name = "DIR")]
     pub project_root: Option<PathBuf>,

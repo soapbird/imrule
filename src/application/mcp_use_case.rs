@@ -27,6 +27,8 @@ pub struct McpAddOptions {
     pub url: Option<String>,
     pub env: BTreeMap<String, String>,
     pub headers: BTreeMap<String, String>,
+    /// Optional connection window in milliseconds for agents that honor it.
+    pub timeout: Option<u64>,
 }
 
 /// Runtime options for `imrule mcp remove`.
@@ -288,6 +290,7 @@ fn build_definition(options: &McpAddOptions) -> Result<McpServerDefinition, Imru
                 args: options.args.clone(),
                 env: options.env.clone(),
                 headers: BTreeMap::new(),
+                timeout: options.timeout,
             })
         }
         McpTransport::Http | McpTransport::Sse => {
@@ -302,6 +305,7 @@ fn build_definition(options: &McpAddOptions) -> Result<McpServerDefinition, Imru
                 args: Vec::new(),
                 env: BTreeMap::new(),
                 headers: options.headers.clone(),
+                timeout: options.timeout,
             })
         }
     }

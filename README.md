@@ -165,6 +165,7 @@ imrule mcp add notify --transport sse https://example.com/sse
 --transport stdio|http|sse   # transport 프로토콜(기본값: stdio)
 --env KEY=VALUE, -e          # stdio 서버 환경 변수(반복 가능)
 --header KEY=VALUE           # http/sse 서버 헤더(반복 가능)
+--timeout MS                 # 연결 대기 시간(밀리초). 이 값을 이해하는 에이전트에만 기록
 --global, -g                 # 전역 설정(~/.config/imrule/imrule.toml)에 기록
 --dry-run                    # 쓰기 없이 미리보기
 --project-root DIR           # 프로젝트 루트 지정
@@ -318,6 +319,16 @@ env = { GITHUB_TOKEN = "xxx" }
 transport = "http"
 url = "https://mcp.linear.app/mcp"
 headers = { Authorization = "Bearer xxx" }
+```
+
+선택 항목인 `timeout`(밀리초)은 서버 연결을 기다리는 시간입니다. `apply`는 `timeout`이 없는 서버에 모두 `15000`을 채워 넣고, 직접 선언한 값은 그대로 유지합니다. 이 값은 `timeout`을 이해하는 에이전트(Gajae Code, OpenCode, Kimi 계열)에만 기록되고 나머지 에이전트의 설정에서는 제외됩니다. 기본값이 필요한 이유는 Gajae Code가 연결 대기 시간을 선언하지 않은 서버를 세션 시작 250ms 후 모두 정리하기 때문입니다 — `npx` 기반 stdio 서버는 이 시간 안에 뜨지 못합니다.
+
+```toml
+[mcp_servers.github]
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+timeout = 30000
 ```
 
 여기 선언한 서버는 `imrule apply` 실행 시 `.imrule/mcp.json`에 있는 서버와 합쳐집니다. 둘 중 어느 소스를 사용해도 됩니다. `apply` 때 모든 서버는 TOML 기반 에이전트(Codex, OpenCode, Mistral, OpenHands)를 포함한 각 에이전트의 네이티브 MCP 설정으로 기록되고, `imrule clear`가 다시 제거합니다.

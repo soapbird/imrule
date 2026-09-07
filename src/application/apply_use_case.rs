@@ -7,15 +7,19 @@ use rayon::prelude::*;
 
 use crate::application::mcp_use_case::{resolve_mcp_remote_version, McpRemoteVersionResolverPort};
 use crate::application::ports::{
-    AgentWriterPort, CachePort, ConfigPort, FileSystemPort, GitTrackingPort, GitignorePort, McpPort,
+    AgentWriterPort, CachePort, ConfigPort, FileSystemPort, GitTrackingPort, GitignorePort,
+    ManifestPort, McpPort,
 };
 use crate::domain::agent::{all_agents, AgentDefinition, AgentOutputPaths};
 use crate::domain::config::{AgentConfig, LoadedConfig, McpRemoteTransport, McpStrategy};
-use crate::domain::constants::normalize_path_separators;
+use crate::domain::constants::{
+    normalize_path_separators, GENERATED_BY_IMRULE_MARKER, IMRULE_GENERATED_STATE_PATHS,
+};
 use crate::domain::error::ImruleError;
+use crate::domain::manifest::ApplyManifest;
 use crate::domain::mcp::{
     build_imrule_mcp_config, expand_mcp_environment_variables, filter_mcp_config_for_agent,
-    filter_mcp_config_for_agent_with_package_spec, merge_mcp,
+    filter_mcp_config_for_agent_with_package_spec, is_native_mcp_content_empty, merge_mcp,
     validate_mcp_config_for_remote_transport, McpRemoteVersionCache,
 };
 use crate::domain::rules::concatenate_rules;
@@ -30,6 +34,16 @@ pub struct ApplyOptions {
     pub config: Option<PathBuf>,
     pub dry_run: bool,
     pub backup: bool,
+}
+
+/// What the MCP stage of an apply run propagated, kept together so the manifest
+/// can record both the files written and the server names written into them.
+#[derive(Debug, Default)]
+struct McpApplyOutcome {
+    /// Native MCP config path paired with that agent's server section key.
+    targets: Vec<(PathBuf, String)>,
+    /// Server names propagated into those files.
+    servers: Vec<String>,
 }
 
 /// Outcome of an apply run.
@@ -52,6 +66,7 @@ pub struct ApplyUseCase<'a> {
     agent_writer: &'a dyn AgentWriterPort,
     cache_port: Option<&'a dyn CachePort>,
     version_resolver: Option<&'a dyn McpRemoteVersionResolverPort>,
+    manifest_port: Option<&'a dyn ManifestPort>,
 }
 
 impl<'a> ApplyUseCase<'a> {
@@ -72,7 +87,15 @@ impl<'a> ApplyUseCase<'a> {
             agent_writer,
             cache_port: None,
             version_resolver: None,
+            manifest_port: None,
         }
+    }
+
+    /// Enables reconciliation against the previous run: outputs this apply no
+    /// longer produces are cleaned up instead of being orphaned on disk.
+    pub fn with_manifest(mut self, manifest_port: &'a dyn ManifestPort) -> Self {
+        self.manifest_port = Some(manifest_port);
+        self
     }
 
     /// Enables project-scoped concrete `mcp-remote` version reuse.
@@ -144,9 +167,10 @@ impl<'a> ApplyUseCase<'a> {
             .collect();
         let mut written_paths: Vec<PathBuf> = rule_results?.into_iter().flatten().collect();
 
+        let mut mcp_outcome = McpApplyOutcome::default();
         if config.mcp.as_ref().and_then(|mcp| mcp.enabled) != Some(false) {
-            let mcp_paths = self.apply_mcp_configs(&options, &config, &selected_agents)?;
-            written_paths.extend(mcp_paths);
+            mcp_outcome = self.apply_mcp_configs(&options, &config, &selected_agents)?;
+            written_paths.extend(mcp_outcome.targets.iter().map(|(path, _)| path.clone()));
         }
 
         let skills_enabled = config
@@ -168,6 +192,41 @@ impl<'a> ApplyUseCase<'a> {
         if subagents_enabled {
             let subagents_paths = self.apply_subagents(&options, &selected_agents)?;
             written_paths.extend(subagents_paths);
+        }
+
+        // Reconcile against the previous run before touching `.gitignore`, so
+        // outputs this run no longer produces are removed from disk instead of
+        // silently falling out of the managed block and becoming committable.
+        //
+        // Only a full run may do this. `--agents` narrows a single invocation;
+        // the agents it leaves out have not been dropped from the project, so
+        // their files must survive and stay recorded.
+        let full_run = options.agents.is_none();
+        let mut manifest = ApplyManifest::new(
+            &options.project_root,
+            &written_paths,
+            &mcp_outcome.servers,
+            &mcp_outcome.targets,
+        );
+        if !options.dry_run {
+            if let Some(manifest_port) = self.manifest_port {
+                if let Some(previous) = manifest_port.read_manifest(&options.project_root)? {
+                    if full_run {
+                        self.prune_stale_outputs(&options.project_root, &previous, &manifest)?;
+                    } else {
+                        manifest = manifest.merged_with(&previous);
+                    }
+                }
+                manifest_port.write_manifest(&options.project_root, &manifest)?;
+                // The manifest and the version cache live inside `.imrule/` but
+                // are generated, not authored — ignore them like any other output.
+                for generated in IMRULE_GENERATED_STATE_PATHS {
+                    let path = options.project_root.join(generated);
+                    if self.fs_port.file_exists(&path) && !written_paths.contains(&path) {
+                        written_paths.push(path);
+                    }
+                }
+            }
         }
 
         let gitignore_enabled = config
@@ -214,13 +273,13 @@ impl<'a> ApplyUseCase<'a> {
         options: &ApplyOptions,
         config: &LoadedConfig,
         selected_agents: &[AgentDefinition],
-    ) -> Result<Vec<PathBuf>, ImruleError> {
+    ) -> Result<McpApplyOutcome, ImruleError> {
         let json_mcp = self
             .mcp_port
             .read_imrule_mcp_config(&options.project_root)?;
         let Some(mut imrule_mcp) = build_imrule_mcp_config(json_mcp.as_ref(), &config.mcp_servers)
         else {
-            return Ok(Vec::new());
+            return Ok(McpApplyOutcome::default());
         };
         let environment = self.load_mcp_environment(&options.project_root)?;
         expand_mcp_environment_variables(&mut imrule_mcp, &environment);
@@ -272,16 +331,140 @@ impl<'a> ApplyUseCase<'a> {
         let written: Result<Vec<_>, ImruleError> = unique
             .par_iter()
             .map(|(agent, filtered, path)| {
+                let target = (path.clone(), agent.mcp_server_key.to_string());
                 if options.dry_run {
-                    return Ok(path.clone());
+                    return Ok(target);
                 }
                 let existing = self.mcp_port.read_native_mcp(path)?;
                 let merged = merge_mcp(&existing, filtered, strategy, agent.mcp_server_key);
                 self.mcp_port.write_native_mcp(path, &merged)?;
-                Ok(path.clone())
+                Ok(target)
             })
             .collect();
-        written
+
+        Ok(McpApplyOutcome {
+            targets: written?,
+            servers: imrule_mcp
+                .get("mcpServers")
+                .and_then(serde_json::Value::as_object)
+                .map(|servers| servers.keys().cloned().collect())
+                .unwrap_or_default(),
+        })
+    }
+
+    /// Removes outputs the previous run produced that this run no longer does.
+    ///
+    /// Three kinds of drift are reconciled:
+    /// 1. A native MCP config no longer written at all (MCP disabled, the agent
+    ///    deselected) — strip the servers the previous run put there and delete
+    ///    the file when nothing meaningful is left.
+    /// 2. A server dropped from the config while its target file is still
+    ///    written — the merge strategy only ever adds keys, so remove it here.
+    /// 3. A generated rule file, skills root, or subagent directory no longer
+    ///    produced — delete it, but only when it still carries ImRule's marker,
+    ///    so a path the user has since taken over is left alone.
+    fn prune_stale_outputs(
+        &self,
+        project_root: &Path,
+        previous: &ApplyManifest,
+        current: &ApplyManifest,
+    ) -> Result<(), ImruleError> {
+        let dropped_servers = previous.stale_mcp_servers(current);
+
+        for target in previous.stale_mcp_targets(current) {
+            let path = project_root.join(&target.path);
+            if !self.fs_port.file_exists(&path) {
+                continue;
+            }
+            self.remove_mcp_servers(&path, &target.server_key, &previous.mcp_servers)?;
+            self.prune_empty_parents(&path, project_root)?;
+        }
+
+        if !dropped_servers.is_empty() {
+            for target in &current.mcp_targets {
+                let path = project_root.join(&target.path);
+                if !self.fs_port.file_exists(&path) {
+                    continue;
+                }
+                self.remove_mcp_servers(&path, &target.server_key, &dropped_servers)?;
+                self.prune_empty_parents(&path, project_root)?;
+            }
+        }
+
+        for stale in previous.stale_paths(current) {
+            let path = project_root.join(&stale);
+            if !self.fs_port.file_exists(&path) {
+                continue;
+            }
+            if path.is_dir() {
+                self.fs_port.remove_dir_all(&path)?;
+            } else if self
+                .fs_port
+                .read_text(&path)
+                .is_ok_and(|content| content.starts_with(GENERATED_BY_IMRULE_MARKER))
+            {
+                self.fs_port.remove_file(&path)?;
+            } else {
+                continue;
+            }
+            tracing::info!(path = %path.display(), "removed stale generated output");
+            self.prune_empty_parents(&path, project_root)?;
+        }
+
+        Ok(())
+    }
+
+    /// Strips `servers` from a native MCP config, deleting the file when nothing
+    /// meaningful remains. Uses the raw write path so the user's own remaining
+    /// servers are never reshaped.
+    fn remove_mcp_servers(
+        &self,
+        native_path: &Path,
+        server_key: &str,
+        servers: &[String],
+    ) -> Result<(), ImruleError> {
+        if servers.is_empty() {
+            return Ok(());
+        }
+        let mut config = self.mcp_port.read_native_mcp(native_path)?;
+        let Some(object) = config.as_object_mut() else {
+            return Ok(());
+        };
+        for section in [server_key, "mcpServers"] {
+            if section.is_empty() {
+                continue;
+            }
+            if let Some(entries) = object.get_mut(section).and_then(|v| v.as_object_mut()) {
+                for name in servers {
+                    entries.remove(name.as_str());
+                }
+            }
+        }
+        self.mcp_port.write_native_mcp_raw(native_path, &config)?;
+
+        let content = self.fs_port.read_text(native_path)?;
+        if is_native_mcp_content_empty(&content) {
+            self.fs_port.remove_file(native_path)?;
+            tracing::info!(path = %native_path.display(), "removed emptied MCP config");
+        }
+        Ok(())
+    }
+
+    /// Removes now-empty directories from `path`'s parent up to `project_root`.
+    fn prune_empty_parents(&self, path: &Path, project_root: &Path) -> Result<(), ImruleError> {
+        let mut dir = match path.parent() {
+            Some(parent) => parent.to_path_buf(),
+            None => return Ok(()),
+        };
+        while dir != project_root && dir.starts_with(project_root) {
+            if !self.fs_port.remove_dir_if_empty(&dir)? {
+                break;
+            }
+            if !dir.pop() {
+                break;
+            }
+        }
+        Ok(())
     }
 
     fn mcp_remote_version_cache(

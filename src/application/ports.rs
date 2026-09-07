@@ -7,6 +7,7 @@ use serde_json::Value;
 use crate::domain::agent::AgentDefinition;
 use crate::domain::config::{AgentConfig, LoadedConfig};
 use crate::domain::error::ImruleError;
+use crate::domain::manifest::ApplyManifest;
 use crate::domain::mcp::McpRemoteVersionCache;
 use crate::domain::skills::RemoteSkillSource;
 
@@ -115,6 +116,24 @@ pub trait CachePort: Send + Sync {
         project_root: &Path,
         cache: &McpRemoteVersionCache,
     ) -> Result<(), ImruleError>;
+}
+
+/// Reads and records what the previous `apply` generated.
+pub trait ManifestPort: Send + Sync {
+    /// Reads `.imrule/manifest.json`. Returns `None` when it does not exist or
+    /// cannot be understood — a corrupt or future-version manifest must degrade
+    /// to "nothing known" rather than abort an otherwise valid apply.
+    fn read_manifest(&self, project_root: &Path) -> Result<Option<ApplyManifest>, ImruleError>;
+
+    /// Atomically replaces `.imrule/manifest.json`.
+    fn write_manifest(
+        &self,
+        project_root: &Path,
+        manifest: &ApplyManifest,
+    ) -> Result<(), ImruleError>;
+
+    /// Deletes `.imrule/manifest.json`; a no-op when it is already gone.
+    fn remove_manifest(&self, project_root: &Path) -> Result<(), ImruleError>;
 }
 
 /// Reads and writes MCP configuration files.

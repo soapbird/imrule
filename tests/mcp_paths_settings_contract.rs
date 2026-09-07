@@ -69,6 +69,60 @@ fn filters_mcp_by_agent_capabilities() {
 }
 
 #[test]
+fn servers_without_a_declared_timeout_get_the_default_connection_window() {
+    let agents = all_agents();
+    let gjc = agents
+        .iter()
+        .find(|agent| agent.identifier == "gjc")
+        .unwrap();
+
+    let config = json!({
+        "mcpServers": {
+            "declared": { "type": "stdio", "command": "npx", "args": ["-y", "pkg"], "timeout": 30000 },
+            "stdio": { "type": "stdio", "command": "npx", "args": ["-y", "pkg"] },
+            "remote": { "type": "http", "url": "https://example.test/mcp" }
+        }
+    });
+
+    // GJC tears down anything still connecting 250 ms into startup unless the
+    // server declared a window, so ImRule writes a default for servers that
+    // declare none and preserves an explicit one.
+    assert_eq!(
+        filter_mcp_config_for_agent(&config, gjc, McpRemoteTransport::Native),
+        Some(json!({
+            "mcpServers": {
+                "declared": { "type": "stdio", "command": "npx", "args": ["-y", "pkg"], "timeout": 30000 },
+                "remote": { "type": "http", "url": "https://example.test/mcp", "timeout": 15000 },
+                "stdio": { "type": "stdio", "command": "npx", "args": ["-y", "pkg"], "timeout": 15000 }
+            }
+        }))
+    );
+
+    // Every timeout-aware agent gets the same treatment; the rest never see the key.
+    for agent in agents.iter().filter(|agent| agent_supports_mcp(agent)) {
+        let Some(filtered) =
+            filter_mcp_config_for_agent(&config, agent, McpRemoteTransport::Native)
+        else {
+            continue;
+        };
+        let id = agent.identifier;
+        for (name, server) in filtered["mcpServers"].as_object().unwrap() {
+            let timeout = server.get("timeout");
+            if agent.capabilities.mcp_timeout {
+                let expected = if name == "declared" { 30000 } else { 15000 };
+                assert_eq!(
+                    timeout.and_then(serde_json::Value::as_u64),
+                    Some(expected),
+                    "{id} server {name} timeout"
+                );
+            } else {
+                assert!(timeout.is_none(), "{id} server {name} kept a timeout");
+            }
+        }
+    }
+}
+
+#[test]
 fn mcp_remote_mode_bridges_only_url_remote_servers_for_stdio_agents() {
     assert_eq!(McpRemoteTransport::default(), McpRemoteTransport::McpRemote);
     assert_eq!(
@@ -77,16 +131,15 @@ fn mcp_remote_mode_bridges_only_url_remote_servers_for_stdio_agents() {
     );
 
     let agents = all_agents();
-    let both = agents
+    let both = *agents
         .iter()
         .find(|agent| agent.identifier == "firebase")
-        .unwrap()
-        .clone();
-    let mut stdio_only = both.clone();
+        .unwrap();
+    let mut stdio_only = both;
     stdio_only.capabilities.mcp_remote = false;
-    let mut remote_only = both.clone();
+    let mut remote_only = both;
     remote_only.capabilities.mcp_stdio = false;
-    let mut unsupported = both.clone();
+    let mut unsupported = both;
     unsupported.capabilities.mcp_stdio = false;
     unsupported.capabilities.mcp_remote = false;
 
@@ -202,6 +255,40 @@ fn loads_mcp_remote_transport_mode_from_mcp_config() {
         loaded.mcp.unwrap().remote_transport,
         McpRemoteTransport::McpRemote
     );
+
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        "[mcp]\nremote_transport = \"native\"\n",
+    )
+    .unwrap();
+    let loaded = loader.load_config(root, None, None).unwrap();
+    assert_eq!(
+        loaded.mcp.unwrap().remote_transport,
+        McpRemoteTransport::Native,
+        "an explicit native mode still wins"
+    );
+
+    // A missing, empty, or unrecognized value falls back to the bridge rather
+    // than to each agent's native remote transport.
+    for contents in [
+        "",
+        "[mcp]\n",
+        "[mcp]\nremote_transport = \"\"\n",
+        "[mcp]\nremote_transport = \"nativ\"\n",
+        "[mcp]\nremote_transport = 3\n",
+    ] {
+        fs::write(root.join(".imrule/imrule.toml"), contents).unwrap();
+        let loaded = loader.load_config(root, None, None).unwrap();
+        let transport = loaded
+            .mcp
+            .map(|mcp| mcp.remote_transport)
+            .unwrap_or_default();
+        assert_eq!(
+            transport,
+            McpRemoteTransport::McpRemote,
+            "unset remote_transport should default to the bridge for {contents:?}"
+        );
+    }
 }
 
 #[test]
@@ -245,6 +332,55 @@ fn merges_mcp_configs_with_key_translation_and_strategy() {
             "mcpServers"
         ),
         json!({ "mcpServers": { "only": { "command": "x" } } })
+    );
+}
+
+#[test]
+fn merge_keeps_agent_written_oauth_credentials_on_managed_servers() {
+    // GJC's `/mcp reauth` writes the credential back into the native file under
+    // the same server name ImRule manages; `apply` must not drop it.
+    let native = json!({
+        "mcpServers": {
+            "notion": {
+                "type": "http",
+                "url": "https://mcp.notion.com/mcp",
+                "auth": { "type": "oauth", "credentialId": "cred-1", "tokenUrl": "https://example.test/token" },
+                "oauth": { "clientId": "client-1" }
+            }
+        }
+    });
+    let incoming = json!({
+        "mcpServers": {
+            "notion": { "type": "http", "url": "https://mcp.notion.com/mcp", "timeout": 15000 }
+        }
+    });
+
+    let merged = merge_mcp(&native, &incoming, McpStrategy::Merge, "mcpServers");
+    assert_eq!(
+        merged["mcpServers"]["notion"],
+        json!({
+            "type": "http",
+            "url": "https://mcp.notion.com/mcp",
+            "timeout": 15000,
+            "auth": { "type": "oauth", "credentialId": "cred-1", "tokenUrl": "https://example.test/token" },
+            "oauth": { "clientId": "client-1" }
+        })
+    );
+
+    // An incoming definition that declares its own auth still wins.
+    let explicit = json!({
+        "mcpServers": {
+            "notion": {
+                "type": "http",
+                "url": "https://mcp.notion.com/mcp",
+                "auth": { "type": "apikey" }
+            }
+        }
+    });
+    let merged = merge_mcp(&native, &explicit, McpStrategy::Merge, "mcpServers");
+    assert_eq!(
+        merged["mcpServers"]["notion"]["auth"],
+        json!({ "type": "apikey" })
     );
 }
 

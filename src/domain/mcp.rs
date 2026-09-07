@@ -293,10 +293,41 @@ pub fn filter_mcp_config_for_agent_with_package_spec(
     if filtered.is_empty() {
         None
     } else {
+        for server_config in filtered.values_mut() {
+            normalize_server_timeout(server_config, agent);
+        }
         let mut result = Map::new();
         result.insert("mcpServers".to_string(), Value::Object(filtered));
         Some(Value::Object(result))
     }
+}
+
+/// Connection window written for every server that declares none.
+///
+/// An agent that treats a missing `timeout` as "do not wait" kills servers that
+/// are merely slow to hand off. GJC is the sharp case: it blocks session startup
+/// for only 250 ms when no server in the batch declares a window, then tears
+/// down everything still connecting, so an `npx`-spawned stdio server (seconds
+/// to hand off) always died with "MCP server connection timed out during
+/// startup". A declared window keeps such a server connecting in the background
+/// instead, and costs nothing for servers that come up promptly.
+const DEFAULT_MCP_TIMEOUT_MS: u64 = 15_000;
+
+/// Drops `timeout` for agents whose native MCP format does not understand it,
+/// and fills in [`DEFAULT_MCP_TIMEOUT_MS`] for those that do.
+fn normalize_server_timeout(server_config: &mut Value, agent: &AgentDefinition) {
+    let Some(config) = server_config.as_object_mut() else {
+        return;
+    };
+
+    if !agent.capabilities.mcp_timeout {
+        config.remove("timeout");
+        return;
+    }
+
+    config
+        .entry("timeout".to_string())
+        .or_insert_with(|| json!(DEFAULT_MCP_TIMEOUT_MS));
 }
 
 fn is_http_or_sse(config: &Map<String, Value>) -> bool {
@@ -344,13 +375,44 @@ pub fn merge_mcp(base: &Value, incoming: &Value, strategy: McpStrategy, server_k
     }
 
     let mut merged = extract_servers(base, server_key);
-    for (key, value) in extract_servers(incoming, server_key) {
+    for (key, mut value) in extract_servers(incoming, server_key) {
+        if let Some(existing) = merged.get(&key) {
+            carry_over_agent_owned_keys(existing, &mut value);
+        }
         merged.insert(key, value);
     }
 
     let mut new_base = base.as_object().cloned().unwrap_or_default();
     new_base.insert(server_key.to_string(), Value::Object(merged));
     Value::Object(new_base)
+}
+
+/// Server keys the agent owns rather than ImRule.
+///
+/// An agent's own OAuth flow (GJC's `/mcp reauth`, for one) writes the resulting
+/// credential back into the native MCP file, under the same server name ImRule
+/// manages. Replacing the server object wholesale would drop that credential on
+/// every `apply`, leaving the server permanently unauthorized — so these keys
+/// survive the merge unless the incoming definition sets them itself.
+const AGENT_OWNED_SERVER_KEYS: &[&str] = &["auth", "oauth"];
+
+/// Copies agent-owned keys from the native config onto the incoming definition.
+fn carry_over_agent_owned_keys(existing: &Value, incoming: &mut Value) {
+    let Some(existing) = existing.as_object() else {
+        return;
+    };
+    let Some(incoming) = incoming.as_object_mut() else {
+        return;
+    };
+
+    for key in AGENT_OWNED_SERVER_KEYS {
+        if incoming.contains_key(*key) {
+            continue;
+        }
+        if let Some(value) = existing.get(*key) {
+            incoming.insert((*key).to_string(), value.clone());
+        }
+    }
 }
 
 fn extract_servers(config: &Value, server_key: &str) -> Map<String, Value> {
@@ -386,6 +448,9 @@ pub fn mcp_server_definition_to_json(def: &McpServerDefinition) -> Value {
                     .collect();
                 obj.insert("env".to_string(), Value::Object(env_map));
             }
+            if let Some(timeout) = def.timeout {
+                obj.insert("timeout".to_string(), json!(timeout));
+            }
             Value::Object(obj)
         }
         McpTransport::Http | McpTransport::Sse => {
@@ -406,6 +471,9 @@ pub fn mcp_server_definition_to_json(def: &McpServerDefinition) -> Value {
                     .map(|(k, v)| (k.clone(), Value::String(v.clone())))
                     .collect();
                 obj.insert("headers".to_string(), Value::Object(header_map));
+            }
+            if let Some(timeout) = def.timeout {
+                obj.insert("timeout".to_string(), json!(timeout));
             }
             Value::Object(obj)
         }
@@ -509,4 +577,48 @@ fn is_environment_variable_name(name: &str) -> bool {
         && name
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || character == '_')
+}
+
+/// Returns true when a JSON value carries no meaningful data (only empty
+/// objects, arrays, or nulls).
+///
+/// A `$schema` key — or any other key with a non-empty value — counts as
+/// meaningful: ImRule never writes one, so it is always user- or tool-authored
+/// and must not let a cleanup delete the file.
+pub fn is_json_effectively_empty(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::Object(map) => map.is_empty() || map.values().all(is_json_effectively_empty),
+        Value::Array(items) => items.is_empty(),
+        _ => false,
+    }
+}
+
+/// Returns true when a native MCP config file holds nothing worth keeping.
+///
+/// Native configs come in two shapes — JSON for most agents, TOML for Codex and
+/// Mistral — so both are tried before concluding the file still has content.
+/// Anything that parses as neither is reported as non-empty, since an
+/// unrecognized file is more likely the user's than ImRule's.
+pub fn is_native_mcp_content_empty(content: &str) -> bool {
+    if content.trim().is_empty() {
+        return true;
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(content) {
+        return is_json_effectively_empty(&value);
+    }
+    if let Ok(value) = toml::from_str::<toml::Value>(content) {
+        return is_toml_effectively_empty(&value);
+    }
+    false
+}
+
+fn is_toml_effectively_empty(value: &toml::Value) -> bool {
+    match value {
+        toml::Value::Table(table) => {
+            table.is_empty() || table.values().all(is_toml_effectively_empty)
+        }
+        toml::Value::Array(items) => items.is_empty(),
+        _ => false,
+    }
 }

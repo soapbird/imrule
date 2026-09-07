@@ -371,6 +371,11 @@ fn parse_mcp_servers(
                 .unwrap_or_default(),
             env: parse_string_map(server_table.get("env")),
             headers: parse_string_map(server_table.get("headers")),
+            timeout: server_table
+                .get("timeout")
+                .and_then(Value::as_integer)
+                .and_then(|value| u64::try_from(value).ok())
+                .filter(|value| *value > 0),
         };
 
         // If the TOML table uses `command = ["npx", "-y", ...]` instead of separate args,
@@ -557,6 +562,13 @@ fn sync_mcp_servers_table(
                     );
                 }
             }
+        }
+
+        if let Some(timeout) = def.timeout {
+            server_table.insert(
+                "timeout",
+                toml_edit::Item::Value(toml_edit::Value::from(timeout as i64)),
+            );
         }
     }
 }

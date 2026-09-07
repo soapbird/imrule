@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::application::ports::GitignorePort;
-use crate::domain::constants::normalize_path_separators;
+use crate::domain::constants::{normalize_path_separators, IMRULE_GENERATED_STATE_PATHS};
 use crate::domain::error::ImruleError;
 
 const IMRULE_START_MARKER: &str = "# START ImRule Generated Files";
@@ -93,6 +93,15 @@ fn normalize_output_path(project_root: &Path, path: &Path) -> String {
 }
 
 fn is_imrule_input_path(path: &str) -> bool {
+    // `.imrule/` is the committed source directory, so its contents are inputs
+    // and must stay out of the ignore block — except for the few state files
+    // apply itself generates there, which are outputs like any other.
+    if IMRULE_GENERATED_STATE_PATHS
+        .iter()
+        .any(|generated| path == *generated || path.ends_with(&format!("/{generated}")))
+    {
+        return false;
+    }
     path.contains("/.imrule/")
         || path.starts_with(".imrule/")
         || path.contains("/.ruler/")

@@ -10,12 +10,17 @@
 /tmp/
 /.omx/
 
+# Agent runtime state (session transcripts, caches)
+/.gjc/
+
 # Coverage reports
 /lcov.info
 /cobertura.xml
 
 
 # START ImRule Generated Files
+/.imrule/manifest.json
 /AGENTS.md
 /CLAUDE.md
 # END ImRule Generated Files
+.gbrain-source
