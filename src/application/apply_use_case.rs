@@ -10,7 +10,7 @@ use crate::application::ports::{
     AgentWriterPort, CachePort, ConfigPort, FileSystemPort, GitTrackingPort, GitignorePort,
     ManifestPort, McpPort,
 };
-use crate::domain::agent::{all_agents, AgentDefinition, AgentOutputPaths};
+use crate::domain::agent::{all_agents, find_agent, AgentDefinition, AgentOutputPaths};
 use crate::domain::config::{AgentConfig, LoadedConfig, McpRemoteTransport, McpStrategy};
 use crate::domain::constants::{
     normalize_path_separators, GENERATED_BY_IMRULE_MARKER, IMRULE_GENERATED_STATE_PATHS,
@@ -781,10 +781,10 @@ pub fn resolve_selected_agents(
         if id.is_empty() {
             continue;
         }
-        let Some(agent) = all.iter().find(|agent| agent.identifier == id) else {
+        let Some(agent) = find_agent(id) else {
             return Err(ImruleError::unknown_agent(id));
         };
-        selected.push(*agent);
+        selected.push(agent);
     }
     Ok(selected)
 }

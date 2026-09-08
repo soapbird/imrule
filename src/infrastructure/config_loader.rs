@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use toml::Value;
 
 use crate::application::ports::{ConfigPort, ConfigWritePort};
+use crate::domain::agent::canonical_agent_identifier;
 use crate::domain::config::{
     AgentConfig, GitignoreConfig, LoadedConfig, McpConfig, McpRemoteTransport, McpServerDefinition,
     McpStrategy, McpTransport, SkillsConfig, SubagentsConfig,
@@ -104,6 +105,8 @@ impl ConfigPort for TomlConfigLoader {
             .and_then(|t| t.get("agents"))
             .and_then(|v| v.as_table());
 
+        // Keys are canonicalized so a section written under an alias — say
+        // "[agent.droid]" — reaches the adapter it names.
         let mut agent_configs = BTreeMap::new();
         // Legacy "[agents.X]" entries first (lower priority).
         if let Some(legacy_agents_section) = legacy_agents_section {
@@ -112,7 +115,10 @@ impl ConfigPort for TomlConfigLoader {
                     continue;
                 }
                 if let Some(section) = section.as_table() {
-                    agent_configs.insert(name.clone(), parse_agent_config(section, project_root));
+                    agent_configs.insert(
+                        canonical_agent_identifier(name).to_string(),
+                        parse_agent_config(section, project_root),
+                    );
                 }
             }
         }
@@ -120,7 +126,10 @@ impl ConfigPort for TomlConfigLoader {
         if let Some(agent_section) = agent_section {
             for (name, section) in agent_section {
                 if let Some(section) = section.as_table() {
-                    agent_configs.insert(name.clone(), parse_agent_config(section, project_root));
+                    agent_configs.insert(
+                        canonical_agent_identifier(name).to_string(),
+                        parse_agent_config(section, project_root),
+                    );
                 }
             }
         }
