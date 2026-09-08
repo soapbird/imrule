@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.1.0] - 2026-09-08
+
+### Fixed
+
+- **`imrule skills add` wrote into projects it never installed into**: with no `.imrule/` in the current directory the skills base walks up to `~/.config/imrule`, so the skills were installed globally — and the follow-up apply then ran against that same uninitialized directory. apply only syncs `<project>/.imrule/skills`, so it had nothing to pick up; what it did instead was write generated rule files into a project the user never initialized, and fail on whatever the global config happened to hold (`unknown agent identifier: 'droid'`), exiting `1` after the install had already succeeded. `skills add` and `skills update` now report where the skills landed and run apply only when that directory belongs to the project apply targets, explaining the skip otherwise.
+
+- **Skills mirrored in their source were installed twice**: a source repo commonly ships each skill in both `skills/` and an agent-native directory such as `.openclaw/skills/`, and discovery walked the tree at any depth — so `imrule skills add https://github.com/dietrichgebert/ponytail` reported and copied 12 skills for a repository of 6. Discovery now keeps one directory per skill name, preferring the canonical copy over a mirror under a dot-directory.
+
+### Added
+
+- **`droid` is accepted wherever `factory` is**: Factory's CLI ships as `droid`, so that is the name users reach for in `agents`, `default_agents` or `--agents`, and it was rejected as an unknown agent identifier. The registry now carries an alias table and every selection resolves through it; `[agent.droid]` configures the same adapter `factory` names. Unknown identifiers are still reported as unknown, and the alias stays out of the canonical identifier listing.
+
 ## [0.4.0.0] - 2026-09-07
 
 ### Added
