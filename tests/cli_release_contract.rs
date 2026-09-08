@@ -1337,3 +1337,99 @@ fn skills_update_reports_an_empty_registry_instead_of_failing() {
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("No registered skill sources"));
 }
+
+#[test]
+fn skills_add_outside_an_imrule_project_installs_globally_without_applying() {
+    // Reproduces the reported failure: in a directory that was never
+    // initialized, the skills land in the global directory, and the follow-up
+    // apply used to run against the uninitialized project anyway — failing on
+    // an unrelated global config problem after the install had succeeded.
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    let project = root.join("uninitialized-project");
+    fs::create_dir_all(&project).unwrap();
+
+    let source = root.join("source-repo");
+    fs::create_dir_all(source.join("demo")).unwrap();
+    fs::write(source.join("demo/SKILL.md"), "v1").unwrap();
+
+    // A global config that apply cannot satisfy: 'droid' is not an agent
+    // identifier. Installing a skill must not depend on it.
+    let xdg = root.join("xdg");
+    fs::create_dir_all(xdg.join("imrule")).unwrap();
+    fs::write(
+        xdg.join("imrule/imrule.toml"),
+        "default_agents = [\"claude\", \"droid\"]\n",
+    )
+    .unwrap();
+
+    let output = Command::cargo_bin("imrule")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", &xdg)
+        .args([
+            "skills",
+            "add",
+            source.to_str().unwrap(),
+            "--project-root",
+            project.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Installed 1 skill(s) in"));
+    assert!(stdout.contains("Skipping agent sync"));
+    assert_eq!(
+        fs::read_to_string(xdg.join("imrule/skills/demo/SKILL.md")).unwrap(),
+        "v1"
+    );
+    // Nothing was generated in the directory the user never initialized.
+    assert!(!project.join(".imrule").exists());
+    assert!(!project.join("CLAUDE.md").exists());
+}
+
+#[test]
+fn skills_add_installs_one_copy_of_a_skill_mirrored_in_the_source() {
+    // Source repos commonly ship the same skill twice — once in `skills/` and
+    // once mirrored under an agent-native directory — which used to be
+    // installed and reported once per copy.
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    let source = root.join("source-repo");
+    fs::create_dir_all(source.join("skills/demo")).unwrap();
+    fs::write(source.join("skills/demo/SKILL.md"), "canonical").unwrap();
+    fs::create_dir_all(source.join(".openclaw/skills/demo")).unwrap();
+    fs::write(source.join(".openclaw/skills/demo/SKILL.md"), "mirror").unwrap();
+
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(root.join(".imrule/imrule.toml"), "agents = [\"claude\"]\n").unwrap();
+
+    let output = Command::cargo_bin("imrule")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", root.join("xdg"))
+        .args([
+            "skills",
+            "add",
+            source.to_str().unwrap(),
+            "--project-root",
+            root.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Installed 1 skill(s) in"));
+    assert_eq!(
+        fs::read_to_string(root.join(".imrule/skills/demo/SKILL.md")).unwrap(),
+        "canonical"
+    );
+}
