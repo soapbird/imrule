@@ -282,7 +282,7 @@ imrule skills ls                          # list 별칭
 - `trae`: Trae AI
 - `amazonqcli`: Amazon Q CLI
 - `firebender`: Firebender
-- `factory`: Factory Droid
+- `factory`: Factory Droid (`droid` 별칭도 허용)
 - `antigravity`: Antigravity
 - `mistral`: Mistral
 - `pi`: Pi Coding Agent

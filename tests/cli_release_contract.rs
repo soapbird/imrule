@@ -1433,3 +1433,43 @@ fn skills_add_installs_one_copy_of_a_skill_mirrored_in_the_source() {
         "canonical"
     );
 }
+
+#[test]
+fn apply_accepts_droid_as_an_alias_for_factory() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(root.join(".imrule/AGENTS.md"), "Always be concise.").unwrap();
+    // The alias is accepted in config as an agent selection...
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        "agents = [\"droid\"]\n\n[agent.droid]\noutput_path_instructions = \"DROID.md\"\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", root.join("xdg"))
+        .args(["apply", "--project-root", root.to_str().unwrap()])
+        .assert()
+        .success();
+
+    // ...and `[agent.droid]` configures the same adapter `factory` names.
+    assert!(fs::read_to_string(root.join("DROID.md"))
+        .unwrap()
+        .contains("Always be concise."));
+
+    // The same holds on the command line.
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", root.join("xdg"))
+        .args([
+            "apply",
+            "--project-root",
+            root.to_str().unwrap(),
+            "--agents",
+            "droid",
+        ])
+        .assert()
+        .success();
+}

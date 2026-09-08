@@ -394,9 +394,33 @@ const AGENT_DEFINITIONS: &[AgentDefinition] = &[
     },
 ];
 
+/// Alternate identifiers accepted for an agent. Factory's CLI ships as
+/// `droid`, so users reach for either name and both must select the same
+/// adapter.
+const AGENT_ALIASES: &[(&str, &str)] = &[("droid", "factory")];
+
 /// Returns all agent definitions in CLI help order.
 pub fn all_agents() -> Vec<AgentDefinition> {
     AGENT_DEFINITIONS.to_vec()
+}
+
+/// Maps an accepted alias onto the identifier the registry uses. Anything
+/// else passes through unchanged, so callers still report unknown names.
+pub fn canonical_agent_identifier(identifier: &str) -> &str {
+    AGENT_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == identifier)
+        .map(|(_, canonical)| *canonical)
+        .unwrap_or(identifier)
+}
+
+/// Looks up an agent by identifier or alias.
+pub fn find_agent(identifier: &str) -> Option<AgentDefinition> {
+    let canonical = canonical_agent_identifier(identifier);
+    AGENT_DEFINITIONS
+        .iter()
+        .find(|agent| agent.identifier == canonical)
+        .copied()
 }
 
 /// Generates the comma-separated agent identifier list used by CLI help.
