@@ -23,6 +23,9 @@ pub struct SkillsAddOptions {
 pub struct SkillsAddResult {
     pub listed: Vec<SkillInfo>,
     pub installed: Vec<String>,
+    /// Directory the skills were installed into. A project-local
+    /// `.imrule/skills`, or the global one when the project has no `.imrule/`.
+    pub install_dir: PathBuf,
 }
 
 /// Skills add use case.
@@ -63,10 +66,14 @@ impl<'a> SkillsAddUseCase<'a> {
         // The source repo may have skills at root level, in skills/, or in agent-specific dirs.
         let discovery = discover_remote_skills(&fetched_path)?;
 
+        // Determine target directory.
+        let skills_base = resolve_skills_base(self.fs_port, &options.project_root, options.global);
+
         if options.list_only {
             return Ok(SkillsAddResult {
                 listed: discovery.clone(),
                 installed: Vec::new(),
+                install_dir: skills_base,
             });
         }
 
@@ -91,9 +98,6 @@ impl<'a> SkillsAddUseCase<'a> {
             ));
         }
 
-        // Determine target directory.
-        let skills_base = resolve_skills_base(self.fs_port, &options.project_root, options.global);
-
         self.fs_port
             .ensure_dir_exists(&skills_base)
             .map_err(|e| ImruleError::filesystem(format!("failed to create skills dir: {e}")))?;
@@ -116,6 +120,7 @@ impl<'a> SkillsAddUseCase<'a> {
         Ok(SkillsAddResult {
             listed: Vec::new(),
             installed,
+            install_dir: skills_base,
         })
     }
 
@@ -184,6 +189,8 @@ pub fn discover_remote_skills(root: &Path) -> Result<Vec<SkillInfo>, ImruleError
         }
     }
 
+    let mut all_skills = dedupe_by_name(root, all_skills);
+
     // If nothing found, check if root itself is a skill.
     if all_skills.is_empty() && root.join("SKILL.md").is_file() {
         let name = root
@@ -200,4 +207,30 @@ pub fn discover_remote_skills(root: &Path) -> Result<Vec<SkillInfo>, ImruleError
     }
 
     Ok(all_skills)
+}
+
+/// Keeps one directory per skill name. A source repo commonly ships the same
+/// skill twice — once in `skills/` and once mirrored under an agent-native
+/// directory such as `.openclaw/skills/` — and without this every skill in it
+/// would be listed, copied and reported twice.
+fn dedupe_by_name(root: &Path, mut skills: Vec<SkillInfo>) -> Vec<SkillInfo> {
+    skills.sort_by(|a, b| {
+        a.name
+            .cmp(&b.name)
+            .then_with(|| candidate_rank(root, &a.path).cmp(&candidate_rank(root, &b.path)))
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    skills.dedup_by(|a, b| a.name == b.name);
+    skills
+}
+
+/// Ranks the copies of one skill: a visible `skills/` copy is the canonical
+/// source, one under a dot-directory is an agent-specific mirror of it. Depth
+/// breaks the remaining ties, so the shallowest copy wins.
+fn candidate_rank(root: &Path, path: &Path) -> (u8, usize) {
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    let hidden = relative
+        .components()
+        .any(|component| component.as_os_str().to_string_lossy().starts_with('.'));
+    (u8::from(hidden), relative.components().count())
 }

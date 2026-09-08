@@ -1,7 +1,8 @@
 //! CLI adapter that wires concrete infrastructure to application use cases.
 
 use std::env;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, ExitCode, Stdio};
 
 use clap::{CommandFactory, Parser};
@@ -116,6 +117,30 @@ fn init_tracing(verbose: bool) {
         .with_writer(std::io::stderr)
         .with_target(false)
         .init();
+}
+
+/// Explains why a follow-up `apply` would be pointless, or `None` when the
+/// skills belong to the project `apply` targets.
+///
+/// `apply` only ever syncs the skills under `<project>/.imrule/skills`, so a
+/// global install — `--global`, or a directory that has no `.imrule/` of its
+/// own — has nothing for it to pick up. Running it anyway would write generated
+/// agent files into a directory the user never initialized, and surface
+/// unrelated failures from the global config while doing it.
+fn skills_sync_skip_reason(install_dir: &Path, project_root: &Path) -> Option<String> {
+    if canonical_or_self(install_dir).starts_with(canonical_or_self(project_root)) {
+        return None;
+    }
+    Some(format!(
+        "Skipping agent sync: `imrule apply` syncs skills from a project's .imrule/skills/, \
+         and these live in {}.\nRun `imrule init` in the project that should use them, \
+         then re-run this command there.",
+        install_dir.display()
+    ))
+}
+
+fn canonical_or_self(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Runs `apply` so freshly installed or updated skills reach every agent's
@@ -403,7 +428,11 @@ fn run_inner() -> Result<(), CliError> {
                     }
                 }
                 if !result.installed.is_empty() {
-                    println!("Installed {} skill(s):", result.installed.len());
+                    println!(
+                        "Installed {} skill(s) in {}:",
+                        result.installed.len(),
+                        result.install_dir.display()
+                    );
                     for name in &result.installed {
                         println!("  - {name}");
                     }
@@ -411,15 +440,18 @@ fn run_inner() -> Result<(), CliError> {
                     let project_root_for_apply = args.project_root.clone().unwrap_or_else(|| {
                         env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
                     });
-                    sync_skills_to_agents(
-                        &fs,
-                        &config,
-                        &gitignore,
-                        &git_untracker,
-                        &mcp,
-                        &manifest,
-                        project_root_for_apply,
-                    )?;
+                    match skills_sync_skip_reason(&result.install_dir, &project_root_for_apply) {
+                        Some(reason) => println!("{reason}"),
+                        None => sync_skills_to_agents(
+                            &fs,
+                            &config,
+                            &gitignore,
+                            &git_untracker,
+                            &mcp,
+                            &manifest,
+                            project_root_for_apply,
+                        )?,
+                    }
                 }
                 Ok(())
             }
@@ -470,15 +502,18 @@ fn run_inner() -> Result<(), CliError> {
                 }
 
                 if result.changed() && !args.dry_run {
-                    sync_skills_to_agents(
-                        &fs,
-                        &config,
-                        &gitignore,
-                        &git_untracker,
-                        &mcp,
-                        &manifest,
-                        project_root,
-                    )?;
+                    match skills_sync_skip_reason(&result.install_dir, &project_root) {
+                        Some(reason) => println!("{reason}"),
+                        None => sync_skills_to_agents(
+                            &fs,
+                            &config,
+                            &gitignore,
+                            &git_untracker,
+                            &mcp,
+                            &manifest,
+                            project_root,
+                        )?,
+                    }
                 }
 
                 if result.has_failures() {

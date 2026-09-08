@@ -32,6 +32,9 @@ pub struct SkillsUpdateOptions {
 #[derive(Debug, Clone, Default)]
 pub struct SkillsUpdateResult {
     pub outcomes: Vec<SkillUpdateOutcome>,
+    /// Directory the refreshed skills live in — the same one `skills add`
+    /// installed them into.
+    pub install_dir: PathBuf,
 }
 
 impl SkillsUpdateResult {
@@ -85,7 +88,10 @@ impl<'a> SkillsUpdateUseCase<'a> {
         let groups = group_skill_sources(&recorded, options.skill_names.as_deref())?;
         let skills_base = resolve_skills_base(self.fs_port, &options.project_root, options.global);
 
-        let mut result = SkillsUpdateResult::default();
+        let mut result = SkillsUpdateResult {
+            install_dir: skills_base.clone(),
+            ..Default::default()
+        };
         for group in groups {
             // One fetch per source, however many skills came from it.
             let fetched = self.fetch_group(&group.source);
