@@ -82,6 +82,41 @@ fn discovers_skills_groupings_warnings_copies_and_gitignore_targets() {
 }
 
 #[test]
+fn copying_skills_again_leaves_unchanged_files_untouched() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    write_source_skill(&root.join("src"), "demo", "same\n");
+    write_source_skill(&root.join("src"), "edited", "new\n");
+    copy_skills_directory(&root.join("src"), &root.join("dest")).unwrap();
+    fs::write(root.join("dest/edited/SKILL.md"), "old\n").unwrap();
+
+    // Backdate both copies so a rewrite would show up as a fresh mtime.
+    let past = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+    for skill in ["demo", "edited"] {
+        fs::File::options()
+            .write(true)
+            .open(root.join("dest").join(skill).join("SKILL.md"))
+            .unwrap()
+            .set_modified(past)
+            .unwrap();
+    }
+
+    copy_skills_directory(&root.join("src"), &root.join("dest")).unwrap();
+    let modified = |skill: &str| {
+        fs::metadata(root.join("dest").join(skill).join("SKILL.md"))
+            .unwrap()
+            .modified()
+            .unwrap()
+    };
+    assert_eq!(modified("demo"), past, "an identical file was rewritten");
+    assert_ne!(modified("edited"), past, "a changed file was not refreshed");
+    assert_eq!(
+        fs::read_to_string(root.join("dest/edited/SKILL.md")).unwrap(),
+        "new\n"
+    );
+}
+
+#[test]
 fn grouped_skills_are_named_by_their_path_below_the_skills_root() {
     let tmp = tempdir().unwrap();
     let root = tmp.path();

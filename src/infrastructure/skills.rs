@@ -121,7 +121,8 @@ pub fn is_grouping_dir(dir_path: &Path) -> bool {
     false
 }
 
-/// Recursively copies a skills directory.
+/// Recursively copies a skills directory. Files the destination already holds
+/// byte for byte are left untouched, so re-running `apply` rewrites nothing.
 pub fn copy_skills_directory(src_dir: &Path, dest_dir: &Path) -> io::Result<()> {
     fs::create_dir_all(dest_dir)?;
     copy_recursive(src_dir, dest_dir)
@@ -134,10 +135,19 @@ fn copy_recursive(src: &Path, dest: &Path) -> io::Result<()> {
             let entry = entry?;
             copy_recursive(&entry.path(), &dest.join(entry.file_name()))?;
         }
-    } else {
+    } else if !same_contents(src, dest) {
         fs::copy(src, dest)?;
     }
     Ok(())
+}
+
+/// Whether `dest` already holds exactly the bytes of `src`.
+fn same_contents(src: &Path, dest: &Path) -> bool {
+    let (Ok(src_meta), Ok(dest_meta)) = (fs::metadata(src), fs::metadata(dest)) else {
+        return false;
+    };
+    src_meta.len() == dest_meta.len()
+        && matches!((fs::read(src), fs::read(dest)), (Ok(a), Ok(b)) if a == b)
 }
 
 /// Compares two skill trees byte for byte. Used by `imrule skills update` to
