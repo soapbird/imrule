@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Per-server `remote_transport`**: `[mcp] remote_transport` was the only switch, so one server needing a static `Authorization` header — which the `mcp-remote` bridge cannot carry — forced the whole project to `native` and took every other remote server off the bridge and its uniform OAuth flow. A server can now override the project default for itself with `remote_transport = "native"` (or `"mcp-remote"`) under `[mcp_servers.<name>]` or on its `.imrule/mcp.json` entry, and `imrule mcp add --remote-transport` records it. `apply` validates headers, bridges, and resolves the `mcp-remote` version per server; `imrule mcp auth` skips only the servers that resolve to `native`. The key is ImRule's own and never reaches an agent's native config.
+
 ## [0.4.1.0] - 2026-09-08
 
 ### Fixed

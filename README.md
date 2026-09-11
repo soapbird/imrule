@@ -156,6 +156,7 @@ imrule mcp add github --env GITHUB_TOKEN=xxx -- npx -y @modelcontextprotocol/ser
 ```bash
 imrule mcp add linear --transport http https://mcp.linear.app/mcp
 imrule mcp add linear --transport http --header Authorization=Bearer-xxx https://mcp.linear.app/mcp
+imrule mcp add agent-mail --transport http --remote-transport native --header 'Authorization=Bearer ${HTTP_BEARER_TOKEN}' http://127.0.0.1:8765/mcp/
 imrule mcp add notify --transport sse https://example.com/sse
 ```
 
@@ -165,6 +166,7 @@ imrule mcp add notify --transport sse https://example.com/sse
 --transport stdio|http|sse   # transport 프로토콜(기본값: stdio)
 --env KEY=VALUE, -e          # stdio 서버 환경 변수(반복 가능)
 --header KEY=VALUE           # http/sse 서버 헤더(반복 가능)
+--remote-transport MODE      # 이 http/sse 서버만 mcp-remote 또는 native로 지정([mcp] 기본값보다 우선)
 --timeout MS                 # 연결 대기 시간(밀리초). 이 값을 이해하는 에이전트에만 기록
 --global, -g                 # 전역 설정(~/.config/imrule/imrule.toml)에 기록
 --dry-run                    # 쓰기 없이 미리보기
@@ -186,7 +188,7 @@ imrule mcp remove github --project-root ~/myproj
 
 #### `imrule mcp auth`
 
-원격(`http`/`sse`) MCP 서버의 OAuth 인증을 순차적으로 수행합니다. 각 서버에 대해 `mcp-remote` 브리지를 실행해 브라우저 인증 흐름을 시작합니다. stdio 서버와 정적 `headers`가 필요한 서버는 자동으로 건너뜁니다.
+원격(`http`/`sse`) MCP 서버의 OAuth 인증을 순차적으로 수행합니다. 각 서버에 대해 `mcp-remote` 브리지를 실행해 브라우저 인증 흐름을 시작합니다. stdio 서버, 정적 `headers`가 필요한 서버, 전송 방식이 `native`로 정해진 서버는 자동으로 건너뜁니다.
 
 인증에 사용할 `mcp-remote` 버전은 프로젝트 캐시(`.imrule/cache.json`)에서 읽거나, 캐시가 없으면 npm에서 해석해 고정한 뒤 캐시에 기록합니다. `$VAR`/`${VAR}` 환경 변수 참조도 `apply`와 동일하게 `.env`와 `.imrule/.env`, 실행 환경에서 치환합니다.
 
@@ -361,7 +363,7 @@ timeout = 30000
 
 여기 선언한 서버는 `imrule apply` 실행 시 `.imrule/mcp.json`에 있는 서버와 합쳐집니다. 둘 중 어느 소스를 사용해도 됩니다. `apply` 때 모든 서버는 TOML 기반 에이전트(Codex, OpenCode, Mistral, OpenHands)를 포함한 각 에이전트의 네이티브 MCP 설정으로 기록되고, `imrule clear`가 다시 제거합니다.
 
-원격 MCP의 OAuth 인증 흐름은 기본적으로 `[mcp] remote_transport = "mcp-remote"`로 Agent마다 통일됩니다. URL 기반 HTTP/SSE 서버는 stdio `mcp-remote` 브리지로 변환되므로, 최초 MCP 연결 시 브라우저 인증이 시작됩니다. `npx`를 사용할 수 있어야 하며, ImRule은 OAuth 토큰이나 브리지 캐시를 저장하거나 `clear`로 삭제하지 않습니다. Agent별 네이티브 원격 MCP 설정을 유지하려면 `remote_transport = "native"`를 명시합니다. 정적 `headers`가 필요한 서버는 브리지 모드에서 지원하지 않으며, 적용 전에 오류로 중단되므로 `native` 모드를 사용해야 합니다. `mcp-remote` 브리지를 실행할 수 없는 Agent에는 해당 원격 서버가 적용되지 않습니다.
+원격 MCP의 OAuth 인증 흐름은 기본적으로 `[mcp] remote_transport = "mcp-remote"`로 Agent마다 통일됩니다. URL 기반 HTTP/SSE 서버는 stdio `mcp-remote` 브리지로 변환되므로, 최초 MCP 연결 시 브라우저 인증이 시작됩니다. `npx`를 사용할 수 있어야 하며, ImRule은 OAuth 토큰이나 브리지 캐시를 저장하거나 `clear`로 삭제하지 않습니다. Agent별 네이티브 원격 MCP 설정을 유지하려면 `remote_transport = "native"`를 명시합니다. 정적 `headers`가 필요한 서버는 브리지 모드에서 지원하지 않아 적용 전에 오류로 중단되므로, 그 서버를 `native`로 지정해야 합니다(아래 서버별 지정 참고). `mcp-remote` 브리지를 실행할 수 없는 Agent에는 해당 원격 서버가 적용되지 않습니다.
 
 ```toml
 [mcp]
@@ -378,6 +380,22 @@ url = "https://mcp.sentry.dev/mcp"
 
 [mcp_servers.figma]
 url = "http://127.0.0.1:3845/mcp"
+```
+
+`remote_transport`는 서버마다 따로 지정할 수 있고, 서버에 적은 값이 `[mcp]` 기본값보다 우선합니다. 정적 헤더가 필요한 서버 하나만 `native`로 두고 나머지 원격 서버는 브리지에 그대로 둘 때 씁니다. `.imrule/mcp.json`에서는 서버 항목에 `"remote_transport": "native"`를 적고, `imrule mcp add`에서는 `--remote-transport native`를 붙입니다. 이 키는 ImRule만 읽으며 에이전트 설정 파일에는 기록되지 않습니다. 인식할 수 없는 값은 무시되어 `[mcp]` 기본값을 따릅니다.
+
+```toml
+[mcp]
+remote_transport = "mcp-remote"
+
+[mcp_servers.linear]
+url = "https://mcp.linear.app/mcp"   # 브리지(OAuth)
+
+[mcp_servers.agent-mail]
+transport = "http"
+url = "http://127.0.0.1:8765/mcp/"
+headers = { Authorization = "Bearer ${HTTP_BEARER_TOKEN}" }
+remote_transport = "native"          # 이 서버만 네이티브
 ```
 
 `$NAME` 또는 `${NAME}` 참조는 `imrule apply`에서 실제 값으로 치환됩니다. 값은 프로젝트 루트의 `.env`, `.imrule/.env`, 실행 환경 순서로 읽으며 뒤의 소스가 앞의 값을 덮어씁니다. 정의되지 않은 참조는 그대로 남습니다. 치환된 비밀값은 에이전트별 MCP 설정 파일에 기록되므로 해당 파일을 커밋하지 마세요.

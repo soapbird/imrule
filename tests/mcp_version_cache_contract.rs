@@ -161,7 +161,7 @@ fn apply_filter_accepts_the_cached_concrete_package_spec() {
     let filtered = filter_mcp_config_for_agent_with_version_cache(
         &config,
         agent,
-        McpRemoteTransport::McpRemote,
+        &McpRemoteTransport::McpRemote.into(),
         &cache,
     )
     .unwrap();
@@ -482,6 +482,54 @@ url = "https://example.test/mcp"
     );
     assert_eq!(resolver.calls.load(Ordering::SeqCst), 0);
     assert!(runner.calls.lock().unwrap().is_empty());
+}
+
+#[test]
+fn mcp_auth_follows_each_servers_remote_transport_override() {
+    let temporary = auth_project_with(
+        r#"
+[mcp]
+remote_transport = "mcp-remote"
+
+[mcp_servers.bridged]
+transport = "http"
+url = "https://bridged.example.test/mcp"
+
+[mcp_servers.native]
+transport = "http"
+url = "https://native.example.test/mcp"
+remote_transport = "native"
+"#,
+    );
+    let resolver = ContractVersionResolver {
+        calls: AtomicUsize::new(0),
+    };
+    let runner = RecordingAuthRunner::default();
+    let result = run_auth(temporary.path(), &resolver, &runner);
+    assert_eq!(result.authenticated, vec!["bridged"]);
+    assert_eq!(result.skipped.len(), 1);
+    assert_eq!(result.skipped[0].server_name, "native");
+    assert_eq!(
+        result.skipped[0].reason,
+        "remote transport is configured as native"
+    );
+
+    // A native project can still send one server through the bridge.
+    let temporary = auth_project_with(
+        r#"
+[mcp]
+remote_transport = "native"
+
+[mcp_servers.bridged]
+transport = "http"
+url = "https://bridged.example.test/mcp"
+remote_transport = "mcp-remote"
+"#,
+    );
+    let runner = RecordingAuthRunner::default();
+    let result = run_auth(temporary.path(), &resolver, &runner);
+    assert_eq!(result.authenticated, vec!["bridged"]);
+    assert!(result.skipped.is_empty());
 }
 
 #[test]

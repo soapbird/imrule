@@ -10,7 +10,8 @@ use crate::application::ports::{CachePort, ConfigPort, ConfigWritePort, FileSyst
 use crate::domain::config::{McpRemoteTransport, McpServerDefinition, McpTransport};
 use crate::domain::error::ImruleError;
 use crate::domain::mcp::{
-    build_imrule_mcp_config, expand_mcp_environment_variables, McpRemoteVersionCache,
+    build_imrule_mcp_config, expand_mcp_environment_variables, McpRemoteTransportPolicy,
+    McpRemoteVersionCache,
 };
 
 /// Runtime options for `imrule mcp add`.
@@ -29,6 +30,8 @@ pub struct McpAddOptions {
     pub headers: BTreeMap<String, String>,
     /// Optional connection window in milliseconds for agents that honor it.
     pub timeout: Option<u64>,
+    /// Per-server override of `[mcp] remote_transport`; remote transports only.
+    pub remote_transport: Option<McpRemoteTransport>,
 }
 
 /// Runtime options for `imrule mcp remove`.
@@ -193,17 +196,18 @@ impl<'a> McpUseCase<'a> {
         let environment = load_mcp_environment(fs_port, &options.project_root)?;
         expand_mcp_environment_variables(&mut effective_mcp, &environment);
 
-        let remote_transport = config
-            .mcp
-            .as_ref()
-            .map(|mcp| mcp.remote_transport)
-            .unwrap_or(McpRemoteTransport::McpRemote);
+        let remote_transport = McpRemoteTransportPolicy::from_sources(
+            config.mcp.as_ref(),
+            json_mcp.as_ref(),
+            &config.mcp_servers,
+        );
         let mut result = McpAuthResult::default();
         let mut eligible = Vec::new();
 
         if let Some(servers) = effective_mcp.get("mcpServers").and_then(Value::as_object) {
             for (server_name, server) in servers {
-                let skip_reason = classify_auth_eligibility(server, &remote_transport);
+                let skip_reason =
+                    classify_auth_eligibility(server, remote_transport.for_server(server_name));
                 match skip_reason {
                     Some(reason) => result.skipped.push(McpAuthSkip {
                         server_name: server_name.clone(),
@@ -251,7 +255,7 @@ fn effective_project_root(project_root: PathBuf, global: bool) -> PathBuf {
 /// Returns `Some(reason)` if the server should be skipped, or `None` if eligible.
 fn classify_auth_eligibility(
     server: &Value,
-    remote_transport: &McpRemoteTransport,
+    remote_transport: McpRemoteTransport,
 ) -> Option<&'static str> {
     let server = server.as_object()?;
     if server.contains_key("command") {
@@ -264,7 +268,7 @@ fn classify_auth_eligibility(
     ) {
         return Some("server is not an HTTP/SSE remote");
     }
-    if *remote_transport == McpRemoteTransport::Native {
+    if remote_transport == McpRemoteTransport::Native {
         return Some("remote transport is configured as native");
     }
     if server.contains_key("headers") {
@@ -291,6 +295,7 @@ fn build_definition(options: &McpAddOptions) -> Result<McpServerDefinition, Imru
                 env: options.env.clone(),
                 headers: BTreeMap::new(),
                 timeout: options.timeout,
+                remote_transport: None,
             })
         }
         McpTransport::Http | McpTransport::Sse => {
@@ -306,6 +311,7 @@ fn build_definition(options: &McpAddOptions) -> Result<McpServerDefinition, Imru
                 env: BTreeMap::new(),
                 headers: options.headers.clone(),
                 timeout: options.timeout,
+                remote_transport: options.remote_transport,
             })
         }
     }

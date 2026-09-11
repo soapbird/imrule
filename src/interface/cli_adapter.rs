@@ -254,6 +254,12 @@ fn run_inner() -> Result<(), CliError> {
 
                 let (command, args_list, url) = match args.transport.into() {
                     crate::domain::config::McpTransport::Stdio => {
+                        if args.remote_transport.is_some() {
+                            return Err(CliError::new(
+                                1,
+                                "--remote-transport applies only to http/sse servers".to_string(),
+                            ));
+                        }
                         if args.rest.is_empty() {
                             return Err(CliError::new(
                                 1,
@@ -291,6 +297,7 @@ fn run_inner() -> Result<(), CliError> {
                         env: env_map,
                         headers: header_map,
                         timeout: args.timeout,
+                        remote_transport: args.remote_transport.map(Into::into),
                     })
                     .map_err(|err| CliError::new(1, err.to_string()))?;
 

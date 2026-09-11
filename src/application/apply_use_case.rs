@@ -20,7 +20,7 @@ use crate::domain::manifest::ApplyManifest;
 use crate::domain::mcp::{
     build_imrule_mcp_config, expand_mcp_environment_variables, filter_mcp_config_for_agent,
     filter_mcp_config_for_agent_with_package_spec, is_native_mcp_content_empty, merge_mcp,
-    validate_mcp_config_for_remote_transport, McpRemoteVersionCache,
+    validate_mcp_config_for_remote_transport, McpRemoteTransportPolicy, McpRemoteVersionCache,
 };
 use crate::domain::rules::concatenate_rules;
 use crate::domain::skills::get_skills_gitignore_paths;
@@ -288,14 +288,18 @@ impl<'a> ApplyUseCase<'a> {
             .as_ref()
             .map(|mcp| mcp.strategy)
             .unwrap_or(McpStrategy::Merge);
-        let remote_transport = config
-            .mcp
-            .as_ref()
-            .map(|mcp| mcp.remote_transport)
-            .unwrap_or(McpRemoteTransport::McpRemote);
-        validate_mcp_config_for_remote_transport(&imrule_mcp, remote_transport)?;
-        let version_cache =
-            self.mcp_remote_version_cache(options, &imrule_mcp, selected_agents, remote_transport)?;
+        let remote_transport = McpRemoteTransportPolicy::from_sources(
+            config.mcp.as_ref(),
+            json_mcp.as_ref(),
+            &config.mcp_servers,
+        );
+        validate_mcp_config_for_remote_transport(&imrule_mcp, &remote_transport)?;
+        let version_cache = self.mcp_remote_version_cache(
+            options,
+            &imrule_mcp,
+            selected_agents,
+            &remote_transport,
+        )?;
         let candidates: Vec<_> = {
             let cached_spec = version_cache.as_ref().map(|c| c.package_spec());
             selected_agents
@@ -305,10 +309,10 @@ impl<'a> ApplyUseCase<'a> {
                         Some(spec) => filter_mcp_config_for_agent_with_package_spec(
                             &imrule_mcp,
                             agent,
-                            remote_transport,
+                            &remote_transport,
                             spec,
                         )?,
-                        None => filter_mcp_config_for_agent(&imrule_mcp, agent, remote_transport)?,
+                        None => filter_mcp_config_for_agent(&imrule_mcp, agent, &remote_transport)?,
                     };
                     let path = self
                         .mcp_port
@@ -472,25 +476,25 @@ impl<'a> ApplyUseCase<'a> {
         options: &ApplyOptions,
         mcp_config: &serde_json::Value,
         selected_agents: &[AgentDefinition],
-        remote_transport: McpRemoteTransport,
+        remote_transport: &McpRemoteTransportPolicy,
     ) -> Result<Option<McpRemoteVersionCache>, ImruleError> {
-        if remote_transport != McpRemoteTransport::McpRemote
-            || !selected_agents
-                .iter()
-                .any(|agent| agent.capabilities.mcp_stdio)
+        if !selected_agents
+            .iter()
+            .any(|agent| agent.capabilities.mcp_stdio)
             || !mcp_config
                 .get("mcpServers")
                 .and_then(serde_json::Value::as_object)
                 .is_some_and(|servers| {
-                    servers.values().any(|server| {
-                        server.as_object().is_some_and(|server| {
-                            server.contains_key("url")
-                                && !server.contains_key("command")
-                                && matches!(
-                                    server.get("type").and_then(serde_json::Value::as_str),
-                                    None | Some("http") | Some("sse")
-                                )
-                        })
+                    servers.iter().any(|(server_name, server)| {
+                        remote_transport.for_server(server_name) == McpRemoteTransport::McpRemote
+                            && server.as_object().is_some_and(|server| {
+                                server.contains_key("url")
+                                    && !server.contains_key("command")
+                                    && matches!(
+                                        server.get("type").and_then(serde_json::Value::as_str),
+                                        None | Some("http") | Some("sse")
+                                    )
+                            })
                     })
                 })
         {

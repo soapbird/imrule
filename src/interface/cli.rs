@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 
-use crate::domain::config::McpTransport;
+use crate::domain::config::{McpRemoteTransport, McpTransport};
 
 const AGENT_IDENTIFIERS: &str = "agentsmd, aider, amazonqcli, amp, antigravity, augmentcode, claude, cline, codex, copilot, crush, cursor, factory, firebase, firebender, gemini-cli, gjc, goose, jetbrains-ai, jules, junie, kilocode, kimi, kimi-cli, kimi-code, kiro, mistral, opencode, openhands, pi, qwen, roo, trae, warp, windsurf, zed";
 
@@ -15,6 +15,22 @@ pub enum CliMcpTransport {
     Stdio,
     Http,
     Sse,
+}
+
+/// CLI-facing remote transport mode, mirroring `McpRemoteTransport`.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CliMcpRemoteTransport {
+    McpRemote,
+    Native,
+}
+
+impl From<CliMcpRemoteTransport> for McpRemoteTransport {
+    fn from(value: CliMcpRemoteTransport) -> Self {
+        match value {
+            CliMcpRemoteTransport::McpRemote => McpRemoteTransport::McpRemote,
+            CliMcpRemoteTransport::Native => McpRemoteTransport::Native,
+        }
+    }
 }
 
 impl From<CliMcpTransport> for McpTransport {
@@ -107,6 +123,10 @@ pub struct McpAddArgs {
     /// HTTP/SSE headers (KEY=VALUE).
     #[arg(long, value_name = "KEY=VALUE")]
     pub header: Option<Vec<String>>,
+
+    /// Remote transport for this http/sse server, overriding `[mcp] remote_transport`.
+    #[arg(long = "remote-transport", value_enum, value_name = "MODE")]
+    pub remote_transport: Option<CliMcpRemoteTransport>,
 
     /// Connection window in milliseconds, for agents whose MCP format honors it.
     #[arg(long, value_name = "MS")]

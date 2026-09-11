@@ -746,6 +746,111 @@ args = ["-y", "demo"]
     assert!(!root.join(".imrule/cache.json").exists());
 }
 
+/// Applies for Claude with the version cache wired, returning how many times
+/// the `mcp-remote` version had to be resolved.
+fn apply_claude_with_counting_resolver(root: &Path) -> usize {
+    let xdg_home = tempdir().unwrap();
+    let loader = TomlConfigLoader::new().with_xdg_home(xdg_home.path().to_path_buf());
+    let fs_port = FsFileSystem::new();
+    let gitignore = GitignoreUpdater::new();
+    let git_untracker = GitUntracker::new();
+    let mcp_storage = JsonMcpStorage::new();
+    let agent_writer = DefaultAgentWriter::new(&fs_port);
+    let version_cache = JsonVersionCache::new();
+    let resolver = CountingResolver {
+        calls: AtomicUsize::new(0),
+    };
+    ApplyUseCase::new(
+        &loader,
+        &fs_port,
+        &gitignore,
+        &git_untracker,
+        &mcp_storage,
+        &agent_writer,
+    )
+    .with_mcp_remote_version_cache(&version_cache, &resolver)
+    .execute(ApplyOptions {
+        project_root: root.to_path_buf(),
+        agents: Some(vec!["claude".to_string()]),
+        config: None,
+        dry_run: false,
+        backup: false,
+    })
+    .unwrap();
+    resolver.calls.load(Ordering::SeqCst)
+}
+
+#[test]
+fn apply_bridges_by_default_but_keeps_a_per_server_native_override() {
+    // A server needing a static Authorization header cannot ride the bridge.
+    // Overriding just that server must not force the whole project native.
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(root.join(".imrule/AGENTS.md"), "Project rules.").unwrap();
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        r#"
+[mcp_servers.linear]
+transport = "http"
+url = "https://mcp.linear.app/mcp"
+
+[mcp_servers.agent-mail]
+transport = "http"
+url = "http://127.0.0.1:8765/mcp/"
+headers = { Authorization = "Bearer contract-token" }
+remote_transport = "native"
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(apply_claude_with_counting_resolver(root), 1);
+
+    let claude_mcp: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join(".mcp.json")).unwrap()).unwrap();
+    assert_eq!(
+        claude_mcp["mcpServers"]["linear"],
+        json!({
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "mcp-remote@0.1.37", "https://mcp.linear.app/mcp"]
+        })
+    );
+    assert_eq!(
+        claude_mcp["mcpServers"]["agent-mail"],
+        json!({
+            "type": "http",
+            "url": "http://127.0.0.1:8765/mcp/",
+            "headers": { "Authorization": "Bearer contract-token" }
+        })
+    );
+}
+
+#[test]
+fn apply_skips_bridge_resolution_when_every_remote_server_is_native() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(root.join(".imrule/AGENTS.md"), "Project rules.").unwrap();
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        r#"
+[mcp_servers.agent-mail]
+transport = "http"
+url = "http://127.0.0.1:8765/mcp/"
+remote_transport = "native"
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        apply_claude_with_counting_resolver(root),
+        0,
+        "no server rides the bridge, so there is no version to resolve"
+    );
+    assert!(!root.join(".imrule/cache.json").exists());
+}
+
 #[test]
 fn version_cache_struct_round_trip_through_serde_roundabout() {
     // Validates the manual Deserialize impl + TryFrom path that runs whenever

@@ -25,6 +25,24 @@ pub enum McpRemoteTransport {
     Native,
 }
 
+impl McpRemoteTransport {
+    /// Parses a `remote_transport` value as written in `imrule.toml` or `.imrule/mcp.json`.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "native" => Some(Self::Native),
+            "mcp-remote" => Some(Self::McpRemote),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::McpRemote => "mcp-remote",
+            Self::Native => "native",
+        }
+    }
+}
+
 /// MCP transport types recognised by ImRule.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -59,6 +77,10 @@ pub struct McpServerDefinition {
     /// format understands a per-server `timeout` (see `AgentCapabilities::mcp_timeout`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout: Option<u64>,
+    /// Overrides `[mcp] remote_transport` for this server alone. Only meaningful
+    /// for remote transports; unset inherits the project default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_transport: Option<McpRemoteTransport>,
 }
 
 impl McpServerDefinition {
@@ -71,6 +93,7 @@ impl McpServerDefinition {
             env: BTreeMap::new(),
             headers: BTreeMap::new(),
             timeout: None,
+            remote_transport: None,
         }
     }
 
@@ -83,6 +106,7 @@ impl McpServerDefinition {
             env: BTreeMap::new(),
             headers: BTreeMap::new(),
             timeout: None,
+            remote_transport: None,
         }
     }
 }

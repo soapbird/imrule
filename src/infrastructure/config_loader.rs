@@ -301,7 +301,7 @@ fn parse_mcp_config(table: &toml::map::Map<String, Value>) -> McpConfig {
         .and_then(|value| value.as_str())
     {
         config.remote_transport =
-            parse_mcp_remote_transport(remote_transport).unwrap_or(McpRemoteTransport::McpRemote);
+            McpRemoteTransport::parse(remote_transport).unwrap_or(McpRemoteTransport::McpRemote);
     }
     config
 }
@@ -350,14 +350,6 @@ fn parse_mcp_strategy(value: &str) -> Option<McpStrategy> {
     }
 }
 
-fn parse_mcp_remote_transport(value: &str) -> Option<McpRemoteTransport> {
-    match value {
-        "native" => Some(McpRemoteTransport::Native),
-        "mcp-remote" => Some(McpRemoteTransport::McpRemote),
-        _ => None,
-    }
-}
-
 fn parse_mcp_servers(
     table: &toml::map::Map<String, Value>,
 ) -> BTreeMap<String, McpServerDefinition> {
@@ -400,6 +392,10 @@ fn parse_mcp_servers(
                 .and_then(Value::as_integer)
                 .and_then(|value| u64::try_from(value).ok())
                 .filter(|value| *value > 0),
+            remote_transport: server_table
+                .get("remote_transport")
+                .and_then(Value::as_str)
+                .and_then(McpRemoteTransport::parse),
         };
 
         // If the TOML table uses `command = ["npx", "-y", ...]` instead of separate args,
@@ -634,6 +630,12 @@ fn sync_mcp_servers_table(
                         toml_edit::Item::Value(toml_edit::Value::InlineTable(
                             string_map_to_inline_table(&def.headers),
                         )),
+                    );
+                }
+                if let Some(remote_transport) = def.remote_transport {
+                    server_table.insert(
+                        "remote_transport",
+                        toml_edit::Item::Value(toml_edit::Value::from(remote_transport.as_str())),
                     );
                 }
             }

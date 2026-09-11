@@ -6,7 +6,9 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::domain::agent::AgentDefinition;
-use crate::domain::config::{McpRemoteTransport, McpServerDefinition, McpStrategy, McpTransport};
+use crate::domain::config::{
+    McpConfig, McpRemoteTransport, McpServerDefinition, McpStrategy, McpTransport,
+};
 use crate::domain::constants::{MCP_REMOTE_LATEST_PACKAGE_SPEC, MCP_REMOTE_PACKAGE};
 
 /// Number of components in a concrete semver: major.minor.patch.
@@ -173,20 +175,109 @@ pub fn agent_supports_mcp(agent: &AgentDefinition) -> bool {
     let capabilities = get_agent_mcp_capabilities(agent);
     capabilities.supports_stdio || capabilities.supports_remote
 }
-/// Rejects static-header servers when the OAuth bridge mode cannot preserve them.
-pub fn validate_mcp_config_for_remote_transport(
-    mcp_config: &Value,
-    remote_transport: McpRemoteTransport,
-) -> Result<(), ImruleError> {
-    if remote_transport != McpRemoteTransport::McpRemote {
-        return Ok(());
+/// Key a server entry uses to override `[mcp] remote_transport` for itself.
+const REMOTE_TRANSPORT_KEY: &str = "remote_transport";
+
+/// The remote transport each MCP server is propagated with.
+///
+/// `[mcp] remote_transport` sets the project default, and a server can override
+/// it for itself. That lets the one server needing static headers — which the
+/// `mcp-remote` bridge cannot carry — go native without taking every other
+/// remote server off the bridge and its uniform OAuth flow.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct McpRemoteTransportPolicy {
+    default: McpRemoteTransport,
+    overrides: BTreeMap<String, McpRemoteTransport>,
+}
+
+impl McpRemoteTransportPolicy {
+    /// Reads overrides from both server sources: `remote_transport` on a
+    /// `.imrule/mcp.json` entry or on `[mcp_servers.<name>]`. A TOML definition
+    /// replaces the JSON one of the same name wholesale, override included —
+    /// the precedence `build_imrule_mcp_config` applies to the servers themselves.
+    /// An unrecognized value is ignored, so the server inherits the default.
+    pub fn from_sources(
+        settings: Option<&McpConfig>,
+        json_config: Option<&Value>,
+        toml_servers: &BTreeMap<String, McpServerDefinition>,
+    ) -> Self {
+        let mut overrides = BTreeMap::new();
+        if let Some(servers) = json_config
+            .and_then(|config| config.get("mcpServers"))
+            .and_then(Value::as_object)
+        {
+            for (name, server) in servers {
+                if let Some(transport) = server
+                    .get(REMOTE_TRANSPORT_KEY)
+                    .and_then(Value::as_str)
+                    .and_then(McpRemoteTransport::parse)
+                {
+                    overrides.insert(name.clone(), transport);
+                }
+            }
+        }
+        for (name, definition) in toml_servers {
+            match definition.remote_transport {
+                Some(transport) => {
+                    overrides.insert(name.clone(), transport);
+                }
+                None => {
+                    overrides.remove(name);
+                }
+            }
+        }
+
+        Self {
+            default: settings
+                .map(|settings| settings.remote_transport)
+                .unwrap_or_default(),
+            overrides,
+        }
     }
 
+    /// Overrides the project default for one server.
+    pub fn with_override(
+        mut self,
+        server_name: impl Into<String>,
+        transport: McpRemoteTransport,
+    ) -> Self {
+        self.overrides.insert(server_name.into(), transport);
+        self
+    }
+
+    /// The transport `server_name` is propagated with.
+    pub fn for_server(&self, server_name: &str) -> McpRemoteTransport {
+        self.overrides
+            .get(server_name)
+            .copied()
+            .unwrap_or(self.default)
+    }
+}
+
+impl From<McpRemoteTransport> for McpRemoteTransportPolicy {
+    /// One transport for every server.
+    fn from(default: McpRemoteTransport) -> Self {
+        Self {
+            default,
+            overrides: BTreeMap::new(),
+        }
+    }
+}
+
+/// Rejects static-header servers routed through the `mcp-remote` bridge, which
+/// cannot preserve them.
+pub fn validate_mcp_config_for_remote_transport(
+    mcp_config: &Value,
+    remote_transport: &McpRemoteTransportPolicy,
+) -> Result<(), ImruleError> {
     let Some(servers) = mcp_config.get("mcpServers").and_then(Value::as_object) else {
         return Ok(());
     };
 
     for (server_name, server_config) in servers {
+        if remote_transport.for_server(server_name) != McpRemoteTransport::McpRemote {
+            continue;
+        }
         let Some(config) = server_config.as_object() else {
             continue;
         };
@@ -195,7 +286,7 @@ pub fn validate_mcp_config_for_remote_transport(
             && config.contains_key("headers")
         {
             return Err(ImruleError::mcp(format!(
-                "MCP server '{server_name}' uses static headers, which mcp-remote mode does not support; set [mcp] remote_transport = \"native\" for this server"
+                "MCP server '{server_name}' uses static headers, which mcp-remote mode does not support; set remote_transport = \"native\" on this server ([mcp_servers.{server_name}] or its .imrule/mcp.json entry), or under [mcp] for every server"
             )));
         }
     }
@@ -207,7 +298,7 @@ pub fn validate_mcp_config_for_remote_transport(
 pub fn filter_mcp_config_for_agent(
     mcp_config: &Value,
     agent: &AgentDefinition,
-    remote_transport: McpRemoteTransport,
+    remote_transport: &McpRemoteTransportPolicy,
 ) -> Option<Value> {
     filter_mcp_config_for_agent_with_package_spec(
         mcp_config,
@@ -221,7 +312,7 @@ pub fn filter_mcp_config_for_agent(
 pub fn filter_mcp_config_for_agent_with_version_cache(
     mcp_config: &Value,
     agent: &AgentDefinition,
-    remote_transport: McpRemoteTransport,
+    remote_transport: &McpRemoteTransportPolicy,
     cache: &McpRemoteVersionCache,
 ) -> Option<Value> {
     let package_spec = cache.package_spec();
@@ -236,7 +327,7 @@ pub fn filter_mcp_config_for_agent_with_version_cache(
 pub fn filter_mcp_config_for_agent_with_package_spec(
     mcp_config: &Value,
     agent: &AgentDefinition,
-    remote_transport: McpRemoteTransport,
+    remote_transport: &McpRemoteTransportPolicy,
     mcp_remote_package_spec: &str,
 ) -> Option<Value> {
     let capabilities = get_agent_mcp_capabilities(agent);
@@ -264,7 +355,7 @@ pub fn filter_mcp_config_for_agent_with_package_spec(
             continue;
         }
 
-        match remote_transport {
+        match remote_transport.for_server(server_name) {
             McpRemoteTransport::Native if capabilities.supports_remote => {
                 filtered.insert(server_name.clone(), server_config.clone());
             }
@@ -496,7 +587,13 @@ pub fn build_imrule_mcp_config(
     if let Some(json_config) = json_config {
         if let Some(existing) = json_config.get("mcpServers").and_then(Value::as_object) {
             for (key, value) in existing {
-                servers.insert(key.clone(), value.clone());
+                let mut value = value.clone();
+                // ImRule's own key, resolved by `McpRemoteTransportPolicy`; no
+                // agent's native config understands it.
+                if let Some(server) = value.as_object_mut() {
+                    server.remove(REMOTE_TRANSPORT_KEY);
+                }
+                servers.insert(key.clone(), value);
             }
         }
     }

@@ -4,7 +4,7 @@ use imrule::application::mcp_use_case::{
     parse_env_pair, parse_env_pairs, McpAddOptions, McpRemoveOptions, McpUseCase,
 };
 use imrule::application::ports::ConfigPort;
-use imrule::domain::config::McpTransport;
+use imrule::domain::config::{McpRemoteTransport, McpTransport};
 use imrule::infrastructure::config_loader::TomlConfigLoader;
 use imrule::infrastructure::file_system::FsFileSystem;
 use imrule::infrastructure::mcp_storage::JsonMcpStorage;
@@ -36,6 +36,7 @@ fn mcp_add_http_server_writes_to_imrule_toml() {
             env: Default::default(),
             headers: Default::default(),
             timeout: None,
+            remote_transport: None,
         })
         .unwrap();
 
@@ -100,6 +101,57 @@ fn mcp_add_http_server_writes_to_imrule_toml() {
 }
 
 #[test]
+fn mcp_add_records_a_per_server_remote_transport_that_survives_later_writes() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+
+    let xdg_home = tempdir().unwrap();
+    let loader = TomlConfigLoader::new().with_xdg_home(xdg_home.path().to_path_buf());
+    let use_case = McpUseCase::new(&loader, &loader);
+    let remote =
+        |name: &str, url: &str, remote_transport: Option<McpRemoteTransport>| McpAddOptions {
+            project_root: root.to_path_buf(),
+            config_path: None,
+            global: false,
+            dry_run: false,
+            name: name.to_string(),
+            transport: McpTransport::Http,
+            command: None,
+            args: vec![],
+            url: Some(url.to_string()),
+            env: Default::default(),
+            headers: Default::default(),
+            timeout: None,
+            remote_transport,
+        };
+
+    use_case
+        .add(remote(
+            "agent-mail",
+            "http://127.0.0.1:8765/mcp/",
+            Some(McpRemoteTransport::Native),
+        ))
+        .unwrap();
+    let written = fs::read_to_string(root.join(".imrule/imrule.toml")).unwrap();
+    assert!(written.contains("remote_transport = \"native\""));
+
+    // Every save rewrites each server table from its parsed definition, so the
+    // override must round-trip through the loader to survive this one.
+    use_case
+        .add(remote("linear", "https://mcp.linear.app/mcp", None))
+        .unwrap();
+    let config = loader.load_config(root, None, None).unwrap();
+    assert_eq!(
+        config.mcp_servers["agent-mail"].remote_transport,
+        Some(McpRemoteTransport::Native)
+    );
+    assert_eq!(config.mcp_servers["linear"].remote_transport, None);
+    let written = fs::read_to_string(root.join(".imrule/imrule.toml")).unwrap();
+    assert_eq!(written.matches("remote_transport").count(), 1);
+}
+
+#[test]
 fn mcp_add_stdio_server_writes_command_and_args() {
     let tmp = tempdir().unwrap();
     let root = tmp.path();
@@ -126,6 +178,7 @@ fn mcp_add_stdio_server_writes_command_and_args() {
             env: Default::default(),
             headers: Default::default(),
             timeout: None,
+            remote_transport: None,
         })
         .unwrap();
 
@@ -169,6 +222,7 @@ fn mcp_add_records_environment_variables() {
             env,
             headers: Default::default(),
             timeout: None,
+            remote_transport: None,
         })
         .unwrap();
 
@@ -207,6 +261,7 @@ fn mcp_remove_deletes_server_from_imrule_toml() {
             env: Default::default(),
             headers: Default::default(),
             timeout: None,
+            remote_transport: None,
         })
         .unwrap();
 
@@ -275,6 +330,7 @@ fn mcp_toml_servers_take_precedence_over_mcp_json() {
             env: Default::default(),
             headers: Default::default(),
             timeout: None,
+            remote_transport: None,
         })
         .unwrap();
 
