@@ -68,7 +68,7 @@ KNOWN_TOP_LEVEL = {
 
 SECRET_WORDS = (
     r"token|secret|passw(?:or)?d|pwd|api[_-]?key|apikey|access[_-]?key|private[_-]?key"
-    r"|client[_-]?secret|credential|session[_-]?id|auth"
+    r"|client[_-]?secret|credential|session[_-]?id|auth|cookie"
 )
 # 키 앞뒤의 따옴표. 캡처한 stdout·JSON으로 인코딩한 문자열 안에서는 \" 로 이스케이프되어 나온다.
 OPTIONAL_QUOTE = r"(?:\\?[\"'])?"
@@ -188,8 +188,9 @@ class Redactor:
     def _key_value(self, match: re.Match) -> str:
         value = match.group("value")
         key = match.group("key").lower()
-        # Authorization·쿠키는 전용 패턴이 인증 방식(Bearer 등)까지 보고 이미 처리했다.
-        if key.endswith("authorization") or key.endswith("cookie"):
+        # Authorization·쿠키 헤더는 전용 패턴이 인증 방식(Bearer 등)까지 보고 이미 처리했다.
+        # AUTH_COOKIE 같은 변수 이름은 헤더가 아니므로 여기서 가린다.
+        if re.fullmatch(r"(?:proxy-)?authorization|(?:set-)?cookie", key):
             return match.group(0)
         if (already_redacted(value) or ENV_REFERENCE.fullmatch(value)
                 or value.lower() in {"true", "false", "null", "none"}
