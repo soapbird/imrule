@@ -15,9 +15,10 @@ pub fn builtin_catalog() -> Vec<BuiltinSkill> {
     build_builtin_catalog(BUILTIN_SKILL_FILES)
 }
 
-/// Reads the files that reveal what kind of project `root` is. Looks at the
-/// root and one level down (`crates/*`, `packages/*`, …) so workspaces are
-/// recognized by their members. Missing or unparseable files count as absent.
+/// Reads the files that reveal what kind of project `root` is. Looks at
+/// `root`, `root/*` and `root/*/*` (`crates/*`, `apps/*/server`, …) so
+/// workspaces are recognized by their members. Missing or unparseable files
+/// count as absent.
 pub fn collect_project_signals(root: &Path) -> ProjectSignals {
     let mut signals = ProjectSignals {
         makefile: root.join("Makefile").is_file() || root.join("GNUmakefile").is_file(),

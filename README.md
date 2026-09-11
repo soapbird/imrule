@@ -211,6 +211,7 @@ ImRule에 내장된 스킬(프로젝트 세팅·구조·컨벤션 검사)을 `.i
 ```bash
 imrule skills setup                       # 감지 결과가 미리 선택된 목록에서 검색·다중 선택
 imrule skills setup --list                # 내장 스킬과 감지 결과만 출력
+imrule skills setup --list --json         # 같은 목록을 JSON 한 문서로 출력(리비전·감지 여부·설치 상태 포함)
 imrule skills setup --yes                 # 감지된 스킬을 묻지 않고 설치
 imrule skills setup rust/cli make-setup   # 경로나 이름으로 지정
 imrule skills setup --all                 # 전부 설치
@@ -290,6 +291,7 @@ imrule skills up                          # update 별칭
 ```bash
 imrule skills list                        # 프로젝트 스킬 조회
 imrule skills list --global               # 전역 스킬 조회(~/.config/imrule/skills/)
+imrule skills list --json                 # 디렉터리·스킬 경로·경고를 JSON 한 문서로 출력
 imrule skills ls                          # list 별칭
 ```
 

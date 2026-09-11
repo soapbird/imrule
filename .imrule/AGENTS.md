@@ -98,7 +98,7 @@ skills/                # Built-in skills embedded into the binary by build.rs (s
 - `manifest.rs` — `JsonApplyManifest`: atomic read/write of `.imrule/manifest.json`; an unparseable or future-version manifest degrades to `None` rather than failing apply.
 - `mcp_storage.rs` — `JsonMcpStorage`: reads/writes native MCP JSON, resolves agent-specific config paths, graceful degradation for missing files.
 - `skills.rs` — Skill discovery, validation warnings, recursive copy for propagation, and byte-for-byte tree comparison so an update never rewrites an unchanged skill.
-- `subagents.rs` — Subagent discovery from `.imrule/agents/`, gitignore path mapping.
+- `subagents.rs` — Subagent discovery from `.imrule/agents/` (the gitignore paths now come from `domain::subagent::subagents_gitignore_paths`).
 - `vscode_settings.rs` — Augment (VS Code) MCP transform into `.vscode/settings.json` array format.
 
 ### Interface (`src/interface/`)
@@ -113,8 +113,8 @@ There are **zero unit tests inside `src/`**. All testing happens via integration
 | Test File | What It Validates |
 |---|---|
 | `agent_layer_contract.rs` | Full agent registry (36 agents): identifiers, names, output paths, MCP keys, capabilities. `DefaultAgentWriter` idempotency and custom output path overrides. |
-| `apply_manifest_contract.rs` | `ApplyManifest` diffs and `JsonApplyManifest` round-trip; apply/clear reconciliation end-to-end: dropping MCP servers or agents removes what they generated, a user-owned file or server is never touched, `--dry-run` and `--agents` prune nothing. |
-| `architecture_contract.rs` | Layer boundaries: `main.rs` only calls `imrule::run_cli()`, no direct domain/infra imports. Confirms `Cargo.toml` metadata and no tracked TypeScript artifacts. |
+| `apply_manifest_contract.rs` | `ApplyManifest` diffs and `JsonApplyManifest` round-trip; apply/clear reconciliation end-to-end: dropping MCP servers or agents removes what they generated, a user-owned file or server is never touched, `--dry-run` and `--agents` prune nothing. Grouped skills publish under hyphen-joined path names and removed ones are pruned while hand-placed skills (and a skills root still holding them) survive; a colliding name fails before anything is written; a tampered manifest cannot reach outside the project; pre-0.5 leaf-named copies are removed only when identical to the source. |
+| `architecture_contract.rs` | Layer boundaries: `main.rs` only calls `imrule::run_cli()`, no direct domain/infra imports; layers depend only inward (`crate::<layer>` references); the application layer reaches the filesystem only through `FileSystemPort` (no `std::fs`, `.exists()`, `.is_dir()`, `.is_file()`); the domain stays free of `std::fs`, filesystem probes and `env::current_dir`. Confirms `Cargo.toml` metadata and no tracked TypeScript artifacts. |
 | `cli_release_contract.rs` | Binary-level tests via `assert_cmd::Command`: `--version`, `--help`, real `apply`/`clear` round-trip, `--dry-run`, `init` idempotency, `init --global` with `XDG_CONFIG_HOME`. |
 | `config_fs_rules_contract.rs` | `concatenate_rules` format, `read_markdown_files` ordering/skipping, `GitignoreUpdater` managed block behavior, `TomlConfigLoader` parsing (including `[mcp_servers]`), parent-directory creation on write. |
 | `git_tracking_contract.rs` | `GitUntracker` index removal (file kept on disk, directories expanded, no-op outside a work tree or when nothing is tracked); apply-level untracking of previously committed generated files. |

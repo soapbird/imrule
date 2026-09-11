@@ -61,7 +61,7 @@ pub trait FileSystemPort: Send + Sync {
     /// Copy a file.
     fn copy_file(&self, from: &Path, to: &Path) -> Result<(), ImruleError>;
 
-    /// Check whether a path exists as a file.
+    /// Check whether a path exists, whether as a file or a directory.
     fn file_exists(&self, path: &Path) -> bool;
 
     /// Check whether a path exists as a directory.
