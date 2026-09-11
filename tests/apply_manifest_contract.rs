@@ -578,6 +578,59 @@ fn an_mcp_config_linked_outside_the_project_is_never_written() {
 }
 
 #[test]
+fn a_recorded_path_that_is_now_a_directory_of_the_users_is_left_alone() {
+    let temporary = project("\"claude\"", "");
+    let root = temporary.path();
+    apply(root, &[]);
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+    tamper_manifest(root, |recorded| {
+        recorded["paths"].as_array_mut().unwrap().push(json!("src"));
+    });
+
+    apply(root, &[]);
+
+    assert!(root.join("src/main.rs").exists());
+}
+
+#[test]
+fn clear_removes_a_pre_0_5_copy_that_still_matches_its_source() {
+    let temporary = project("\"claude\"", "");
+    let root = temporary.path();
+    write_skill(root, "python/cli");
+    // What 0.4.2 left: the grouped skill copied under its leaf name, recorded
+    // nowhere.
+    let legacy = root.join(".claude/skills/cli");
+    fs::create_dir_all(&legacy).unwrap();
+    fs::write(legacy.join("SKILL.md"), "python/cli").unwrap();
+
+    clear(root);
+
+    assert!(!legacy.exists());
+    assert!(!root.join(".claude/skills").exists());
+}
+
+#[test]
+fn clear_keeps_a_hand_written_agent_that_shares_a_name_with_a_source() {
+    let temporary = project("\"claude\"", "");
+    let root = temporary.path();
+    write_subagent(root, "coder");
+    write_subagent(root, "rev");
+    apply(root, &[]);
+    fs::write(root.join(".claude/agents/rev.md"), "my own reviewer\n").unwrap();
+    // Without a manifest, only byte-identical output counts as imrule's.
+    fs::remove_file(root.join(IMRULE_MANIFEST_PATH)).unwrap();
+
+    clear(root);
+
+    assert!(!root.join(".claude/agents/coder.md").exists());
+    assert_eq!(
+        fs::read_to_string(root.join(".claude/agents/rev.md")).unwrap(),
+        "my own reviewer\n"
+    );
+}
+
+#[test]
 fn a_tampered_manifest_cannot_delete_anything_outside_the_project() {
     let workspace = tempdir().unwrap();
     let root = workspace.path().join("project");

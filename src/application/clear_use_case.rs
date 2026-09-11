@@ -199,9 +199,9 @@ impl<'a> ClearUseCase<'a> {
     }
 
     /// Removes the subagent files apply wrote — the ones the manifest recorded
-    /// and the ones `.imrule/agents` generates today — and each directory only
-    /// once nothing else is left in it. A subagent the user wrote by hand
-    /// stays, and so does its directory.
+    /// and the ones matching, byte for byte, what `.imrule/agents` generates
+    /// today — and each directory only once nothing else is left in it. A
+    /// subagent the user wrote by hand stays, and so does its directory.
     fn clear_subagents(
         &self,
         options: &ClearOptions,
@@ -209,16 +209,31 @@ impl<'a> ClearUseCase<'a> {
         manifest: Option<&ApplyManifest>,
         removed: &mut Vec<PathBuf>,
     ) -> Result<(), ImruleError> {
-        let generated: Vec<String> = self
+        /// What apply writes for `subagent` into the subagent directory `dir_key`.
+        fn generated_file(
+            dir_key: &str,
+            subagent: &crate::domain::config::SubagentInfo,
+        ) -> Option<String> {
+            use crate::domain::constants::{
+                CLAUDE_SUBAGENTS_PATH, CODEX_SUBAGENTS_PATH, COPILOT_SUBAGENTS_PATH,
+                CURSOR_SUBAGENTS_PATH,
+            };
+            use crate::domain::subagent::{
+                build_claude_file, build_codex_file, build_copilot_file, build_cursor_file,
+            };
+            match dir_key {
+                CLAUDE_SUBAGENTS_PATH => Some(build_claude_file(subagent)),
+                CURSOR_SUBAGENTS_PATH => Some(build_cursor_file(subagent)),
+                CODEX_SUBAGENTS_PATH => Some(build_codex_file(subagent)),
+                COPILOT_SUBAGENTS_PATH => Some(build_copilot_file(subagent).content),
+                _ => None,
+            }
+        }
+
+        let subagents = self
             .fs_port
             .discover_subagents(&options.project_root)
-            .map(|discovery| {
-                discovery
-                    .subagents
-                    .iter()
-                    .map(|subagent| format!("{}.md", subagent.name))
-                    .collect()
-            })
+            .map(|discovery| discovery.subagents)
             .unwrap_or_default();
         for dir in subagents_gitignore_paths(&options.project_root, selected_agents) {
             if !self.fs_port.dir_exists(&dir)
@@ -227,10 +242,22 @@ impl<'a> ClearUseCase<'a> {
                 continue;
             }
             let recorded = manifest.map_or(&[][..], |manifest| manifest.paths.as_slice());
-            let names: BTreeSet<String> =
-                entries_directly_in(recorded, &options.project_root, &dir)
-                    .chain(generated.iter().cloned())
-                    .collect();
+            let mut names: BTreeSet<String> =
+                entries_directly_in(recorded, &options.project_root, &dir).collect();
+            // A file today's sources generate counts only when it is exactly
+            // that output, so a hand-written agent of the same name stays.
+            let dir_key = relative_key(&options.project_root, &dir);
+            for subagent in &subagents {
+                let name = format!("{}.md", subagent.name);
+                let is_output = generated_file(&dir_key, subagent).is_some_and(|content| {
+                    self.fs_port
+                        .read_text(&dir.join(&name))
+                        .is_ok_and(|existing| existing == content)
+                });
+                if is_output {
+                    names.insert(name);
+                }
+            }
             for name in names {
                 let file = dir.join(&name);
                 if !self.fs_port.file_exists(&file)
@@ -281,11 +308,16 @@ impl<'a> ClearUseCase<'a> {
             let mut copies: BTreeSet<String> =
                 entries_directly_in(recorded, &options.project_root, &skills_root).collect();
             for skill in &sources {
-                let copy = skills_root.join(&skill.name);
-                if self.fs_port.dir_exists(&copy)
-                    && matches!(self.fs_port.dirs_match(&skill.path, &copy), Ok(true))
-                {
-                    copies.insert(skill.name.clone());
+                // A copy made before 0.5 sits under the skill's leaf name
+                // (`python/cli` was copied as `cli`) and is recorded nowhere.
+                let leaf = skill.path.file_name().and_then(|name| name.to_str());
+                for name in std::iter::once(skill.name.as_str()).chain(leaf) {
+                    let copy = skills_root.join(name);
+                    if self.fs_port.dir_exists(&copy)
+                        && matches!(self.fs_port.dirs_match(&skill.path, &copy), Ok(true))
+                    {
+                        copies.insert(name.to_string());
+                    }
                 }
             }
             for name in copies {

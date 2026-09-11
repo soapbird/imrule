@@ -269,10 +269,23 @@ impl<'a> ApplyUseCase<'a> {
                 ".gitignore",
             )?;
             // `.gitignore` has no effect on files git already tracks, so drop
-            // generated files from the index while keeping them on disk.
+            // generated files from the index while keeping them on disk. The
+            // agent directories themselves are left out: they also hold skills
+            // and agents the user placed there and may have committed.
+            let agent_dirs: Vec<PathBuf> = all_skills_roots()
+                .into_iter()
+                .chain(all_subagent_dirs())
+                .map(|dir| options.project_root.join(dir))
+                .collect();
+            let untrack_paths: Vec<PathBuf> = written_paths
+                .iter()
+                .filter(|path| !agent_dirs.contains(path))
+                .chain(&copied_skills)
+                .cloned()
+                .collect();
             untracked = self
                 .git_tracking_port
-                .untrack_generated_files(&options.project_root, &written_paths)?;
+                .untrack_generated_files(&options.project_root, &untrack_paths)?;
             if !untracked.is_empty() {
                 tracing::info!(count = untracked.len(), "untracked generated files");
             }
@@ -501,7 +514,11 @@ impl<'a> ApplyUseCase<'a> {
                         continue;
                     }
                 } else {
-                    self.fs_port.remove_dir_all(&path)?;
+                    // apply only ever records agent skills and subagent
+                    // directories. A directory at any other recorded path was
+                    // put there since — a `.clinerules/` folder replacing the
+                    // generated file, say — and is the user's.
+                    continue;
                 }
             } else if in_subagent_dir(&stale)
                 || self

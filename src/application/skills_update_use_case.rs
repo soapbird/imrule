@@ -93,7 +93,8 @@ impl<'a> SkillsUpdateUseCase<'a> {
             if let Some(owner) = skills_base.parent().and_then(std::path::Path::parent) {
                 if !self.fs_port.target_resolves_within(&skills_base, owner) {
                     return Err(ImruleError::skills(format!(
-                        "refusing to update skills in {}: it resolves outside {}",
+                        "refusing to update skills in {}: it is linked outside {}; \
+                         update them where the link points instead",
                         skills_base.display(),
                         owner.display()
                     )));
