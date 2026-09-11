@@ -3,11 +3,14 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use imrule::application::skills_setup_use_case::{SkillsSetupOptions, SkillsSetupUseCase};
+use imrule::application::ports::FileSystemPort;
+use imrule::application::skills_setup_use_case::{
+    SkillsSetupOptions, SkillsSetupPlan, SkillsSetupUseCase, skills_project_root,
+};
 use imrule::domain::builtin_skills::{
     BuiltinSkill, BuiltinSkillSetupStatus, BuiltinSkillState, ProjectSignals,
     build_builtin_catalog, detection_labels, installed_skill_revision, python_requirement_name,
@@ -18,14 +21,15 @@ use imrule::domain::subagent::parse_frontmatter;
 use imrule::infrastructure::builtin_skills::{builtin_catalog, collect_project_signals};
 use imrule::infrastructure::file_system::FsFileSystem;
 use imrule::interface::skill_picker::{
-    Picker, PickerAction, PickerItem, PickerKey, display_width, picker_key, truncate,
+    Picker, PickerAction, PickerItem, PickerKey, PickerSelection, display_width, picker_key,
+    truncate,
 };
 use tempfile::tempdir;
 
 // ---------------------------------------------------------------- catalog ---
 
-const ALPHA_V1: &str = "---\nname: lang-alpha\ndescription: \"Alpha skill\"\nmetadata:\n  imrule-skill-version: \"1\"\n---\nbody v1\n";
-const ALPHA_V2: &str = "---\nname: lang-alpha\ndescription: \"Alpha skill\"\nmetadata:\n  imrule-skill-version: \"2\"\n---\nbody v2\n";
+const ALPHA_V1: &str = "---\nname: lang-alpha\ndescription: \"Alpha skill\"\nmetadata:\n  imrule-builtin: \"true\"\n  imrule-skill-version: \"1\"\n---\nbody v1\n";
+const ALPHA_V2: &str = "---\nname: lang-alpha\ndescription: \"Alpha skill\"\nmetadata:\n  imrule-builtin: \"true\"\n  imrule-skill-version: \"2\"\n---\nbody v2\n";
 
 fn catalog_v1() -> Vec<BuiltinSkill> {
     build_builtin_catalog(&[
@@ -463,38 +467,315 @@ fn installing_then_rerunning_reports_unchanged() {
     assert!(!result.changed());
 }
 
-#[test]
-fn an_older_revision_is_refreshed_and_files_it_dropped_are_removed() {
-    let tmp = project();
-    let root = tmp.path();
+/// Revision 1 of `lang/alpha` shipping the same files as revision 2.
+fn catalog_v1_same_files() -> Vec<BuiltinSkill> {
+    build_builtin_catalog(&[
+        ("lang/alpha/SKILL.md", ALPHA_V1),
+        ("lang/alpha/scripts/check.py", "print('v1')\n"),
+    ])
+}
+
+/// Installs `catalog`'s `lang/alpha` into the project at `root`.
+fn install_alpha(root: &Path, catalog: &[BuiltinSkill]) {
     let fs_port = FsFileSystem::new();
-    let old = catalog_v1();
-    let old_use_case = SkillsSetupUseCase::new(&fs_port, &old);
-    let plan = old_use_case.plan(&options(root), &ProjectSignals::default());
-    old_use_case
+    let use_case = SkillsSetupUseCase::new(&fs_port, catalog);
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    use_case
         .install(&plan, &["lang/alpha".to_string()], false, false)
         .unwrap();
+}
 
+fn state_in(plan: &SkillsSetupPlan, path: &str) -> BuiltinSkillState {
+    plan.entries
+        .iter()
+        .find(|e| e.skill.path == path)
+        .unwrap()
+        .state
+}
+
+#[test]
+fn an_older_revision_is_refreshed_only_when_it_holds_no_extra_files() {
+    let fs_port = FsFileSystem::new();
     let new = catalog_v2();
     let use_case = SkillsSetupUseCase::new(&fs_port, &new);
-    let plan = use_case.plan(&options(root), &ProjectSignals::default());
-    let alpha = plan
-        .entries
-        .iter()
-        .find(|e| e.skill.path == "lang/alpha")
-        .unwrap();
-    assert_eq!(alpha.state, BuiltinSkillState::Outdated);
+    let alpha = ["lang/alpha".to_string()];
 
-    let result = use_case
-        .install(&plan, &["lang/alpha".to_string()], false, false)
-        .unwrap();
+    // Same files, older revision: refreshed without --force.
+    let tmp = project();
+    let root = tmp.path();
+    install_alpha(root, &catalog_v1_same_files());
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    assert_eq!(state_in(&plan, "lang/alpha"), BuiltinSkillState::Outdated);
+    let result = use_case.install(&plan, &alpha, false, false).unwrap();
     assert_eq!(result.outcomes[0].status, BuiltinSkillSetupStatus::Updated);
+    assert_eq!(
+        fs::read_to_string(root.join(".imrule/skills/lang/alpha/scripts/check.py")).unwrap(),
+        "print('v2')\n"
+    );
+
+    // Revision 1 shipped scripts/old.py, which revision 2 dropped. Setup cannot
+    // tell it from a file the user added, so replacing the directory — which
+    // deletes it — waits for --force.
+    let tmp = project();
+    let root = tmp.path();
+    install_alpha(root, &catalog_v1());
     let skill_dir = root.join(".imrule/skills/lang/alpha");
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    assert_eq!(state_in(&plan, "lang/alpha"), BuiltinSkillState::Modified);
+    let result = use_case.install(&plan, &alpha, false, false).unwrap();
+    assert_eq!(
+        result.outcomes[0].status,
+        BuiltinSkillSetupStatus::SkippedModified
+    );
+    assert!(skill_dir.join("scripts/old.py").is_file());
+    assert_eq!(
+        fs::read_to_string(skill_dir.join("scripts/check.py")).unwrap(),
+        "print('v1')\n"
+    );
+
+    let result = use_case.install(&plan, &alpha, true, false).unwrap();
+    assert_eq!(result.outcomes[0].status, BuiltinSkillSetupStatus::Updated);
     assert_eq!(
         fs::read_to_string(skill_dir.join("scripts/check.py")).unwrap(),
         "print('v2')\n"
     );
     assert!(!skill_dir.join("scripts/old.py").exists());
+}
+
+#[test]
+fn an_outdated_built_in_with_a_file_the_user_added_is_kept_until_forced() {
+    let tmp = project();
+    let root = tmp.path();
+    install_alpha(root, &catalog_v1_same_files());
+    let skill_dir = root.join(".imrule/skills/lang/alpha");
+    let notes = skill_dir.join("references/notes.md");
+    fs::create_dir_all(notes.parent().unwrap()).unwrap();
+    fs::write(&notes, "my notes\n").unwrap();
+
+    let fs_port = FsFileSystem::new();
+    let new = catalog_v2();
+    let use_case = SkillsSetupUseCase::new(&fs_port, &new);
+    let alpha = ["lang/alpha".to_string()];
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    assert_eq!(state_in(&plan, "lang/alpha"), BuiltinSkillState::Modified);
+
+    let result = use_case.install(&plan, &alpha, false, false).unwrap();
+    assert_eq!(
+        result.outcomes[0].status,
+        BuiltinSkillSetupStatus::SkippedModified
+    );
+    assert!(!result.changed());
+    assert_eq!(fs::read_to_string(&notes).unwrap(), "my notes\n");
+    assert_eq!(
+        fs::read_to_string(skill_dir.join("scripts/check.py")).unwrap(),
+        "print('v1')\n"
+    );
+
+    let result = use_case.install(&plan, &alpha, true, false).unwrap();
+    assert_eq!(result.outcomes[0].status, BuiltinSkillSetupStatus::Updated);
+    assert!(!notes.exists());
+    assert_eq!(
+        fs::read_to_string(skill_dir.join("scripts/check.py")).unwrap(),
+        "print('v2')\n"
+    );
+}
+
+#[test]
+fn a_skill_the_user_wrote_at_a_built_in_path_is_never_replaced_without_force() {
+    let tmp = project();
+    let root = tmp.path();
+    let fs_port = FsFileSystem::new();
+    let catalog = catalog_v2();
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog);
+    let alpha = ["lang/alpha".to_string()];
+    let skill_md = root.join(".imrule/skills/lang/alpha/SKILL.md");
+    fs::create_dir_all(skill_md.parent().unwrap()).unwrap();
+
+    for (mine, why) in [
+        (
+            "---\nname: lang-alpha\ndescription: Mine\n---\nmine\n",
+            "no marker and no revision",
+        ),
+        (
+            "---\nname: lang-alpha\nmetadata:\n  imrule-skill-version: \"1\"\n---\nmine\n",
+            "a revision without the built-in marker",
+        ),
+        (
+            "---\nname: lang-alpha\nmetadata:\n  imrule-builtin: \"true\"\n---\nmine\n",
+            "the marker without a revision",
+        ),
+        ("# no frontmatter\n", "no frontmatter at all"),
+    ] {
+        fs::write(&skill_md, mine).unwrap();
+        let plan = use_case.plan(&options(root), &ProjectSignals::default());
+        assert_eq!(
+            state_in(&plan, "lang/alpha"),
+            BuiltinSkillState::Modified,
+            "{why}"
+        );
+        let result = use_case.install(&plan, &alpha, false, false).unwrap();
+        assert_eq!(
+            result.outcomes[0].status,
+            BuiltinSkillSetupStatus::SkippedModified,
+            "{why}"
+        );
+        assert_eq!(fs::read_to_string(&skill_md).unwrap(), mine, "{why}");
+        assert!(!root.join(".imrule/skills/lang/alpha/scripts").exists());
+    }
+}
+
+#[test]
+fn a_directory_without_skill_md_at_a_built_in_path_is_left_alone() {
+    let tmp = project();
+    let root = tmp.path();
+    let fs_port = FsFileSystem::new();
+    let catalog = catalog_v1();
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog);
+    // `beta` is a built-in path; here it is the user's grouping folder.
+    let nested = root.join(".imrule/skills/beta/auth/SKILL.md");
+    fs::create_dir_all(nested.parent().unwrap()).unwrap();
+    fs::write(&nested, "---\nname: beta-auth\n---\nmine\n").unwrap();
+
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    assert_eq!(state_in(&plan, "beta"), BuiltinSkillState::Modified);
+    let result = use_case
+        .install(&plan, &["beta".to_string()], false, false)
+        .unwrap();
+    assert_eq!(
+        result.outcomes[0].status,
+        BuiltinSkillSetupStatus::SkippedModified
+    );
+    assert!(nested.is_file());
+    assert!(!root.join(".imrule/skills/beta/SKILL.md").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_built_in_path_reached_through_a_symlink_is_not_emptied() {
+    let tmp = project();
+    let root = tmp.path();
+    let outside = tempdir().unwrap();
+    let kept = outside.path().join("alpha/notes.md");
+    fs::create_dir_all(kept.parent().unwrap()).unwrap();
+    fs::write(&kept, "outside the project\n").unwrap();
+    fs::create_dir_all(root.join(".imrule/skills")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), root.join(".imrule/skills/lang")).unwrap();
+
+    let fs_port = FsFileSystem::new();
+    let catalog = catalog_v1();
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog);
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    assert_eq!(state_in(&plan, "lang/alpha"), BuiltinSkillState::Modified);
+    let result = use_case
+        .install(&plan, &["lang/alpha".to_string()], false, false)
+        .unwrap();
+    assert_eq!(
+        result.outcomes[0].status,
+        BuiltinSkillSetupStatus::SkippedModified
+    );
+    assert_eq!(fs::read_to_string(&kept).unwrap(), "outside the project\n");
+}
+
+#[test]
+fn install_refuses_to_replace_what_appeared_after_the_plan() {
+    let tmp = project();
+    let root = tmp.path();
+    let fs_port = FsFileSystem::new();
+    let catalog = catalog_v1();
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog);
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    assert_eq!(
+        state_in(&plan, "lang/alpha"),
+        BuiltinSkillState::NotInstalled
+    );
+
+    // The user writes a skill there while the picker is open.
+    let mine = root.join(".imrule/skills/lang/alpha/SKILL.md");
+    fs::create_dir_all(mine.parent().unwrap()).unwrap();
+    fs::write(&mine, "mine\n").unwrap();
+
+    let error = use_case
+        .install(&plan, &["lang/alpha".to_string()], true, false)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("changed while setting up"), "{error}");
+    assert_eq!(fs::read_to_string(&mine).unwrap(), "mine\n");
+}
+
+#[test]
+fn only_consented_paths_overwrite_a_locally_modified_skill() {
+    let tmp = project();
+    let root = tmp.path();
+    let fs_port = FsFileSystem::new();
+    let catalog = catalog_v1();
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog);
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    use_case
+        .install(&plan, &plan.all_paths(), false, false)
+        .unwrap();
+    let beta = root.join(".imrule/skills/beta/SKILL.md");
+    let check = root.join(".imrule/skills/lang/alpha/scripts/check.py");
+    fs::write(&beta, "---\nname: beta\n---\nmy beta\n").unwrap();
+    fs::write(&check, "print('my tweak')\n").unwrap();
+
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    assert_eq!(state_in(&plan, "beta"), BuiltinSkillState::Modified);
+    assert_eq!(state_in(&plan, "lang/alpha"), BuiltinSkillState::Modified);
+
+    let result = use_case
+        .install_with_consent(
+            &plan,
+            &["beta".to_string(), "lang/alpha".to_string()],
+            &["lang/alpha".to_string()],
+            false,
+        )
+        .unwrap();
+    let statuses: Vec<(&str, BuiltinSkillSetupStatus)> = result
+        .outcomes
+        .iter()
+        .map(|o| (o.path.as_str(), o.status))
+        .collect();
+    assert_eq!(
+        statuses,
+        vec![
+            ("beta", BuiltinSkillSetupStatus::SkippedModified),
+            ("lang/alpha", BuiltinSkillSetupStatus::Updated),
+        ]
+    );
+    assert_eq!(
+        fs::read_to_string(&beta).unwrap(),
+        "---\nname: beta\n---\nmy beta\n"
+    );
+    assert_eq!(fs::read_to_string(&check).unwrap(), "print('v1')\n");
+}
+
+#[test]
+fn list_files_walks_the_tree_without_following_symlinked_directories() {
+    let tmp = tempdir().unwrap();
+    let dir = tmp.path().join("skill");
+    fs::create_dir_all(dir.join("scripts/nested")).unwrap();
+    fs::create_dir_all(dir.join("empty")).unwrap();
+    fs::write(dir.join("SKILL.md"), "skill").unwrap();
+    fs::write(dir.join(".hidden"), "hidden").unwrap();
+    fs::write(dir.join("scripts/nested/deep.py"), "deep").unwrap();
+    let outside = tmp.path().join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("secret.md"), "not in the skill").unwrap();
+
+    let mut expected: Vec<PathBuf> = [".hidden", "SKILL.md", "scripts/nested/deep.py"]
+        .iter()
+        .map(PathBuf::from)
+        .collect();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&outside, dir.join("linked")).unwrap();
+        expected.push(PathBuf::from("linked"));
+    }
+    expected.sort();
+
+    let fs_port = FsFileSystem::new();
+    assert_eq!(fs_port.list_files(&dir).unwrap(), expected);
+    assert!(fs_port.list_files(&tmp.path().join("missing")).is_err());
 }
 
 #[test]
@@ -550,8 +831,10 @@ fn dry_run_reports_without_writing() {
     assert!(!root.join(".imrule/skills").exists());
 }
 
+/// The state of an installed directory holding exactly `files`.
 fn state_of(skill: &BuiltinSkill, files: &[(&str, &str)]) -> BuiltinSkillState {
-    BuiltinSkillState::compare(skill, |relative: &str| {
+    let listed: Vec<String> = files.iter().map(|(path, _)| path.to_string()).collect();
+    BuiltinSkillState::compare(skill, Some(&listed), |relative: &str| {
         files
             .iter()
             .find(|(path, _)| *path == relative)
@@ -564,11 +847,29 @@ fn install_state_compares_contents_before_revisions() {
     let catalog = catalog_v2();
     let alpha = catalog.iter().find(|s| s.path == "lang/alpha").unwrap();
     let check = "print('v2')\n";
+    let old_check = "print('v1')\n";
 
     assert_eq!(
-        state_of(alpha, &[("scripts/check.py", check)]),
+        BuiltinSkillState::compare(alpha, None, |_| None),
         BuiltinSkillState::NotInstalled,
-        "without SKILL.md the skill is not installed"
+        "only a path where nothing exists is not installed"
+    );
+    assert_eq!(
+        state_of(alpha, &[("scripts/check.py", check)]),
+        BuiltinSkillState::Modified,
+        "a directory without SKILL.md is not a copy ImRule installed"
+    );
+    assert_eq!(
+        state_of(alpha, &[]),
+        BuiltinSkillState::Modified,
+        "neither is an empty one"
+    );
+    assert_eq!(
+        state_of(
+            alpha,
+            &[("SKILL.md", ALPHA_V2), ("scripts/check.py", check)]
+        ),
+        BuiltinSkillState::UpToDate
     );
     assert_eq!(
         state_of(
@@ -579,8 +880,8 @@ fn install_state_compares_contents_before_revisions() {
                 ("notes.md", "a file the user added"),
             ]
         ),
-        BuiltinSkillState::UpToDate,
-        "files the embedded skill does not ship are not compared"
+        BuiltinSkillState::Modified,
+        "a file the embedded skill does not ship was added locally"
     );
     assert_eq!(
         state_of(alpha, &[("SKILL.md", ALPHA_V2)]),
@@ -588,8 +889,46 @@ fn install_state_compares_contents_before_revisions() {
         "a file deleted at the current revision is a local change"
     );
     assert_eq!(
-        state_of(alpha, &[("SKILL.md", ALPHA_V1)]),
+        state_of(
+            alpha,
+            &[("SKILL.md", ALPHA_V1), ("scripts/check.py", old_check)]
+        ),
         BuiltinSkillState::Outdated
+    );
+    assert_eq!(
+        state_of(alpha, &[("SKILL.md", ALPHA_V1)]),
+        BuiltinSkillState::Outdated,
+        "an older copy may lack a file the newer revision added"
+    );
+    assert_eq!(
+        state_of(
+            alpha,
+            &[
+                ("SKILL.md", ALPHA_V1),
+                ("scripts/check.py", old_check),
+                ("scripts/mine.py", "added"),
+            ]
+        ),
+        BuiltinSkillState::Modified,
+        "an older copy with an added file is not refreshed silently"
+    );
+    let boolean_marker = ALPHA_V1.replace("\"true\"", "true");
+    assert_eq!(
+        state_of(alpha, &[("SKILL.md", boolean_marker.as_str())]),
+        BuiltinSkillState::Outdated,
+        "the marker may be a YAML boolean"
+    );
+    let unmarked = ALPHA_V1.replace("  imrule-builtin: \"true\"\n", "");
+    assert_eq!(
+        state_of(alpha, &[("SKILL.md", unmarked.as_str())]),
+        BuiltinSkillState::Modified,
+        "a SKILL.md without the built-in marker is the user's"
+    );
+    let revision_zero = ALPHA_V1.replace("\"1\"", "\"0\"");
+    assert_eq!(
+        state_of(alpha, &[("SKILL.md", revision_zero.as_str())]),
+        BuiltinSkillState::Modified,
+        "no built-in ever shipped revision 0"
     );
     let newer = ALPHA_V2.replace("\"2\"", "\"3\"");
     assert_eq!(
@@ -659,8 +998,8 @@ fn setup_outcomes_say_what_would_happen_under_dry_run() {
             ("updated", "would update", true),
             ("unchanged", "unchanged", false),
             (
-                "modified locally, skipped — pass --force to overwrite",
-                "modified locally, skipped — pass --force to overwrite",
+                "modified locally, skipped — pass --force or toggle it on individually in the picker",
+                "modified locally, skipped — pass --force or toggle it on individually in the picker",
                 false
             ),
         ]
@@ -754,6 +1093,56 @@ fn toggle_all_applies_to_the_filtered_items_only() {
     picker.handle(PickerKey::ToggleAll, 30);
     assert!(picker.selected().is_empty());
     assert_eq!(picker.handle(PickerKey::Cancel, 30), PickerAction::Cancel);
+}
+
+#[test]
+fn only_toggling_an_item_on_by_itself_records_consent() {
+    let mut picker = picker();
+    assert_eq!(picker.selected_ids(), vec!["rust-cli"]);
+    assert!(
+        picker.individually_selected_ids().is_empty(),
+        "a preselection is not consent"
+    );
+
+    picker.handle(PickerKey::ToggleAll, 30);
+    assert_eq!(picker.selected().len(), 4);
+    assert!(
+        picker.individually_selected_ids().is_empty(),
+        "select-all is not consent"
+    );
+
+    // Focus rust-server, selected by select-all: off, then on by itself.
+    picker.handle(PickerKey::Down, 30);
+    picker.handle(PickerKey::Toggle, 30);
+    assert!(picker.individually_selected_ids().is_empty());
+    picker.handle(PickerKey::Toggle, 30);
+    assert_eq!(
+        picker.selection(),
+        PickerSelection {
+            selected: vec![
+                "rust-cli".to_string(),
+                "rust-server".to_string(),
+                "python-cli".to_string(),
+                "docker-setup".to_string(),
+            ],
+            individually_selected: vec!["rust-server".to_string()],
+        }
+    );
+
+    picker.handle(PickerKey::Toggle, 30);
+    assert!(
+        picker.individually_selected_ids().is_empty(),
+        "toggling it off withdraws consent"
+    );
+
+    // Consent withdrawn by deselect-all does not come back with select-all.
+    picker.handle(PickerKey::Toggle, 30);
+    assert_eq!(picker.individually_selected_ids(), vec!["rust-server"]);
+    picker.handle(PickerKey::ToggleAll, 30);
+    assert!(picker.selected().is_empty());
+    picker.handle(PickerKey::ToggleAll, 30);
+    assert_eq!(picker.selected().len(), 4);
+    assert!(picker.individually_selected_ids().is_empty());
 }
 
 #[test]
@@ -1123,7 +1512,7 @@ fn setup_all_dry_run_reports_every_skill_without_writing_or_syncing() {
 }
 
 #[test]
-fn setup_skips_a_locally_modified_skill_until_forced_and_refreshes_an_outdated_one() {
+fn setup_skips_a_locally_modified_skill_until_forced() {
     let (_tmp, project) = claude_project();
     let embedded = fs::read_to_string("skills/rust/cli/SKILL.md").unwrap();
     let installed = project.join(".imrule/skills/rust/cli/SKILL.md");
@@ -1157,7 +1546,7 @@ fn setup_skips_a_locally_modified_skill_until_forced_and_refreshes_an_outdated_o
     let stdout = stdout_of(&skipped);
     assert!(
         stdout.contains(
-            "rust-cli (rust/cli) [modified locally, skipped — pass --force to overwrite]"
+            "rust-cli (rust/cli) [modified locally, skipped — pass --force or toggle it on individually in the picker]"
         ),
         "{stdout}"
     );
@@ -1173,7 +1562,9 @@ fn setup_skips_a_locally_modified_skill_until_forced_and_refreshes_an_outdated_o
     assert_eq!(fs::read_to_string(&installed).unwrap(), embedded);
     assert_eq!(fs::read_to_string(&published).unwrap(), embedded);
 
-    // A copy from an older revision is safe to refresh without --force.
+    // Every built-in starts at revision 1, so a copy claiming revision 0 was
+    // not installed by ImRule: it stays the user's until forced. (Refreshing
+    // a genuinely older revision is covered against a test catalog above.)
     let older = embedded
         .lines()
         .map(|line| {
@@ -1185,16 +1576,85 @@ fn setup_skips_a_locally_modified_skill_until_forced_and_refreshes_an_outdated_o
         })
         .collect::<Vec<_>>()
         .join("\n");
-    fs::write(&installed, older).unwrap();
-    assert_eq!(rust_cli_state(&project, &[]), "outdated");
-    let listed = stdout_of(&setup_cli(&project, &["--list"]));
+    fs::write(&installed, &older).unwrap();
+    assert_eq!(rust_cli_state(&project, &[]), "modified");
+    let skipped = setup_cli(&project, &["rust-cli"]);
+    assert!(stdout_of(&skipped).contains("rust-cli (rust/cli) [modified locally, skipped"));
+    assert_eq!(fs::read_to_string(&installed).unwrap(), older);
+}
+
+#[test]
+fn setup_from_a_subdirectory_detects_and_syncs_the_enclosing_project() {
+    let (_tmp, project) = claude_project();
+    fs::write(
+        project.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\n\n[dependencies]\nclap = \"4\"\n",
+    )
+    .unwrap();
+    let src = project.join("src");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("main.rs"), "fn main() {}\n").unwrap();
+
+    let output = Command::cargo_bin("imrule")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", project.parent().unwrap().join("xdg"))
+        .args(["skills", "setup", "--yes", "--project-root"])
+        .arg(&src)
+        .output()
+        .unwrap();
     assert!(
-        listed.contains("rust-cli [rust/cli, update available]"),
-        "{listed}"
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
-    let refreshed = setup_cli(&project, &["rust-cli"]);
-    assert!(stdout_of(&refreshed).contains("rust-cli (rust/cli) [updated]"));
-    assert_eq!(fs::read_to_string(&installed).unwrap(), embedded);
+    let stdout = stdout_of(&output);
+    assert!(
+        stdout.contains("rust-cli (rust/cli) [installed]"),
+        "the project's Cargo.toml was not detected from src/: {stdout}"
+    );
+    assert!(
+        stdout.contains("Skills synced to agent directories."),
+        "{stdout}"
+    );
+    assert!(project.join(".imrule/skills/rust/cli/SKILL.md").is_file());
+    assert!(project.join(".claude/skills/rust-cli/SKILL.md").is_file());
+    assert!(!src.join(".imrule").exists() && !src.join(".claude").exists());
+}
+
+#[test]
+fn skills_resolve_to_the_project_that_owns_their_imrule_directory() {
+    let root = Path::new("/work/repo");
+    let src = root.join("src/bin");
+    assert_eq!(
+        skills_project_root(&root.join(".imrule/skills"), &src, false),
+        root
+    );
+    assert_eq!(
+        skills_project_root(&root.join(".imrule/skills"), root, false),
+        root
+    );
+    assert_eq!(
+        skills_project_root(&root.join(".ruler/skills"), &src, false),
+        root
+    );
+    assert_eq!(
+        skills_project_root(Path::new(".imrule/skills"), Path::new("src"), false),
+        Path::new(".")
+    );
+    // --global, the global fallback, or a directory that is not an ancestor
+    // keep the requested root.
+    for (install_dir, global) in [
+        (root.join(".imrule/skills"), true),
+        (PathBuf::from("/home/me/.config/imrule/skills"), false),
+        (PathBuf::from("/elsewhere/.imrule/skills"), false),
+        (root.join(".imrule/other"), false),
+    ] {
+        assert_eq!(
+            skills_project_root(&install_dir, &src, global),
+            src,
+            "{install_dir:?}"
+        );
+    }
 }
 
 #[test]

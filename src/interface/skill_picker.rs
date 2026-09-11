@@ -3,7 +3,9 @@
 //! The state machine and layout are plain data so they can be tested without a
 //! terminal; [`run_picker`] is the thin crossterm loop around them.
 
+use std::collections::BTreeSet;
 use std::io::{self, Write};
+use std::sync::Arc;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor};
@@ -76,6 +78,16 @@ const HEADER_ROWS: usize = 6;
 /// Rows below the list: "more below", hints.
 const FOOTER_ROWS: usize = 2;
 
+/// What the user confirmed in the picker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PickerSelection {
+    /// Ids of every selected item, in item order.
+    pub selected: Vec<String>,
+    /// Ids of the selected items the user toggled on one at a time, in item
+    /// order — a deliberate choice, unlike select-all or a preselection.
+    pub individually_selected: Vec<String>,
+}
+
 /// Picker state.
 #[derive(Debug, Clone)]
 pub struct Picker {
@@ -87,6 +99,9 @@ pub struct Picker {
     cursor: usize,
     /// First filtered index shown.
     offset: usize,
+    /// Items toggled on with [`PickerKey::Toggle`] and not toggled off since.
+    /// [`PickerKey::ToggleAll`] never adds to it.
+    individually_toggled: BTreeSet<usize>,
 }
 
 impl Picker {
@@ -102,6 +117,7 @@ impl Picker {
             query: String::new(),
             cursor: 0,
             offset: 0,
+            individually_toggled: BTreeSet::new(),
         }
     }
 
@@ -165,6 +181,25 @@ impl Picker {
             .collect()
     }
 
+    /// Ids of the selected items the user toggled on one at a time, in item
+    /// order. Items selected by select-all or preselected are not included.
+    pub fn individually_selected_ids(&self) -> Vec<String> {
+        self.items
+            .iter()
+            .enumerate()
+            .filter(|(index, item)| item.selected && self.individually_toggled.contains(index))
+            .map(|(_, item)| item.id.clone())
+            .collect()
+    }
+
+    /// What confirming now would return.
+    pub fn selection(&self) -> PickerSelection {
+        PickerSelection {
+            selected: self.selected_ids(),
+            individually_selected: self.individually_selected_ids(),
+        }
+    }
+
     pub fn handle(&mut self, key: PickerKey, list_height: usize) -> PickerAction {
         let visible = self.filtered();
         let page = (list_height / ITEM_ROWS).max(1);
@@ -191,13 +226,22 @@ impl Picker {
             }
             PickerKey::Toggle => {
                 if let Some(&index) = visible.get(self.cursor) {
-                    self.items[index].selected = !self.items[index].selected;
+                    let selected = !self.items[index].selected;
+                    self.items[index].selected = selected;
+                    if selected {
+                        self.individually_toggled.insert(index);
+                    } else {
+                        self.individually_toggled.remove(&index);
+                    }
                 }
             }
             PickerKey::ToggleAll => {
                 let select = visible.iter().any(|&index| !self.items[index].selected);
                 for index in visible {
                     self.items[index].selected = select;
+                    if !select {
+                        self.individually_toggled.remove(&index);
+                    }
                 }
             }
             PickerKey::Confirm => return PickerAction::Confirm,
@@ -337,21 +381,59 @@ pub fn picker_key(event: KeyEvent) -> Option<PickerKey> {
     })
 }
 
-/// Restores the terminal however the picker exits.
-struct TerminalGuard;
+type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static>;
 
-impl Drop for TerminalGuard {
-    fn drop(&mut self) {
-        let _ = execute!(io::stderr(), cursor::Show, terminal::LeaveAlternateScreen);
-        let _ = terminal::disable_raw_mode();
+/// Leaves the picker's terminal modes, ignoring errors: it runs on every exit.
+fn restore_terminal() {
+    let _ = execute!(io::stderr(), cursor::Show, terminal::LeaveAlternateScreen);
+    let _ = terminal::disable_raw_mode();
+}
+
+/// Restores the terminal however the picker exits. Release builds abort on
+/// panic, so `Drop` never runs then: a panic hook restores the terminal before
+/// the previous hook reports the panic, and dropping the guard puts the
+/// previous hook back.
+struct TerminalGuard {
+    previous_hook: Option<Arc<PanicHook>>,
+}
+
+impl TerminalGuard {
+    fn install() -> Self {
+        let previous_hook = Arc::new(std::panic::take_hook());
+        let chained = Arc::clone(&previous_hook);
+        std::panic::set_hook(Box::new(move |info| {
+            restore_terminal();
+            chained(info);
+        }));
+        Self {
+            previous_hook: Some(previous_hook),
+        }
     }
 }
 
-/// Runs the picker on stderr's terminal. Returns the selected items' ids, or
-/// `None` when the user cancels.
-pub fn run_picker(mut picker: Picker) -> io::Result<Option<Vec<String>>> {
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        restore_terminal();
+        // The hook cannot be swapped while panicking; ours stays, harmlessly.
+        if std::thread::panicking() {
+            return;
+        }
+        if let Some(previous) = self.previous_hook.take() {
+            // Dropping our hook releases its handle on the previous one.
+            drop(std::panic::take_hook());
+            match Arc::try_unwrap(previous) {
+                Ok(hook) => std::panic::set_hook(hook),
+                Err(shared) => std::panic::set_hook(Box::new(move |info| shared(info))),
+            }
+        }
+    }
+}
+
+/// Runs the picker on stderr's terminal. Returns what was selected, or `None`
+/// when the user cancels.
+pub fn run_picker(mut picker: Picker) -> io::Result<Option<PickerSelection>> {
     terminal::enable_raw_mode()?;
-    let _guard = TerminalGuard;
+    let _guard = TerminalGuard::install();
     let mut out = io::stderr();
     execute!(out, terminal::EnterAlternateScreen, cursor::Hide)?;
 
@@ -371,7 +453,7 @@ pub fn run_picker(mut picker: Picker) -> io::Result<Option<Vec<String>>> {
         };
         match picker.handle(key, Picker::list_height(rows as usize)) {
             PickerAction::Continue => {}
-            PickerAction::Confirm => return Ok(Some(picker.selected_ids())),
+            PickerAction::Confirm => return Ok(Some(picker.selection())),
             PickerAction::Cancel => return Ok(None),
         }
     }

@@ -19,7 +19,7 @@ use crate::application::skills_add_use_case::{
     SkillsAddOptions, SkillsAddUseCase, list_installed_skills,
 };
 use crate::application::skills_setup_use_case::{
-    SkillsSetupEntry, SkillsSetupOptions, SkillsSetupPlan, SkillsSetupUseCase,
+    SkillsSetupEntry, SkillsSetupOptions, SkillsSetupPlan, SkillsSetupUseCase, skills_project_root,
 };
 use crate::application::skills_update_use_case::{SkillsUpdateOptions, SkillsUpdateUseCase};
 use crate::domain::builtin_skills::BuiltinSkillState;
@@ -550,16 +550,17 @@ fn run_inner() -> Result<(), CliError> {
 fn run_skills_setup(args: SkillsSetupArgs, sync: &AgentSync) -> Result<(), CliError> {
     use std::io::IsTerminal;
 
-    let project_root = resolve_project_root(&args.project_root);
+    let requested_root = resolve_project_root(&args.project_root);
     let catalog = builtin_catalog();
     let use_case = SkillsSetupUseCase::new(sync.fs, &catalog);
-    let plan = use_case.plan(
-        &SkillsSetupOptions {
-            project_root: project_root.clone(),
-            global: args.global,
-        },
-        &collect_project_signals(&project_root),
-    );
+    // Resolved once: from a subdirectory, the install lands in the enclosing
+    // project's `.imrule/skills`, so detection and the sync use that project.
+    let install_dir = use_case.install_dir(&SkillsSetupOptions {
+        project_root: requested_root.clone(),
+        global: args.global,
+    });
+    let project_root = skills_project_root(&install_dir, &requested_root, args.global);
+    let plan = use_case.plan_in(install_dir, &collect_project_signals(&project_root));
 
     if args.list && args.json {
         return print_json(&builtin_skills_json(&plan));
@@ -569,22 +570,20 @@ fn run_skills_setup(args: SkillsSetupArgs, sync: &AgentSync) -> Result<(), CliEr
         return Ok(());
     }
 
-    let (paths, overwrite_modified) = if args.all {
-        (plan.all_paths(), args.force)
+    let (paths, picked_individually) = if args.all {
+        (plan.all_paths(), None)
     } else if !args.skills.is_empty() {
-        (use_case.resolve(&args.skills)?, args.force)
+        (use_case.resolve(&args.skills)?, None)
     } else if args.yes {
-        (plan.recommended_paths(), args.force)
+        (plan.recommended_paths(), None)
     } else if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() {
         let chosen = run_picker(setup_picker(&plan))
             .map_err(|err| CliError::new(1, format!("interactive picker failed: {err}")))?;
-        let Some(paths) = chosen else {
+        let Some(selection) = chosen else {
             println!("Cancelled.");
             return Ok(());
         };
-        // Toggling a locally modified skill on in the picker is the consent
-        // that `--force` gives non-interactively.
-        (paths, true)
+        (selection.selected, Some(selection.individually_selected))
     } else {
         return Err(CliError::new(
             2,
@@ -599,7 +598,15 @@ fn run_skills_setup(args: SkillsSetupArgs, sync: &AgentSync) -> Result<(), CliEr
         return Ok(());
     }
 
-    let result = use_case.install(&plan, &paths, overwrite_modified, args.dry_run)?;
+    // A locally modified skill is overwritten only with consent: `--force` for
+    // every chosen skill, or in the picker toggling that skill on by itself.
+    // Select-all is not consent.
+    let consented = if args.force {
+        paths.clone()
+    } else {
+        picked_individually.unwrap_or_default()
+    };
+    let result = use_case.install_with_consent(&plan, &paths, &consented, args.dry_run)?;
     println!(
         "{} built-in skill(s) in {}:",
         if args.dry_run {

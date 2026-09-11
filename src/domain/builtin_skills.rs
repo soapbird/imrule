@@ -16,6 +16,10 @@ use crate::domain::subagent::parse_frontmatter;
 /// that merely predates the current release from one the user edited.
 pub const BUILTIN_SKILL_VERSION_KEY: &str = "imrule-skill-version";
 
+/// Frontmatter `metadata` key every built-in `SKILL.md` sets to `"true"`. A
+/// `SKILL.md` without it was not installed by `setup`, so it belongs to the user.
+pub const BUILTIN_SKILL_MARKER_KEY: &str = "imrule-builtin";
+
 /// One built-in skill.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuiltinSkill {
@@ -302,32 +306,77 @@ pub fn recommend_builtin_skills(signals: &ProjectSignals) -> BTreeSet<&'static s
         .collect()
 }
 
+/// Whether frontmatter metadata carries the built-in marker.
+fn is_builtin_marked(meta: &serde_json::Value) -> bool {
+    match meta
+        .get("metadata")
+        .and_then(|metadata| metadata.get(BUILTIN_SKILL_MARKER_KEY))
+    {
+        Some(serde_json::Value::String(text)) => text.trim() == "true",
+        Some(serde_json::Value::Bool(marked)) => *marked,
+        _ => false,
+    }
+}
+
 /// How an installed copy of a built-in skill compares to the embedded one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinSkillState {
+    /// Nothing exists at the skill's install path.
     NotInstalled,
-    /// Every embedded file matches what is installed.
+    /// Every embedded file matches what is installed, and nothing else is there.
     UpToDate,
-    /// Installed from an older revision; safe to refresh.
+    /// Installed by ImRule from an older revision (marker set, revision at
+    /// least 1 and below the embedded one) with no files beyond the embedded
+    /// ones; safe to refresh.
     Outdated,
-    /// Same or newer revision but different content: edited locally, or
-    /// installed by a newer ImRule. Only overwritten on request.
+    /// Anything else that differs: edited or added to locally, a directory or
+    /// `SKILL.md` the user owns, or a copy from a newer ImRule. Only
+    /// overwritten with the user's consent.
     Modified,
 }
 
 impl BuiltinSkillState {
-    /// Decides the state from the installed files, looked up by relative path.
-    pub fn compare(skill: &BuiltinSkill, installed: impl Fn(&str) -> Option<String>) -> Self {
-        let Some(installed_skill_md) = installed(SKILL_MD_FILENAME) else {
+    /// Decides the state of an installed copy.
+    ///
+    /// `installed_files` lists every file below the skill's install directory,
+    /// relative to it with forward slashes, or is `None` when nothing exists
+    /// at that path. `installed` reads one of those files by relative path.
+    pub fn compare(
+        skill: &BuiltinSkill,
+        installed_files: Option<&[String]>,
+        installed: impl Fn(&str) -> Option<String>,
+    ) -> Self {
+        let Some(installed_files) = installed_files else {
             return Self::NotInstalled;
         };
+        // A directory without a readable SKILL.md is not a copy ImRule
+        // installed — a grouping folder of the user's own skills, say.
+        let Some(installed_skill_md) = installed(SKILL_MD_FILENAME) else {
+            return Self::Modified;
+        };
+        // A file the embedded skill does not ship was added by the user, and
+        // replacing the directory would delete it.
+        let embedded: BTreeSet<&str> = skill.files.iter().map(|(path, _)| path.as_str()).collect();
+        if installed_files
+            .iter()
+            .any(|file| !embedded.contains(file.as_str()))
+        {
+            return Self::Modified;
+        }
         let identical = skill
             .files
             .iter()
             .all(|(relative, content)| installed(relative).as_deref() == Some(*content));
         if identical {
-            Self::UpToDate
-        } else if installed_skill_revision(&installed_skill_md) < skill.revision {
+            return Self::UpToDate;
+        }
+        let Ok(Some(parsed)) = parse_frontmatter(&installed_skill_md) else {
+            return Self::Modified;
+        };
+        let revision = revision_of(&parsed.meta);
+        // An embedded file missing from an older copy may be one the newer
+        // revision added, so only extra files rule a refresh out.
+        if is_builtin_marked(&parsed.meta) && revision >= 1 && revision < skill.revision {
             Self::Outdated
         } else {
             Self::Modified
@@ -379,7 +428,9 @@ impl BuiltinSkillSetupStatus {
             (Self::Updated, false) => "updated",
             (Self::Updated, true) => "would update",
             (Self::Unchanged, _) => "unchanged",
-            (Self::SkippedModified, _) => "modified locally, skipped — pass --force to overwrite",
+            (Self::SkippedModified, _) => {
+                "modified locally, skipped — pass --force or toggle it on individually in the picker"
+            }
         }
     }
 }

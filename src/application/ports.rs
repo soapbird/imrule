@@ -102,6 +102,11 @@ pub trait FileSystemPort: Send + Sync {
     /// Whether two directory trees hold byte-identical files.
     fn dirs_match(&self, left: &Path, right: &Path) -> Result<bool, ImruleError>;
 
+    /// Every entry below `dir` that is not a directory, recursively, as paths
+    /// relative to `dir`, sorted. Symbolic links are listed as entries and
+    /// never followed, so a linked directory's contents are not included.
+    fn list_files(&self, dir: &Path) -> Result<Vec<PathBuf>, ImruleError>;
+
     /// Discovers subagent definitions (`.imrule/agents`, falling back to
     /// `.ruler/agents`).
     fn discover_subagents(&self, project_root: &Path) -> Result<SubagentsDiscovery, ImruleError>;

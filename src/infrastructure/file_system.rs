@@ -53,6 +53,14 @@ impl FileSystemPort for FsFileSystem {
         })
     }
 
+    fn list_files(&self, dir: &Path) -> Result<Vec<PathBuf>, ImruleError> {
+        let mut files = Vec::new();
+        collect_files(dir, Path::new(""), &mut files)
+            .map_err(|e| ImruleError::filesystem(format!("{}: {e}", dir.display())))?;
+        files.sort();
+        Ok(files)
+    }
+
     fn discover_subagents(&self, project_root: &Path) -> Result<SubagentsDiscovery, ImruleError> {
         crate::infrastructure::subagents::discover_subagents(project_root)
             .map_err(|e| ImruleError::subagent(e.to_string()))
@@ -300,6 +308,22 @@ fn walk_markdown(
         }
     }
 
+    Ok(())
+}
+
+/// Pushes every non-directory entry below `dir` onto `files`, as `relative`
+/// joined with its path from `dir`. `DirEntry::file_type` does not follow
+/// symbolic links, so a link — even to a directory — is listed, not entered.
+fn collect_files(dir: &Path, relative: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let entry_relative = relative.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            collect_files(&entry.path(), &entry_relative, files)?;
+        } else {
+            files.push(entry_relative);
+        }
+    }
     Ok(())
 }
 
