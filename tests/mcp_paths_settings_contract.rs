@@ -4,8 +4,9 @@ use imrule::application::ports::{ConfigPort, McpPort};
 use imrule::domain::agent::all_agents;
 use imrule::domain::config::{McpConfig, McpRemoteTransport, McpStrategy};
 use imrule::domain::mcp::{
-    agent_supports_mcp, expand_mcp_environment_variables, filter_mcp_config_for_agent,
-    get_agent_mcp_capabilities, merge_mcp, validate_mcp_config_for_remote_transport,
+    agent_supports_mcp, build_imrule_mcp_config, expand_mcp_environment_variables,
+    filter_mcp_config_for_agent, get_agent_mcp_capabilities, merge_mcp,
+    validate_mcp_config_for_remote_transport, McpRemoteTransportPolicy,
 };
 use imrule::infrastructure::config_loader::TomlConfigLoader;
 use imrule::infrastructure::mcp_storage::JsonMcpStorage;
@@ -45,11 +46,11 @@ fn filters_mcp_by_agent_capabilities() {
     });
 
     assert_eq!(
-        filter_mcp_config_for_agent(&config, cline, McpRemoteTransport::Native),
+        filter_mcp_config_for_agent(&config, cline, &McpRemoteTransport::Native.into()),
         None
     );
     assert_eq!(
-        filter_mcp_config_for_agent(&config, firebase, McpRemoteTransport::Native),
+        filter_mcp_config_for_agent(&config, firebase, &McpRemoteTransport::Native.into()),
         Some(json!({
             "mcpServers": {
                 "remote": { "url": "https://example.test/mcp", "headers": { "Authorization": "Bearer token" } },
@@ -58,7 +59,7 @@ fn filters_mcp_by_agent_capabilities() {
         }))
     );
     assert_eq!(
-        filter_mcp_config_for_agent(&config, copilot, McpRemoteTransport::Native),
+        filter_mcp_config_for_agent(&config, copilot, &McpRemoteTransport::Native.into()),
         Some(json!({
             "mcpServers": {
                 "remote": { "url": "https://example.test/mcp", "headers": { "Authorization": "Bearer token" } },
@@ -88,7 +89,7 @@ fn servers_without_a_declared_timeout_get_the_default_connection_window() {
     // server declared a window, so ImRule writes a default for servers that
     // declare none and preserves an explicit one.
     assert_eq!(
-        filter_mcp_config_for_agent(&config, gjc, McpRemoteTransport::Native),
+        filter_mcp_config_for_agent(&config, gjc, &McpRemoteTransport::Native.into()),
         Some(json!({
             "mcpServers": {
                 "declared": { "type": "stdio", "command": "npx", "args": ["-y", "pkg"], "timeout": 30000 },
@@ -101,7 +102,7 @@ fn servers_without_a_declared_timeout_get_the_default_connection_window() {
     // Every timeout-aware agent gets the same treatment; the rest never see the key.
     for agent in agents.iter().filter(|agent| agent_supports_mcp(agent)) {
         let Some(filtered) =
-            filter_mcp_config_for_agent(&config, agent, McpRemoteTransport::Native)
+            filter_mcp_config_for_agent(&config, agent, &McpRemoteTransport::Native.into())
         else {
             continue;
         };
@@ -195,19 +196,19 @@ fn mcp_remote_mode_bridges_only_url_remote_servers_for_stdio_agents() {
     }));
 
     assert_eq!(
-        filter_mcp_config_for_agent(&config, &both, McpRemoteTransport::McpRemote),
+        filter_mcp_config_for_agent(&config, &both, &McpRemoteTransport::McpRemote.into()),
         expected
     );
     assert_eq!(
-        filter_mcp_config_for_agent(&config, &stdio_only, McpRemoteTransport::McpRemote),
+        filter_mcp_config_for_agent(&config, &stdio_only, &McpRemoteTransport::McpRemote.into()),
         expected
     );
     assert_eq!(
-        filter_mcp_config_for_agent(&config, &remote_only, McpRemoteTransport::McpRemote),
+        filter_mcp_config_for_agent(&config, &remote_only, &McpRemoteTransport::McpRemote.into()),
         None
     );
     assert_eq!(
-        filter_mcp_config_for_agent(&config, &unsupported, McpRemoteTransport::McpRemote),
+        filter_mcp_config_for_agent(&config, &unsupported, &McpRemoteTransport::McpRemote.into()),
         None
     );
 }
@@ -223,12 +224,141 @@ fn mcp_remote_mode_rejects_static_headers() {
         }
     });
 
-    let error = validate_mcp_config_for_remote_transport(&config, McpRemoteTransport::McpRemote)
-        .unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("set [mcp] remote_transport = \"native\""));
-    assert!(validate_mcp_config_for_remote_transport(&config, McpRemoteTransport::Native).is_ok());
+    let error =
+        validate_mcp_config_for_remote_transport(&config, &McpRemoteTransport::McpRemote.into())
+            .unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("'protected'"));
+    assert!(message.contains("[mcp_servers.protected]"));
+    assert!(message.contains("under [mcp] for every server"));
+    assert!(
+        validate_mcp_config_for_remote_transport(&config, &McpRemoteTransport::Native.into())
+            .is_ok()
+    );
+}
+
+#[test]
+fn a_per_server_remote_transport_overrides_the_project_default() {
+    let agents = all_agents();
+    let firebase = agents
+        .iter()
+        .find(|agent| agent.identifier == "firebase")
+        .unwrap();
+    let config = json!({
+        "mcpServers": {
+            "bridged": { "type": "http", "url": "https://bridged.example.test/mcp" },
+            "protected": {
+                "type": "http",
+                "url": "http://127.0.0.1:8765/mcp/",
+                "headers": { "Authorization": "Bearer token" }
+            }
+        }
+    });
+    let expected = Some(json!({
+        "mcpServers": {
+            "bridged": {
+                "type": "stdio",
+                "command": "npx",
+                "args": ["-y", "mcp-remote@latest", "https://bridged.example.test/mcp"]
+            },
+            "protected": {
+                "type": "http",
+                "url": "http://127.0.0.1:8765/mcp/",
+                "headers": { "Authorization": "Bearer token" }
+            }
+        }
+    }));
+
+    // The header server goes native while the rest of the project stays on the bridge.
+    let bridge_by_default = McpRemoteTransportPolicy::from(McpRemoteTransport::McpRemote)
+        .with_override("protected", McpRemoteTransport::Native);
+    assert!(validate_mcp_config_for_remote_transport(&config, &bridge_by_default).is_ok());
+    assert_eq!(
+        filter_mcp_config_for_agent(&config, firebase, &bridge_by_default),
+        expected
+    );
+
+    // A native project can likewise keep a single server on the bridge.
+    let native_by_default = McpRemoteTransportPolicy::from(McpRemoteTransport::Native)
+        .with_override("bridged", McpRemoteTransport::McpRemote);
+    assert!(validate_mcp_config_for_remote_transport(&config, &native_by_default).is_ok());
+    assert_eq!(
+        filter_mcp_config_for_agent(&config, firebase, &native_by_default),
+        expected
+    );
+}
+
+#[test]
+fn loads_per_server_remote_transport_from_both_server_sources() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        r#"
+[mcp]
+remote_transport = "mcp-remote"
+
+[mcp_servers.agent-mail]
+transport = "http"
+url = "http://127.0.0.1:8765/mcp/"
+remote_transport = "native"
+
+[mcp_servers.linear]
+url = "https://mcp.linear.app/mcp"
+
+[mcp_servers.typo]
+url = "https://typo.example.test/mcp"
+remote_transport = "nativ"
+
+[mcp_servers.shadowed]
+url = "https://shadowed.example.test/mcp"
+"#,
+    )
+    .unwrap();
+
+    let loader = TomlConfigLoader::new().with_xdg_home(root.join("xdg"));
+    let loaded = loader.load_config(root, None, None).unwrap();
+    assert_eq!(
+        loaded.mcp_servers["agent-mail"].remote_transport,
+        Some(McpRemoteTransport::Native)
+    );
+    assert_eq!(loaded.mcp_servers["linear"].remote_transport, None);
+    assert_eq!(loaded.mcp_servers["typo"].remote_transport, None);
+
+    let json_config = json!({
+        "mcpServers": {
+            "from-json": { "url": "https://json.example.test/mcp", "remote_transport": "native" },
+            "shadowed": { "url": "https://shadowed.example.test/mcp", "remote_transport": "native" }
+        }
+    });
+    let policy = McpRemoteTransportPolicy::from_sources(
+        loaded.mcp.as_ref(),
+        Some(&json_config),
+        &loaded.mcp_servers,
+    );
+    assert_eq!(policy.for_server("agent-mail"), McpRemoteTransport::Native);
+    assert_eq!(policy.for_server("linear"), McpRemoteTransport::McpRemote);
+    assert_eq!(
+        policy.for_server("typo"),
+        McpRemoteTransport::McpRemote,
+        "an unrecognized value inherits the project default"
+    );
+    assert_eq!(policy.for_server("from-json"), McpRemoteTransport::Native);
+    assert_eq!(
+        policy.for_server("shadowed"),
+        McpRemoteTransport::McpRemote,
+        "the TOML definition replaces the JSON one, override included"
+    );
+
+    // The key is ImRule's alone and never reaches an agent's native config.
+    let merged = build_imrule_mcp_config(Some(&json_config), &loaded.mcp_servers).unwrap();
+    for (name, server) in merged["mcpServers"].as_object().unwrap() {
+        assert!(
+            server.get("remote_transport").is_none(),
+            "{name} kept remote_transport"
+        );
+    }
 }
 
 #[test]

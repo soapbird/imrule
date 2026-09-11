@@ -986,6 +986,63 @@ fn clear_removes_custom_output_path_from_config() {
 }
 
 #[test]
+fn mcp_add_accepts_a_per_server_remote_transport() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path().to_str().unwrap();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args(["init", "--project-root", root])
+        .assert()
+        .success();
+
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "mcp",
+            "add",
+            "--project-root",
+            root,
+            "--transport",
+            "http",
+            "--remote-transport",
+            "native",
+            "--header",
+            "Authorization=Bearer-xxx",
+            "agent-mail",
+            "http://127.0.0.1:8765/mcp/",
+        ])
+        .assert()
+        .success();
+
+    let toml = fs::read_to_string(tmp.path().join(".imrule/imrule.toml")).unwrap();
+    assert!(toml.contains("[mcp_servers.agent-mail]"));
+    assert!(toml.contains("remote_transport = \"native\""));
+
+    // A stdio server has no remote transport to override.
+    let output = Command::cargo_bin("imrule")
+        .unwrap()
+        .args([
+            "mcp",
+            "add",
+            "--project-root",
+            root,
+            "--remote-transport",
+            "native",
+            "local",
+            "--",
+            "npx",
+            "-y",
+            "demo",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("--remote-transport applies only to http/sse servers"));
+}
+
+#[test]
 fn mcp_add_and_remove_persist_to_imrule_toml() {
     let tmp = tempdir().unwrap();
 
