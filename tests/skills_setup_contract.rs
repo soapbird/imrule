@@ -6,18 +6,19 @@ use std::fs;
 use std::path::Path;
 
 use assert_cmd::Command;
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use imrule::application::skills_setup_use_case::{SkillsSetupOptions, SkillsSetupUseCase};
 use imrule::domain::builtin_skills::{
     BuiltinSkill, BuiltinSkillSetupStatus, BuiltinSkillState, ProjectSignals,
-    build_builtin_catalog, python_requirement_name, recommend_builtin_skills,
-    resolve_builtin_skills,
+    build_builtin_catalog, detection_labels, installed_skill_revision, python_requirement_name,
+    recommend_builtin_skills, resolve_builtin_skills,
 };
 use imrule::domain::skills::flatten_skill_name;
 use imrule::domain::subagent::parse_frontmatter;
 use imrule::infrastructure::builtin_skills::{builtin_catalog, collect_project_signals};
 use imrule::infrastructure::file_system::FsFileSystem;
 use imrule::interface::skill_picker::{
-    Picker, PickerAction, PickerItem, PickerKey, display_width, truncate,
+    Picker, PickerAction, PickerItem, PickerKey, display_width, picker_key, truncate,
 };
 use tempfile::tempdir;
 
@@ -88,6 +89,68 @@ fn skills_resolve_by_path_or_published_name_and_unknown_ones_are_reported() {
         .to_string();
     assert!(error.contains("unknown built-in skill: nope"), "{error}");
     assert!(error.contains("beta, lang/alpha"), "{error}");
+}
+
+#[test]
+fn revisions_parse_from_strings_or_numbers_and_fall_back_to_zero() {
+    let catalog = build_builtin_catalog(&[
+        (
+            "bad/SKILL.md",
+            "---\nname: bad\ndescription: Bad\nmetadata:\n  imrule-skill-version: \"seven\"\n---\n",
+        ),
+        (
+            "num/SKILL.md",
+            "---\nname: num\ndescription: \"  Numeric  \"\nmetadata:\n  imrule-skill-version: 7\n---\n",
+        ),
+        ("orphan/notes.md", "belongs to no skill"),
+        ("outer/SKILL.md", "---\nname: outer\n---\n"),
+        ("outer/inner/SKILL.md", "---\nname: outer-inner\n---\n"),
+        ("outer/inner/ref.md", "inner"),
+        ("outer/notes.md", "outer"),
+        ("plain/SKILL.md", "no frontmatter at all\n"),
+    ]);
+    let summary: Vec<(&str, &str, &str, u32)> = catalog
+        .iter()
+        .map(|s| {
+            (
+                s.path.as_str(),
+                s.name.as_str(),
+                s.description.as_str(),
+                s.revision,
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            ("bad", "bad", "Bad", 0),
+            ("num", "num", "Numeric", 7),
+            ("outer", "outer", "", 0),
+            ("outer/inner", "outer-inner", "", 0),
+            ("plain", "plain", "", 0),
+        ]
+    );
+    // A file belongs to the deepest skill containing it, never to both.
+    let files = |path: &str| -> Vec<String> {
+        catalog
+            .iter()
+            .find(|s| s.path == path)
+            .unwrap()
+            .files
+            .iter()
+            .map(|(p, _)| p.clone())
+            .collect()
+    };
+    assert_eq!(files("outer"), vec!["SKILL.md", "notes.md"]);
+    assert_eq!(files("outer/inner"), vec!["SKILL.md", "ref.md"]);
+
+    let with = |value: &str| format!("---\nmetadata:\n  imrule-skill-version: {value}\n---\n");
+    assert_eq!(installed_skill_revision(&with("\" 12 \"")), 12);
+    assert_eq!(installed_skill_revision(&with("3")), 3);
+    assert_eq!(installed_skill_revision(&with("-1")), 0);
+    assert_eq!(installed_skill_revision(&with("4294967296")), 0);
+    assert_eq!(installed_skill_revision("# no frontmatter\n"), 0);
+    assert_eq!(installed_skill_revision("---\nname: x\n---\n"), 0);
 }
 
 // -------------------------------------------------------------- detection ---
@@ -222,6 +285,128 @@ fn project_signals_are_read_from_workspace_members_too() {
     assert!(signals.pyproject && signals.python_scripts);
     assert!(signals.python_dependencies.contains("typer"));
     assert!(!signals.makefile && !signals.version_file);
+}
+
+#[test]
+fn project_signals_cover_every_marker_and_ignore_what_does_not_count() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    let write = |relative: &str, content: &str| {
+        let path = root.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    };
+    write(
+        "Cargo.toml",
+        "[workspace.dependencies]\nclap = \"4\"\n\n[[bin]]\nname = \"tool\"\npath = \"tool.rs\"\n",
+    );
+    // Unparseable: still a Rust project, but it contributes nothing else.
+    write("broken/Cargo.toml", "[dependencies\naxum = ");
+    // Too deep, inside a build directory, or hidden: not part of the project.
+    write("a/b/c/Cargo.toml", "[dependencies]\nrocket = \"0.5\"\n");
+    write("target/pkg/Cargo.toml", "[dependencies]\nhyper = \"1\"\n");
+    write(
+        ".hidden/pyproject.toml",
+        "[project]\ndependencies = [\"flask\"]\n",
+    );
+    write(
+        "py/pyproject.toml",
+        "[project]\nname = \"py\"\n\n[project.optional-dependencies]\nserve = [\"Uvicorn[standard]>=0.30\"]\n\n[project.scripts]\n",
+    );
+    write("GNUmakefile", "all:\n");
+    write("compose.yaml", "services: {}\n");
+    write("VERSION", "1.0.0\n");
+    write("CHANGELOG.md", "# Changelog\n");
+    write(".github/workflows/README.md", "not a workflow\n");
+
+    let signals = collect_project_signals(root);
+    assert!(signals.cargo && signals.rust_binary);
+    assert_eq!(signals.rust_dependencies, set(&["clap"]));
+    assert!(signals.pyproject);
+    assert_eq!(signals.python_dependencies, set(&["uvicorn"]));
+    assert!(
+        !signals.python_scripts,
+        "an empty [project.scripts] declares no command"
+    );
+    assert!(signals.makefile && signals.docker && signals.version_file && signals.changelog);
+    assert!(
+        !signals.github_workflows,
+        "only .yml/.yaml files are workflows"
+    );
+    assert!(!signals.vscode);
+
+    let other = tempdir().unwrap();
+    let root = other.path();
+    fs::write(root.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    fs::create_dir_all(root.join("src/bin")).unwrap();
+    fs::create_dir_all(root.join("docker")).unwrap();
+    fs::create_dir_all(root.join(".github/workflows")).unwrap();
+    fs::write(root.join(".github/workflows/ci.yaml"), "on: push\n").unwrap();
+    let signals = collect_project_signals(root);
+    assert!(signals.rust_binary && signals.docker && signals.github_workflows);
+    assert!(signals.rust_dependencies.is_empty() && !signals.makefile);
+}
+
+#[test]
+fn detection_labels_name_each_detected_kind_in_a_stable_order() {
+    let everything = ProjectSignals {
+        cargo: true,
+        pyproject: true,
+        makefile: true,
+        docker: true,
+        github_workflows: true,
+        vscode: true,
+        version_file: true,
+        changelog: true,
+        rust_dependencies: set(&["axum"]),
+        rust_binary: false,
+        python_dependencies: set(&["typer"]),
+        python_scripts: false,
+    };
+    assert_eq!(
+        detection_labels(&everything),
+        vec![
+            "rust",
+            "python",
+            "cli",
+            "server",
+            "makefile",
+            "docker",
+            "github-actions"
+        ]
+    );
+    assert!(detection_labels(&ProjectSignals::default()).is_empty());
+
+    // A Python web app with no command entry point is a server, not a CLI.
+    let python_server = ProjectSignals {
+        pyproject: true,
+        python_dependencies: set(&["django"]),
+        ..ProjectSignals::default()
+    };
+    assert_eq!(detection_labels(&python_server), vec!["python", "server"]);
+    let recommended = recommend_builtin_skills(&python_server);
+    assert!(recommended.contains("python/server") && recommended.contains("docker/setup"));
+    for absent in ["python/cli", "cli", "docker/optimize"] {
+        assert!(!recommended.contains(absent), "{absent} recommended");
+    }
+
+    // A Rust server that also parses arguments with clap is both.
+    let rust_both = ProjectSignals {
+        cargo: true,
+        rust_binary: true,
+        rust_dependencies: set(&["axum", "clap"]),
+        ..ProjectSignals::default()
+    };
+    let recommended = recommend_builtin_skills(&rust_both);
+    assert!(recommended.contains("rust/cli") && recommended.contains("rust/server"));
+
+    // Dependencies or scripts without their manifest detect nothing.
+    let orphaned = ProjectSignals {
+        rust_dependencies: set(&["clap"]),
+        python_scripts: true,
+        ..ProjectSignals::default()
+    };
+    assert!(detection_labels(&orphaned).is_empty());
 }
 
 // ------------------------------------------------------------ install/update ---
@@ -365,6 +550,123 @@ fn dry_run_reports_without_writing() {
     assert!(!root.join(".imrule/skills").exists());
 }
 
+fn state_of(skill: &BuiltinSkill, files: &[(&str, &str)]) -> BuiltinSkillState {
+    BuiltinSkillState::compare(skill, |relative: &str| {
+        files
+            .iter()
+            .find(|(path, _)| *path == relative)
+            .map(|(_, content)| content.to_string())
+    })
+}
+
+#[test]
+fn install_state_compares_contents_before_revisions() {
+    let catalog = catalog_v2();
+    let alpha = catalog.iter().find(|s| s.path == "lang/alpha").unwrap();
+    let check = "print('v2')\n";
+
+    assert_eq!(
+        state_of(alpha, &[("scripts/check.py", check)]),
+        BuiltinSkillState::NotInstalled,
+        "without SKILL.md the skill is not installed"
+    );
+    assert_eq!(
+        state_of(
+            alpha,
+            &[
+                ("SKILL.md", ALPHA_V2),
+                ("scripts/check.py", check),
+                ("notes.md", "a file the user added"),
+            ]
+        ),
+        BuiltinSkillState::UpToDate,
+        "files the embedded skill does not ship are not compared"
+    );
+    assert_eq!(
+        state_of(alpha, &[("SKILL.md", ALPHA_V2)]),
+        BuiltinSkillState::Modified,
+        "a file deleted at the current revision is a local change"
+    );
+    assert_eq!(
+        state_of(alpha, &[("SKILL.md", ALPHA_V1)]),
+        BuiltinSkillState::Outdated
+    );
+    let newer = ALPHA_V2.replace("\"2\"", "\"3\"");
+    assert_eq!(
+        state_of(
+            alpha,
+            &[("SKILL.md", newer.as_str()), ("scripts/check.py", check)]
+        ),
+        BuiltinSkillState::Modified,
+        "a copy from a newer ImRule is never downgraded silently"
+    );
+
+    let shown: Vec<(&str, Option<&str>)> = [
+        BuiltinSkillState::NotInstalled,
+        BuiltinSkillState::UpToDate,
+        BuiltinSkillState::Outdated,
+        BuiltinSkillState::Modified,
+    ]
+    .into_iter()
+    .map(|state| (state.label(), state.tag()))
+    .collect();
+    assert_eq!(
+        shown,
+        vec![
+            ("not-installed", None),
+            ("up-to-date", Some("installed")),
+            ("outdated", Some("update available")),
+            ("modified", Some("modified locally")),
+        ]
+    );
+}
+
+#[test]
+fn install_rejects_a_path_the_plan_does_not_hold() {
+    let tmp = project();
+    let root = tmp.path();
+    let fs_port = FsFileSystem::new();
+    let catalog = catalog_v1();
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog);
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+
+    let error = use_case
+        .install(
+            &plan,
+            &["lang/alpha".to_string(), "missing/skill".to_string()],
+            false,
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("unknown built-in skill: missing/skill"),
+        "{error}"
+    );
+}
+
+#[test]
+fn setup_outcomes_say_what_would_happen_under_dry_run() {
+    use BuiltinSkillSetupStatus::{Installed, SkippedModified, Unchanged, Updated};
+    let labels: Vec<(&str, &str, bool)> = [Installed, Updated, Unchanged, SkippedModified]
+        .into_iter()
+        .map(|status| (status.label(false), status.label(true), status.writes()))
+        .collect();
+    assert_eq!(
+        labels,
+        vec![
+            ("installed", "would install", true),
+            ("updated", "would update", true),
+            ("unchanged", "unchanged", false),
+            (
+                "modified locally, skipped — pass --force to overwrite",
+                "modified locally, skipped — pass --force to overwrite",
+                false
+            ),
+        ]
+    );
+}
+
 // ----------------------------------------------------------------- picker ---
 
 fn item(title: &str, description: &str, selected: bool) -> PickerItem {
@@ -486,6 +788,133 @@ fn truncation_counts_hangul_as_two_columns() {
     assert_eq!(truncate("short", 10), "short");
 }
 
+#[test]
+fn terminal_keys_map_onto_picker_keys() {
+    let key = |code, modifiers| picker_key(KeyEvent::new(code, modifiers));
+    let ctrl = KeyModifiers::CONTROL;
+    let none = KeyModifiers::NONE;
+    assert_eq!(key(KeyCode::Char('c'), ctrl), Some(PickerKey::Cancel));
+    assert_eq!(key(KeyCode::Char('a'), ctrl), Some(PickerKey::ToggleAll));
+    assert_eq!(key(KeyCode::Char('p'), ctrl), Some(PickerKey::Up));
+    assert_eq!(key(KeyCode::Char('n'), ctrl), Some(PickerKey::Down));
+    assert_eq!(
+        key(KeyCode::Char('x'), ctrl),
+        None,
+        "an unbound Ctrl chord is not typed into the search"
+    );
+    assert_eq!(key(KeyCode::Char(' '), none), Some(PickerKey::Toggle));
+    assert_eq!(key(KeyCode::Tab, none), Some(PickerKey::Toggle));
+    assert_eq!(key(KeyCode::Char('c'), none), Some(PickerKey::Char('c')));
+    assert_eq!(
+        key(KeyCode::Char('A'), KeyModifiers::SHIFT),
+        Some(PickerKey::Char('A'))
+    );
+    assert_eq!(key(KeyCode::Backspace, none), Some(PickerKey::Backspace));
+    assert_eq!(key(KeyCode::Up, none), Some(PickerKey::Up));
+    assert_eq!(key(KeyCode::Down, none), Some(PickerKey::Down));
+    assert_eq!(key(KeyCode::PageUp, none), Some(PickerKey::PageUp));
+    assert_eq!(key(KeyCode::PageDown, none), Some(PickerKey::PageDown));
+    assert_eq!(key(KeyCode::Enter, none), Some(PickerKey::Confirm));
+    assert_eq!(key(KeyCode::Esc, none), Some(PickerKey::Cancel));
+    assert_eq!(key(KeyCode::F(1), none), None);
+    // Terminals that report releases must not act on every key twice.
+    assert_eq!(
+        picker_key(KeyEvent::new_with_kind(
+            KeyCode::Enter,
+            none,
+            KeyEventKind::Release
+        )),
+        None
+    );
+}
+
+#[test]
+fn paging_scrolls_both_ways_and_an_empty_search_is_safe() {
+    let items = (0..5)
+        .map(|i| item(&format!("skill-{i}"), "desc", false))
+        .collect();
+    let mut picker = Picker::new("Skills", "", items);
+    // Room for two items: 6 header rows + 2 footer rows + 2 × 3 item rows.
+    let height = 14;
+    let list = Picker::list_height(height);
+    assert_eq!(
+        Picker::list_height(2),
+        3,
+        "a tiny terminal still shows one item"
+    );
+
+    for _ in 0..3 {
+        picker.handle(PickerKey::PageDown, list);
+    }
+    let rendered = text(&picker.render(80, height));
+    assert!(rendered.contains(" ❯ ○ skill-4"), "{rendered}");
+    assert!(!rendered.contains("skill-2"), "{rendered}");
+
+    picker.handle(PickerKey::PageUp, list);
+    let rendered = text(&picker.render(80, height));
+    assert!(rendered.contains(" ❯ ○ skill-2"), "{rendered}");
+    assert!(
+        rendered.contains("skill-3") && !rendered.contains("skill-4"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("↓ 1 more below"), "{rendered}");
+
+    for _ in 0..10 {
+        picker.handle(PickerKey::Up, list);
+    }
+    assert!(text(&picker.render(80, height)).contains(" ❯ ○ skill-0"));
+
+    for c in "zzz".chars() {
+        picker.handle(PickerKey::Char(c), list);
+    }
+    for key in [
+        PickerKey::Down,
+        PickerKey::PageDown,
+        PickerKey::Toggle,
+        PickerKey::ToggleAll,
+    ] {
+        assert_eq!(picker.handle(key, list), PickerAction::Continue);
+    }
+    assert!(picker.selected().is_empty());
+    let rendered = text(&picker.render(80, height));
+    assert!(rendered.contains("(0 selected · 0/5)"), "{rendered}");
+    assert!(rendered.contains("⌕ zzz▏"), "{rendered}");
+    assert!(
+        rendered.contains("No skills match your search."),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn meta_matches_rank_between_title_and_description_and_terms_combine() {
+    let described = item("beta", "mentions detected here", false);
+    let mut tagged = item("alpha", "plain", false);
+    tagged.meta = vec!["rust/cli".to_string(), "detected".to_string()];
+    let mut picker = Picker::new("Skills", "", vec![described, tagged]);
+
+    for c in "detected".chars() {
+        picker.handle(PickerKey::Char(c), 30);
+    }
+    assert_eq!(picker.filtered(), vec![1, 0]);
+    let rendered = text(&picker.render(80, 30));
+    assert!(
+        rendered.contains("alpha · rust/cli · detected"),
+        "{rendered}"
+    );
+
+    for _ in 0.."detected".len() {
+        picker.handle(PickerKey::Backspace, 30);
+    }
+    // Every term must match somewhere, case-insensitively.
+    for c in "BETA here".chars() {
+        picker.handle(PickerKey::Char(c), 30);
+    }
+    assert_eq!(picker.filtered(), vec![0]);
+    assert!(picker.selected_ids().is_empty());
+    picker.handle(PickerKey::Toggle, 30);
+    assert_eq!(picker.selected_ids(), vec!["beta"]);
+}
+
 // ------------------------------------------------------- shipped skills ---
 
 const SHIPPED: &[&str] = &[
@@ -571,7 +1000,227 @@ fn every_shipped_skill_is_complete_and_named_after_its_path() {
     }
 }
 
+#[test]
+fn the_embedded_catalog_carries_no_hidden_files_or_bytecode() {
+    // build.rs skips these so a local checker run never ships its leftovers.
+    for skill in builtin_catalog() {
+        for (path, _) in &skill.files {
+            assert!(
+                !path
+                    .split('/')
+                    .any(|part| part.starts_with('.') || part == "__pycache__"),
+                "{}: {path} must not be embedded",
+                skill.path
+            );
+        }
+    }
+}
+
 // -------------------------------------------------------------------- cli ---
+
+/// A project wired to Claude, inside a temporary directory whose sibling
+/// `xdg/` serves as the config home, outside the project.
+fn claude_project() -> (tempfile::TempDir, std::path::PathBuf) {
+    let tmp = tempdir().unwrap();
+    let project = tmp.path().join("project");
+    fs::create_dir_all(project.join(".imrule")).unwrap();
+    fs::write(
+        project.join(".imrule/imrule.toml"),
+        "default_agents = [\"claude\"]\n",
+    )
+    .unwrap();
+    (tmp, project)
+}
+
+fn setup_cli(project: &Path, args: &[&str]) -> std::process::Output {
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .env("XDG_CONFIG_HOME", project.parent().unwrap().join("xdg"))
+        .args(["skills", "setup"])
+        .args(args)
+        .args(["--project-root", project.to_str().unwrap()])
+        .output()
+        .unwrap()
+}
+
+fn stdout_of(output: &std::process::Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+fn rust_cli_state(project: &Path, extra: &[&str]) -> String {
+    let mut args = vec!["--list", "--json"];
+    args.extend_from_slice(extra);
+    let listed = setup_cli(project, &args);
+    assert!(listed.status.success());
+    let catalog: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    catalog["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|skill| skill["path"] == "rust/cli")
+        .unwrap()["state"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+#[test]
+fn setup_rejects_unknown_names_conflicting_flags_and_a_missing_terminal() {
+    let (_tmp, project) = claude_project();
+
+    let unknown = setup_cli(&project, &["rust-cli", "nope"]);
+    assert_eq!(unknown.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&unknown.stderr);
+    assert!(stderr.contains("unknown built-in skill: nope"), "{stderr}");
+    assert!(stderr.contains("Available: ci/github-actions"), "{stderr}");
+    assert!(
+        !project.join(".imrule/skills").exists(),
+        "a known name beside an unknown one was installed"
+    );
+
+    for args in [
+        &["--json"][..],
+        &["--all", "rust-cli"][..],
+        &["--yes", "rust-cli"][..],
+        &["--yes", "--all"][..],
+    ] {
+        assert_eq!(setup_cli(&project, args).status.code(), Some(2), "{args:?}");
+    }
+
+    let no_terminal = setup_cli(&project, &[]);
+    assert_eq!(no_terminal.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&no_terminal.stderr);
+    assert!(
+        stderr.contains("no terminal to pick skills interactively"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("--yes") && stderr.contains("--all"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn setup_all_dry_run_reports_every_skill_without_writing_or_syncing() {
+    let (_tmp, project) = claude_project();
+
+    let output = setup_cli(&project, &["--all", "--dry-run"]);
+    assert!(output.status.success());
+    let stdout = stdout_of(&output);
+    assert!(
+        stdout.contains("Would set up built-in skill(s) in"),
+        "{stdout}"
+    );
+    for skill in builtin_catalog() {
+        assert!(
+            stdout.contains(&format!("{} ({}) [would install]", skill.name, skill.path)),
+            "{stdout}"
+        );
+    }
+    assert!(!stdout.contains("Syncing"), "{stdout}");
+    assert!(!project.join(".imrule/skills").exists());
+    assert!(!project.join(".claude").exists());
+}
+
+#[test]
+fn setup_skips_a_locally_modified_skill_until_forced_and_refreshes_an_outdated_one() {
+    let (_tmp, project) = claude_project();
+    let embedded = fs::read_to_string("skills/rust/cli/SKILL.md").unwrap();
+    let installed = project.join(".imrule/skills/rust/cli/SKILL.md");
+    let published = project.join(".claude/skills/rust-cli/SKILL.md");
+
+    assert!(setup_cli(&project, &["rust/cli"]).status.success());
+    assert_eq!(rust_cli_state(&project, &[]), "up-to-date");
+    let listed = stdout_of(&setup_cli(&project, &["--list"]));
+    assert!(
+        listed.contains("rust-cli [rust/cli, installed]"),
+        "{listed}"
+    );
+    // Nothing in this project is detectable, and a skill with no tags to
+    // show (path equals name, not detected, not installed) has no brackets.
+    assert!(
+        listed.starts_with("Built-in skills (nothing detected):"),
+        "{listed}"
+    );
+    assert!(listed.lines().any(|line| line == "    cli"), "{listed}");
+
+    fs::write(&installed, format!("{embedded}\nmy note\n")).unwrap();
+    assert_eq!(rust_cli_state(&project, &[]), "modified");
+    let listed = stdout_of(&setup_cli(&project, &["--list"]));
+    assert!(
+        listed.contains("rust-cli [rust/cli, modified locally]"),
+        "{listed}"
+    );
+
+    let skipped = setup_cli(&project, &["rust-cli"]);
+    assert!(skipped.status.success());
+    let stdout = stdout_of(&skipped);
+    assert!(
+        stdout.contains(
+            "rust-cli (rust/cli) [modified locally, skipped — pass --force to overwrite]"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("Syncing"),
+        "nothing was written, so agents need no sync: {stdout}"
+    );
+    assert!(fs::read_to_string(&installed).unwrap().contains("my note"));
+
+    let forced = setup_cli(&project, &["rust-cli", "--force"]);
+    assert!(forced.status.success());
+    assert!(stdout_of(&forced).contains("rust-cli (rust/cli) [updated]"));
+    assert_eq!(fs::read_to_string(&installed).unwrap(), embedded);
+    assert_eq!(fs::read_to_string(&published).unwrap(), embedded);
+
+    // A copy from an older revision is safe to refresh without --force.
+    let older = embedded
+        .lines()
+        .map(|line| {
+            if line.trim_start().starts_with("imrule-skill-version:") {
+                "  imrule-skill-version: \"0\""
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&installed, older).unwrap();
+    assert_eq!(rust_cli_state(&project, &[]), "outdated");
+    let listed = stdout_of(&setup_cli(&project, &["--list"]));
+    assert!(
+        listed.contains("rust-cli [rust/cli, update available]"),
+        "{listed}"
+    );
+    let refreshed = setup_cli(&project, &["rust-cli"]);
+    assert!(stdout_of(&refreshed).contains("rust-cli (rust/cli) [updated]"));
+    assert_eq!(fs::read_to_string(&installed).unwrap(), embedded);
+}
+
+#[test]
+fn setup_global_installs_into_the_config_home_without_syncing_the_project() {
+    let (tmp, project) = claude_project();
+
+    let output = setup_cli(&project, &["rust-cli", "--global"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout_of(&output).contains("Skipping agent sync"),
+        "{}",
+        stdout_of(&output)
+    );
+    assert!(
+        tmp.path()
+            .join("xdg/imrule/skills/rust/cli/SKILL.md")
+            .is_file()
+    );
+    assert!(!project.join(".imrule/skills").exists());
+    assert!(!project.join(".claude").exists());
+    assert_eq!(rust_cli_state(&project, &["--global"]), "up-to-date");
+}
 
 #[test]
 fn setup_lists_detected_skills_and_installs_named_ones_without_a_terminal() {

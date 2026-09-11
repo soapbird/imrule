@@ -893,6 +893,57 @@ fn skills_list_shows_installed_skills() {
 }
 
 #[test]
+fn skills_list_json_reports_an_empty_directory_and_name_mismatches() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    let list = |extra: &[&str]| {
+        Command::cargo_bin("imrule")
+            .unwrap()
+            .env("XDG_CONFIG_HOME", root.join("xdg"))
+            .args(["skills", "list", "--project-root", root.to_str().unwrap()])
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+
+    // Nothing installed yet: an empty document, not a failure.
+    let empty = list(&["--json"]);
+    assert!(empty.status.success());
+    let document: serde_json::Value = serde_json::from_slice(&empty.stdout).unwrap();
+    assert!(
+        document["dir"]
+            .as_str()
+            .unwrap()
+            .replace('\\', "/")
+            .ends_with(".imrule/skills"),
+        "{document}"
+    );
+    assert_eq!(document["skills"], serde_json::json!([]));
+    assert_eq!(document["warnings"], serde_json::json!([]));
+    let text = list(&[]);
+    assert!(String::from_utf8_lossy(&text.stdout).contains("No skills installed in"));
+
+    // A grouped skill is listed under its published name, and a frontmatter
+    // name that disagrees with it is reported in the same document.
+    fs::create_dir_all(root.join(".imrule/skills/rust/cli")).unwrap();
+    fs::write(
+        root.join(".imrule/skills/rust/cli/SKILL.md"),
+        "---\nname: cli\ndescription: test\n---\n",
+    )
+    .unwrap();
+    let listed = list(&["--json"]);
+    assert!(listed.status.success());
+    let document: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(document["skills"][0]["name"], "rust-cli");
+    let warning = document["warnings"][0].as_str().unwrap();
+    assert!(
+        warning.contains("declares name 'cli' but is published as 'rust-cli'"),
+        "{warning}"
+    );
+}
+
+#[test]
 fn apply_errors_on_unknown_agent() {
     let tmp = tempdir().unwrap();
     fs::create_dir_all(tmp.path().join(".imrule")).unwrap();

@@ -171,6 +171,34 @@ fn manifest_round_trips_and_degrades_to_none_when_unusable() {
     store.remove_manifest(temporary.path()).unwrap();
 }
 
+#[test]
+fn a_manifest_written_before_skill_copies_were_recorded_still_loads() {
+    // Releases before `skills` was added wrote no such key. Degrading such a
+    // manifest to `None` would silently skip every prune on the first run
+    // after upgrading, so it must load with an empty skill list instead.
+    let temporary = tempdir().unwrap();
+    let store = JsonApplyManifest::new();
+    fs::create_dir_all(temporary.path().join(".imrule")).unwrap();
+    fs::write(
+        temporary.path().join(IMRULE_MANIFEST_PATH),
+        json!({
+            "version": MANIFEST_VERSION,
+            "paths": ["CLAUDE.md", ".claude/skills"],
+            "mcp_servers": ["linear"],
+            "mcp_targets": [{"path": ".mcp.json", "server_key": "mcpServers"}],
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let loaded = store
+        .read_manifest(temporary.path())
+        .unwrap()
+        .expect("a pre-skills manifest is still usable");
+    assert_eq!(loaded.paths, vec!["CLAUDE.md", ".claude/skills"]);
+    assert!(loaded.skills.is_empty());
+}
+
 // ------------------------------------------------------------------- cli ---
 
 /// A project wired to two agents and one stdio MCP server. Stdio is deliberate:
@@ -370,6 +398,63 @@ fn grouped_skills_publish_under_path_names_and_dropped_ones_are_pruned() {
         root.join(".claude/skills/mine/SKILL.md").exists(),
         "a skill imrule never copied was removed"
     );
+}
+
+#[test]
+fn skills_that_would_publish_under_one_name_fail_apply_and_list() {
+    let temporary = project("\"claude\"", "");
+    let root = temporary.path();
+    write_skill(root, "python/cli");
+    write_skill(root, "python-cli");
+
+    for command in [&["apply"][..], &["skills", "list"][..]] {
+        let output = Command::cargo_bin("imrule")
+            .unwrap()
+            .args(command)
+            .args(["--project-root", root.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{command:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr
+                .contains("'python/cli' and 'python-cli' would both be published as 'python-cli'"),
+            "{command:?}: {stderr}"
+        );
+    }
+    assert!(
+        !root.join(".claude/skills").exists(),
+        "neither colliding skill may be copied"
+    );
+}
+
+#[test]
+fn skill_copies_survive_narrowed_and_dry_runs_until_a_full_run_prunes_them() {
+    let temporary = project("\"claude\", \"codex\"", "");
+    let root = temporary.path();
+    write_skill(root, "keep");
+    write_skill(root, "rust/cli");
+    apply(root, &[]);
+
+    fs::remove_dir_all(root.join(".imrule/skills/rust")).unwrap();
+    apply(root, &["--dry-run"]);
+    assert!(root.join(".claude/skills/rust-cli").exists());
+    assert!(root.join(".codex/skills/rust-cli").exists());
+
+    // A narrowed run never prunes, and folds the copies it did not make into
+    // the manifest, so the codex copy is still known to the next full run.
+    apply(root, &["--agents", "claude"]);
+    assert!(root.join(".claude/skills/rust-cli").exists());
+    assert!(root.join(".codex/skills/rust-cli").exists());
+
+    apply(root, &[]);
+    assert!(!root.join(".claude/skills/rust-cli").exists());
+    assert!(
+        !root.join(".codex/skills/rust-cli").exists(),
+        "the codex copy recorded before the narrowed run was forgotten"
+    );
+    assert!(root.join(".claude/skills/keep/SKILL.md").exists());
+    assert!(root.join(".codex/skills/keep/SKILL.md").exists());
 }
 
 #[test]
