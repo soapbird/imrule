@@ -1,0 +1,53 @@
+# .github/workflows/release.yml — 서버 컨테이너 이미지를 레지스트리로 푸시
+# setup 후 모든 uses:를 커밋 SHA로 고정한다: `@<sha> # <tag>` (references/structure.md "SHA 고정").
+# 이미지 빌드·태그 규칙은 Makefile `deploy`에 있다 (docker-setup). CI는 그 타깃만 부른다.
+# GHCR이 아닌 레지스트리면 login 단계의 registry/username/password를 저장소 secrets로 바꾼다.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: 태그와 VERSION 일치 확인
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: VERSION 확인
+        run: |
+          expected="v$(tr -d '[:space:]' < VERSION)"
+          if [ "${GITHUB_REF_NAME}" != "${expected}" ]; then
+            echo "태그 ${GITHUB_REF_NAME} 와 VERSION ${expected} 가 다릅니다" >&2
+            exit 1
+          fi
+
+  image:
+    name: 멀티 아키텍처 이미지 푸시
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: "{{REGISTRY_HOST}}"
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: make deploy
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: make deploy REGISTRY="{{REGISTRY_HOST}}/${OWNER,,}"

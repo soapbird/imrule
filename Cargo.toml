@@ -10,7 +10,7 @@ readme = "README.md"
 rust-version = "1.85"
 keywords = ["ai", "developer-tools", "codex", "claude", "rules"]
 categories = ["command-line-utilities", "development-tools"]
-include = ["/src/**/*.rs", "/tests/**/*.rs", "/benches/**/*.rs", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE"]
+include = ["/src/**/*.rs", "/tests/**/*.rs", "/benches/**/*.rs", "/skills/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE"]
 
 [[bin]]
 name = "imrule"
@@ -36,6 +36,8 @@ rayon = "1"
 clap_complete = "4"
 clap_mangen = "0.2"
 dotenvy = "0.15"
+# Terminal control for the `skills setup` picker.
+crossterm = "0.29"
 
 [dev-dependencies]
 assert_cmd = "2"

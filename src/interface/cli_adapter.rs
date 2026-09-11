@@ -18,8 +18,13 @@ use crate::application::ports::FileSystemPort;
 use crate::application::skills_add_use_case::{
     SkillsAddOptions, SkillsAddUseCase, list_installed_skills,
 };
+use crate::application::skills_setup_use_case::{
+    SkillsSetupEntry, SkillsSetupOptions, SkillsSetupPlan, SkillsSetupUseCase,
+};
 use crate::application::skills_update_use_case::{SkillsUpdateOptions, SkillsUpdateUseCase};
+use crate::domain::builtin_skills::BuiltinSkillState;
 use crate::infrastructure::agent_writer::DefaultAgentWriter;
+use crate::infrastructure::builtin_skills::{builtin_catalog, collect_project_signals};
 use crate::infrastructure::config_loader::TomlConfigLoader;
 use crate::infrastructure::file_system::FsFileSystem;
 use crate::infrastructure::git_tracking::GitUntracker;
@@ -28,7 +33,10 @@ use crate::infrastructure::manifest::JsonApplyManifest;
 use crate::infrastructure::mcp_storage::JsonMcpStorage;
 use crate::infrastructure::skill_fetcher::GitSkillFetcher;
 use crate::infrastructure::version_cache::JsonVersionCache;
-use crate::interface::cli::{Cli, Command, McpCommand, SkillsCommand, parse_agents};
+use crate::interface::cli::{
+    Cli, Command, McpCommand, SkillsCommand, SkillsSetupArgs, parse_agents,
+};
+use crate::interface::skill_picker::{Picker, PickerItem, run_picker, truncate};
 
 struct ProcessMcpRemoteRunner;
 
@@ -495,6 +503,10 @@ fn run_inner() -> Result<(), CliError> {
                     }
                     Ok(())
                 }
+                SkillsCommand::Setup(args) => {
+                    init_tracing(args.verbose);
+                    run_skills_setup(args, &sync)
+                }
                 SkillsCommand::List(args) => {
                     init_tracing(false);
                     let project_root = resolve_project_root(&args.project_root);
@@ -533,12 +545,175 @@ fn run_inner() -> Result<(), CliError> {
     }
 }
 
+/// `imrule skills setup`: choose built-in skills (picker, names, `--yes`, or
+/// `--all`), install them, then sync agents when anything was written.
+fn run_skills_setup(args: SkillsSetupArgs, sync: &AgentSync) -> Result<(), CliError> {
+    use std::io::IsTerminal;
+
+    let project_root = resolve_project_root(&args.project_root);
+    let catalog = builtin_catalog();
+    let use_case = SkillsSetupUseCase::new(sync.fs, &catalog);
+    let plan = use_case.plan(
+        &SkillsSetupOptions {
+            project_root: project_root.clone(),
+            global: args.global,
+        },
+        &collect_project_signals(&project_root),
+    );
+
+    if args.list && args.json {
+        return print_json(&builtin_skills_json(&plan));
+    }
+    if args.list {
+        print_builtin_skills(&plan);
+        return Ok(());
+    }
+
+    let (paths, overwrite_modified) = if args.all {
+        (plan.all_paths(), args.force)
+    } else if !args.skills.is_empty() {
+        (use_case.resolve(&args.skills)?, args.force)
+    } else if args.yes {
+        (plan.recommended_paths(), args.force)
+    } else if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() {
+        let chosen = run_picker(setup_picker(&plan))
+            .map_err(|err| CliError::new(1, format!("interactive picker failed: {err}")))?;
+        let Some(paths) = chosen else {
+            println!("Cancelled.");
+            return Ok(());
+        };
+        // Toggling a locally modified skill on in the picker is the consent
+        // that `--force` gives non-interactively.
+        (paths, true)
+    } else {
+        return Err(CliError::new(
+            2,
+            "no terminal to pick skills interactively. Name them \
+             (`imrule skills setup rust/cli make/setup`), or pass --yes for the detected \
+             skills or --all for every one.",
+        ));
+    };
+
+    if paths.is_empty() {
+        println!("No skills selected.");
+        return Ok(());
+    }
+
+    let result = use_case.install(&plan, &paths, overwrite_modified, args.dry_run)?;
+    println!(
+        "{} built-in skill(s) in {}:",
+        if args.dry_run {
+            "Would set up"
+        } else {
+            "Set up"
+        },
+        plan.install_dir.display()
+    );
+    for outcome in &result.outcomes {
+        println!(
+            "  - {} ({}) [{}]",
+            outcome.name,
+            outcome.path,
+            outcome.status.label(args.dry_run)
+        );
+    }
+
+    if result.changed() && !args.dry_run {
+        sync.sync_skills(&plan.install_dir, project_root)?;
+    }
+    Ok(())
+}
+
+/// Tags shown next to a built-in skill: its path, detection, install state.
+fn setup_tags(entry: &SkillsSetupEntry) -> Vec<String> {
+    let mut tags = Vec::new();
+    if entry.skill.path != entry.skill.name {
+        tags.push(entry.skill.path.clone());
+    }
+    if entry.recommended {
+        tags.push("detected".to_string());
+    }
+    if let Some(state) = entry.state.tag() {
+        tags.push(state.to_string());
+    }
+    tags
+}
+
+/// Builds the picker, detected skills first. Detected skills start selected
+/// unless modified locally; each item's id is the skill's catalog path.
+fn setup_picker(plan: &SkillsSetupPlan) -> Picker {
+    let mut entries: Vec<&SkillsSetupEntry> = plan.entries.iter().collect();
+    entries.sort_by_key(|entry| !entry.recommended);
+    let items = entries
+        .iter()
+        .map(|entry| PickerItem {
+            id: entry.skill.path.clone(),
+            title: entry.skill.name.clone(),
+            meta: setup_tags(entry),
+            description: entry.skill.description.clone(),
+            selected: entry.recommended && entry.state != BuiltinSkillState::Modified,
+        })
+        .collect();
+    let subtitle = if plan.detected.is_empty() {
+        "Nothing detected in this project — pick what you need".to_string()
+    } else {
+        format!("Detected: {}", plan.detected.join(" · "))
+    };
+    Picker::new("ImRule built-in skills", subtitle, items)
+}
+
 /// Prints one JSON document on stdout, the whole output of a `--json` run.
 fn print_json(document: &serde_json::Value) -> Result<(), CliError> {
     let text =
         serde_json::to_string_pretty(document).map_err(|err| CliError::new(1, err.to_string()))?;
     println!("{text}");
     Ok(())
+}
+
+fn builtin_skills_json(plan: &SkillsSetupPlan) -> serde_json::Value {
+    let skills: Vec<serde_json::Value> = plan
+        .entries
+        .iter()
+        .map(|entry| {
+            serde_json::json!({
+                "name": entry.skill.name,
+                "path": entry.skill.path,
+                "description": entry.skill.description,
+                "revision": entry.skill.revision,
+                "recommended": entry.recommended,
+                "state": entry.state.label(),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "install_dir": plan.install_dir,
+        "detected": plan.detected,
+        "skills": skills,
+    })
+}
+
+fn print_builtin_skills(plan: &SkillsSetupPlan) {
+    if plan.detected.is_empty() {
+        println!("Built-in skills (nothing detected):");
+    } else {
+        println!("Built-in skills (detected: {}):", plan.detected.join(", "));
+    }
+    for entry in &plan.entries {
+        let marker = if entry.recommended { "*" } else { " " };
+        let tags = setup_tags(entry);
+        if tags.is_empty() {
+            println!("  {marker} {}", entry.skill.name);
+        } else {
+            println!("  {marker} {} [{}]", entry.skill.name, tags.join(", "));
+        }
+        if !entry.skill.description.is_empty() {
+            println!("      {}", truncate(&entry.skill.description, 100));
+        }
+    }
+    println!(
+        "\n* fits this project. Install with `imrule skills setup` (pick interactively), \
+         `--yes` (detected), `--all`, or by name."
+    );
 }
 
 #[derive(Debug)]

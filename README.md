@@ -204,6 +204,47 @@ imrule mcp auth --config custom.toml       # 사용자 지정 설정 파일 사�
 
 에이전트 스킬을 관리합니다. 원격 저장소에서 설치하거나 로컬에 설치된 스킬을 조회할 수 있습니다.
 
+#### `imrule skills setup`
+
+ImRule에 내장된 스킬(프로젝트 세팅·구조·컨벤션 검사)을 `.imrule/skills/`에 설치합니다. 인자 없이 실행하면 프로젝트를 감지해 맞는 스킬을 미리 선택해 둔 목록이 열리고, 검색하면서 여러 개를 고를 수 있습니다. 설치 후 `imrule apply`를 자동 실행해 에이전트 디렉터리까지 동기화합니다.
+
+```bash
+imrule skills setup                       # 감지 결과가 미리 선택된 목록에서 검색·다중 선택
+imrule skills setup --list                # 내장 스킬과 감지 결과만 출력
+imrule skills setup --yes                 # 감지된 스킬을 묻지 않고 설치
+imrule skills setup rust/cli make-setup   # 경로나 이름으로 지정
+imrule skills setup --all                 # 전부 설치
+imrule skills setup --dry-run             # 무엇이 바뀌는지만 확인
+imrule skills setup --force               # 로컬에서 고친 내장 스킬도 덮어쓰기
+```
+
+목록에서는 입력하면 검색, `Space`로 선택·해제, `Ctrl+A`로 보이는 항목 전체 선택·해제, `↑`/`↓`로 이동, `Enter`로 설치, `Esc`로 취소합니다. 터미널이 없는 환경(CI 등)에서는 목록을 띄울 수 없으므로 스킬 이름, `--yes`, `--all` 중 하나를 지정해야 합니다(없으면 종료 코드 2).
+
+| 스킬 | 다루는 것 |
+|---|---|
+| `cli` | 언어와 무관한 CLI 규칙(clig.dev): 도움말·버전, stdout/stderr 구분, `--json`, 종료 코드, 설정 우선순위 |
+| `server` | 언어와 무관한 서버 규칙(12-factor): 환경 변수 설정, `/healthz`·`/readyz`, 우아한 종료, 에러 응답 |
+| `make/setup` | Makefile 표준 타깃(`help`·`fmt`·`lint`·`test`·`check` 등)과 헤더 |
+| `python/cli`, `python/server` | uv·src 레이아웃·ruff·basedpyright·pytest, Typer / FastAPI |
+| `rust/cli`, `rust/server` | edition·`[lints]`·얇은 `main`, clap / axum, 기능별 모듈 또는 헥사고날 구조 |
+| `release/versioning` | VERSION(4자리)·Cargo·pyproject·CHANGELOG·태그 일치 |
+| `ci/github-actions` | 최소 권한·SHA 고정·concurrency·`make check` 호출 |
+| `docker/setup` | 멀티스테이지·non-root·exec 형식 CMD·HEALTHCHECK·`.dockerignore` |
+| `docker/optimize` | 이미지 크기·콜드/웜 빌드·캐시·공급망(SBOM/provenance)·런타임 보안을 전후 측정하며 개선, 레이어 순서·비밀값·compose 보안 옵션 정적 검사 |
+| `vscode/setup` | 프로젝트에 맞는 `.vscode/`(`settings.json`·`extensions.json`·`launch.json`·`tasks.json`) 생성과 검사, Cursor 호환 |
+| `imrule-issue` | imrule 명령·스킬이 제대로 동작하지 않거나 새 기능이 필요할 때, 진단을 모으고 비공개 정보를 가린 뒤 승인을 받아 [soapbird/imrule](https://github.com/soapbird/imrule/issues) 이슈 생성 |
+
+각 스킬은 `check`(기본, 보고만)·`setup`·`fix`(요청할 때만) 모드를 갖고, 동봉된 `scripts/check.py`로 정답이 정해진 항목을 검사한 뒤 PASS/WARN/FAIL 표로 보고합니다. 검사 스크립트를 실행하려면 `uv`(또는 Python 3.11 이상)가 필요합니다.
+
+다시 실행하면 스킬별 상태를 출력합니다.
+
+| 상태 | 의미 |
+|---|---|
+| `installed` | 새로 설치했습니다. |
+| `updated` | 이전 리비전으로 설치된 스킬을 교체했습니다(새 리비전에서 빠진 파일도 지웁니다). |
+| `unchanged` | 내장본과 설치본이 같습니다. |
+| `modified locally, skipped` | 로컬에서 고친 스킬이라 건드리지 않았습니다. `--force`로 덮어쓰거나, 목록에서 직접 선택하면 덮어씁니다. |
+
 #### `imrule skills add`
 
 GitHub/GitLab 저장소, git SSH URL, 로컬 경로에서 스킬을 설치합니다. 설치 후 `imrule apply`를 자동 실행해 모든 에이전트 디렉터리로 동기화합니다.

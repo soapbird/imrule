@@ -1,0 +1,75 @@
+# .github/workflows/release.yml — Python 패키지(wheel·sdist)를 GitHub Release로 배포
+# setup 후 모든 uses:를 커밋 SHA로 고정한다: `@<sha> # <tag>` (references/structure.md "SHA 고정").
+# PyPI에도 올리면 publish job에 `uv publish`(trusted publishing, permissions: id-token: write)를 추가한다.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: 태그와 VERSION 일치 확인
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: VERSION 확인
+        run: |
+          expected="v$(tr -d '[:space:]' < VERSION)"
+          if [ "${GITHUB_REF_NAME}" != "${expected}" ]; then
+            echo "태그 ${GITHUB_REF_NAME} 와 VERSION ${expected} 가 다릅니다" >&2
+            exit 1
+          fi
+
+  build:
+    name: uv build
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+      - run: uv build
+      - run: (cd dist && shasum -a 256 * > SHA256SUMS)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: CHANGELOG에서 릴리스 노트 추출
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            index($0, "## [" v "]") == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+      - uses: softprops/action-gh-release@v3
+        with:
+          body_path: release-notes.md
+          files: dist/*

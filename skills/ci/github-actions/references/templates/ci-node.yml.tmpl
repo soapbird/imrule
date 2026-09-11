@@ -1,0 +1,33 @@
+# .github/workflows/ci.yml — Node (pnpm)
+# setup 후 모든 uses:를 커밋 SHA로 고정한다: `@<sha> # <tag>` (references/structure.md "SHA 고정").
+# pnpm 버전은 pnpm/action-setup이 package.json의 packageManager를 따른다.
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: make check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "{{NODE_VERSION}}"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: make check

@@ -82,6 +82,42 @@ pub enum SkillsCommand {
     /// Re-fetch registered skill sources and refresh installed skills.
     #[command(alias = "up")]
     Update(SkillsUpdateArgs),
+    /// Install ImRule's built-in skills: pick from a searchable list, or name them.
+    Setup(SkillsSetupArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SkillsSetupArgs {
+    /// Built-in skills to install, by path or name (e.g. `rust/cli`, `make-setup`).
+    #[arg(value_name = "SKILL")]
+    pub skills: Vec<String>,
+    /// Install every built-in skill.
+    #[arg(long, default_value_t = false, conflicts_with = "skills")]
+    pub all: bool,
+    /// Install the skills detected for this project without prompting.
+    #[arg(long, short = 'y', default_value_t = false, conflicts_with_all = ["skills", "all"])]
+    pub yes: bool,
+    /// List the built-in skills and what was detected, without installing.
+    #[arg(long, short = 'l', default_value_t = false)]
+    pub list: bool,
+    /// With --list, print the catalog as one JSON document.
+    #[arg(long, default_value_t = false, requires = "list")]
+    pub json: bool,
+    /// Overwrite built-in skills that were modified locally.
+    #[arg(long, default_value_t = false)]
+    pub force: bool,
+    /// Report what would change without writing files.
+    #[arg(long = "dry-run", default_value_t = false)]
+    pub dry_run: bool,
+    /// Install into the global config directory instead of the project.
+    #[arg(long, short = 'g', default_value_t = false)]
+    pub global: bool,
+    /// Project root directory.
+    #[arg(long = "project-root", value_name = "DIR")]
+    pub project_root: Option<PathBuf>,
+    /// Enable verbose logging.
+    #[arg(long, short = 'v', default_value_t = false)]
+    pub verbose: bool,
 }
 
 #[derive(Debug, Subcommand)]

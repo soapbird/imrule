@@ -1,0 +1,109 @@
+# .github/workflows/release.yml — Rust 바이너리를 GitHub Release로 배포
+# setup 후 모든 uses:를 커밋 SHA로 고정한다: `@<sha> # <tag>` (references/structure.md "SHA 고정").
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: 태그와 VERSION 일치 확인
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: VERSION 확인
+        run: |
+          expected="v$(tr -d '[:space:]' < VERSION)"
+          if [ "${GITHUB_REF_NAME}" != "${expected}" ]; then
+            echo "태그 ${GITHUB_REF_NAME} 와 VERSION ${expected} 가 다릅니다" >&2
+            exit 1
+          fi
+
+  build:
+    name: 빌드 (${{ matrix.target }})
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest, archive: tar.gz }
+          - { target: aarch64-apple-darwin, os: macos-15, archive: tar.gz }
+          - { target: x86_64-apple-darwin, os: macos-15, archive: tar.gz }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, archive: zip }
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "{{RUST_TOOLCHAIN}}"
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: 압축 (unix)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          name="{{BINARY}}-${{ matrix.target }}"
+          mkdir -p "dist/${name}"
+          cp "target/${{ matrix.target }}/release/{{BINARY}}" README.md "dist/${name}/"
+          tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+          (cd dist && shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256")
+      - name: 압축 (windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $name = "{{BINARY}}-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/{{BINARY}}.exe", README.md "dist/$name/"
+          Compress-Archive -Path "dist/$name/*" -DestinationPath "dist/$name.zip"
+          $hash = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name.zip" | Out-File -Encoding ascii "dist/$name.zip.sha256"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: "{{BINARY}}-${{ matrix.target }}"
+          path: dist/{{BINARY}}-${{ matrix.target }}.*
+          if-no-files-found: error
+
+  publish:
+    name: GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: CHANGELOG에서 릴리스 노트 추출
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            index($0, "## [" v "]") == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v3
+        with:
+          body_path: release-notes.md
+          files: dist/*

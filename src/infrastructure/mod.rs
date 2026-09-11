@@ -1,6 +1,7 @@
 //! Infrastructure layer — concrete I/O implementations of application ports.
 
 pub mod agent_writer;
+pub mod builtin_skills;
 pub mod config_loader;
 pub mod file_system;
 pub mod git_tracking;

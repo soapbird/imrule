@@ -1,0 +1,45 @@
+SHELL := bash
+.SHELLFLAGS := -eu -o pipefail -c
+MAKEFLAGS += --warn-undefined-variables --no-builtin-rules
+.DEFAULT_GOAL := help
+
+BIN := {{bin}}
+ARGS ?=
+
+.PHONY: help setup fmt fmt-check lint test check build run clean install
+
+help: ## 타깃 목록
+	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+setup: ## 의존성 설치 (uv.lock 기준)
+	uv sync --locked
+
+fmt: ## 포맷·import 정렬 적용
+	uv run ruff check --select I --fix .
+	uv run ruff format .
+
+fmt-check: ## 포맷 검사 (파일 수정 없음)
+	uv run ruff format --check .
+
+lint: ## 린트 + 타입 검사 + 계층 검사
+	uv lock --check
+	uv run ruff check .
+	uv run basedpyright
+	uv run lint-imports
+
+test: ## 테스트
+	uv run pytest
+
+check: fmt-check lint test ## CI 게이트: 포맷 검사 + 린트 + 테스트
+
+build: ## wheel·sdist 빌드
+	uv build
+
+run: ## 실행 (make run ARGS="--help")
+	uv run $(BIN) $(ARGS)
+
+clean: ## 빌드 산출물·캐시 삭제
+	rm -rf dist .pytest_cache .ruff_cache
+
+install: ## uv tool로 전역 설치
+	uv tool install --force .

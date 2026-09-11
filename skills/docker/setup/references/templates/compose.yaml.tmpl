@@ -1,0 +1,42 @@
+# compose.yaml — 로컬 실행·단일 호스트 배포
+# 자리표시자: {{PROJECT}} {{PROJECT_ENV}} {{PORT}} {{POSTGRES_VERSION}}
+# DB가 필요 없으면 db 서비스, depends_on, volumes를 지운다.
+name: "{{PROJECT}}"
+
+services:
+  app:
+    build:
+      context: .
+    image: ${REGISTRY:-local}/{{PROJECT}}:${VERSION:-dev}
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      {{PROJECT_ENV}}_HOST: 0.0.0.0
+      {{PROJECT_ENV}}_PORT: "{{PORT}}"
+    ports:
+      - "127.0.0.1:${APP_PORT:-{{PORT}}}:{{PORT}}"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:{{POSTGRES_VERSION}}-bookworm
+    environment:
+      POSTGRES_USER: "{{PROJECT}}"
+      POSTGRES_DB: "{{PROJECT}}"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?.env에 POSTGRES_PASSWORD를 설정하세요}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{PROJECT}} -d {{PROJECT}}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  db-data:
