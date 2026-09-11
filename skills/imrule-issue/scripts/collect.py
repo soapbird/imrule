@@ -70,27 +70,42 @@ SECRET_WORDS = (
     r"token|secret|passw(?:or)?d|pwd|api[_-]?key|apikey|access[_-]?key|private[_-]?key"
     r"|client[_-]?secret|credential|session[_-]?id|auth"
 )
+# 키 앞뒤의 따옴표. 캡처한 stdout·JSON으로 인코딩한 문자열 안에서는 \" 로 이스케이프되어 나온다.
+OPTIONAL_QUOTE = r"(?:\\?[\"'])?"
 AUTHORIZATION = re.compile(
-    r"(?i)\b((?:proxy-)?authorization[\"']?\s*[:=]\s*[\"']?)"
-    r"((?:(?:bearer|basic|token|digest)[\s-]+)?[^\s\"',;]+)"
+    rf"(?i)\b((?:proxy-)?authorization{OPTIONAL_QUOTE}\s*[:=]\s*{OPTIONAL_QUOTE})"
+    r"((?:(?:bearer|basic|token|digest)[\s-]+)?(?:[^\s\"'\\,;]|\\(?![\"']))+)"
 )
 AUTH_SCHEME = re.compile(r"(?i)^(?:bearer|basic|token|digest)[\s-]+")
-COOKIE = re.compile(r"(?im)\b((?:set-)?cookie[\"']?\s*[:=]\s*[\"']?)[^\n\r\"']+")
+COOKIE = re.compile(
+    rf"(?im)\b((?:set-)?cookie{OPTIONAL_QUOTE}\s*[:=]\s*{OPTIONAL_QUOTE})"
+    r"(?:[^\n\r\"'\\]|\\(?![\"']))+"
+)
+# 환경 변수 참조 하나로만 이뤄진 값($VAR·${VAR})은 비밀값이 아니라 변수 이름이므로 남긴다.
+# 중괄호 없는 $VAR는 대문자 관례만 인정한다 — $ecr3t 같은 비밀번호와 모양으로 구분할 수 없어서.
+ENV_REFERENCE = re.compile(r"\$(?:[A-Z_][A-Z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})")
 SECRET_KEY = rf"[A-Za-z0-9_.-]*(?:{SECRET_WORDS})[A-Za-z0-9_.-]*"
-# 따옴표 안의 값. shlex.join은 작은따옴표를 '"'"'로 이어 붙이고, 큰따옴표 안은 \" 로 이스케이프한다.
-QUOTED_VALUE = {"'": r"(?:'\"'\"'|[^'\r\n])+", '"': r'(?:\\.|[^"\\\r\n])+'}
+# (따옴표 정규식) → 따옴표 안의 값. shlex.join은 작은따옴표를 '"'"'로 이어 붙이고, 큰따옴표 안은
+# \" 로 이스케이프한다. 이스케이프된 JSON({\"token\": \"a b\"})은 \" 가 따옴표이고, 안쪽 따옴표는
+# \\\" · 백슬래시는 \\\\ 로 나온다.
+QUOTED_VALUE = {
+    "'": r"(?:'\"'\"'|[^'\r\n])+",
+    '"': r'(?:\\.|[^"\\\r\n])+',
+    r'\\"': r'(?:\\\\\\"|\\\\\\\\|\\[^"\\\r\n]|[^"\\\r\n])+',
+}
 # 따옴표로 감싼 값은 닫는 따옴표까지 통째로 가린다. 공백·쉼표·세미콜론이 있어도 남기지 않는다.
 KEY_VALUE_QUOTED = [
     # 'PASSWORD=alpha bravo' — 키=값 전체를 한 따옴표로 감쌈 (--env 'KEY=값' 을 shlex.join한 모양)
     *(re.compile(rf"(?i){quote}(?P<key>{SECRET_KEY})\s*[:=]\s*(?P<value>{value}){quote}")
       for quote, value in QUOTED_VALUE.items()),
-    # password: "alpha bravo" · password='a b;c' · "password": "a b" — 값만 감쌈
-    *(re.compile(rf"(?i)(?P<key>{SECRET_KEY})[\"']?\s*[:=]\s*{quote}(?P<value>{value}){quote}")
+    # password: "alpha bravo" · password='a b;c' · "password": "a b" · \"password\": \"a b\" — 값만 감쌈
+    *(re.compile(rf"(?i)(?P<key>{SECRET_KEY}){OPTIONAL_QUOTE}\s*[:=]\s*{quote}(?P<value>{value}){quote}")
       for quote, value in QUOTED_VALUE.items()),
 ]
 KEY_VALUE = re.compile(
-    rf"(?i)(?P<key>{SECRET_KEY})"
-    r"(?P<sep>[\"']?\s*[:=]\s*[\"']?)(?P<value>[^\s\"',;&}\]]+)"
+    rf"(?i)(?P<key>{SECRET_KEY})(?P<sep>{OPTIONAL_QUOTE}\s*[:=]\s*{OPTIONAL_QUOTE})"
+    # ${VAR}는 닫는 중괄호까지 한 값으로 읽는다. 값 끝의 \" 는 이스케이프된 따옴표라 값에 넣지 않는다.
+    r"(?P<value>(?:\$\{[A-Za-z0-9_]*\}|[^\s\"'\\,;&}\]]|\\(?![\"']))+)"
 )
 URL_USERINFO = re.compile(
     r"(?i)\b(?P<scheme>[a-z][a-z0-9+.-]*://)"
@@ -149,8 +164,8 @@ class Redactor:
 
     def _authorization(self, match: re.Match) -> str:
         credential = AUTH_SCHEME.sub("", match.group(2))
-        # `${VAR}`·`$VAR` 참조는 비밀값이 아니라 변수 이름이므로 남긴다.
-        if credential.startswith(("$", "<")):
+        # `${VAR}`·`$VAR` 참조는 비밀값이 아니라 변수 이름이므로 남긴다. `<`는 이미 가린 값.
+        if credential.startswith("<") or ENV_REFERENCE.fullmatch(credential):
             return match.group(0)
         self.counts["secret"] += 1
         return f"{match.group(1)}{REDACTED}"
@@ -161,7 +176,8 @@ class Redactor:
         # Authorization·쿠키는 전용 패턴이 인증 방식(Bearer 등)까지 보고 이미 처리했다.
         if key.endswith("authorization") or key.endswith("cookie"):
             return match.group(0)
-        if (value.startswith(("$", "<")) or value.lower() in {"true", "false", "null", "none"}
+        if (value.startswith("<") or ENV_REFERENCE.fullmatch(value)
+                or value.lower() in {"true", "false", "null", "none"}
                 or (value.isdigit() and len(value) < 8)):
             return match.group(0)
         self.counts["secret"] += 1
@@ -526,7 +542,7 @@ def plan_run(raw: str, binary: str) -> tuple[list[str] | None, str]:
     head, tail = args[:separator], args[separator:]
 
     # 도움말·버전은 clap이 도움말로 읽는 자리에서만 인정한다: `imrule --help`, `imrule mcp --help`,
-    # `imrule apply -h`. 그 밖의 자리(`mcp add demo npx -h`)는 서버 인자일 수 있어 아래 규칙을 따른다.
+    # `imrule apply -v -h`. 첫 위치 인자 뒤(`mcp add demo npx -h`)는 서버 인자일 수 있어 아래 규칙을 따른다.
     if not head or head[0] in HELP_WORDS:
         return [binary, *args], ""
 
@@ -543,8 +559,13 @@ def plan_run(raw: str, binary: str) -> tuple[list[str] | None, str]:
 
     dry_run_supported, verbose_supported = COMMANDS[key]
     rest = head[len(key):]
-    if rest and rest[0] in HELP_FLAGS:
-        return [binary, *args], ""  # `imrule mcp add --help` 처럼 명령 바로 뒤의 도움말
+    # `imrule mcp add --help`·`imrule apply --verbose -h` 처럼 명령 뒤 앞쪽 옵션들 사이의 도움말.
+    # `-`로 시작하지 않는 첫 토큰(위치 인자이거나 `--env K=V`의 값)에서 멈춘다 — 그 뒤는 인정하지 않는다.
+    for token in rest:
+        if not token.startswith("-"):
+            break
+        if token in HELP_FLAGS:
+            return [binary, *args], ""
     listing = key in LIST_READ_ONLY and any(a in ("--list", "-l") for a in rest)
     read_only = key in ALWAYS_READ_ONLY or listing
     has_dry_run = "--dry-run" in rest
