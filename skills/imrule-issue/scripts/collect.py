@@ -57,6 +57,8 @@ COMMANDS: dict[tuple[str, ...], tuple[bool, bool]] = {
 }
 ALWAYS_READ_ONLY = {("skills", "list"), ("skills", "ls"), ("completions",), ("man",)}
 LIST_READ_ONLY = {("skills", "add"), ("skills", "setup")}  # --list/-l 이면 읽기 전용
+HELP_FLAGS = ("--help", "-h", "--version", "-V")
+HELP_WORDS = (*HELP_FLAGS, "help")  # 하위 명령 자리에서는 clap의 `help` 하위 명령도 도움말
 KNOWN_TOP_LEVEL = {
     "agents", "default_agents", "agent", "nested", "gitignore", "mcp", "mcp_servers",
     "skills", "subagents",
@@ -74,11 +76,27 @@ AUTHORIZATION = re.compile(
 )
 AUTH_SCHEME = re.compile(r"(?i)^(?:bearer|basic|token|digest)[\s-]+")
 COOKIE = re.compile(r"(?im)\b((?:set-)?cookie[\"']?\s*[:=]\s*[\"']?)[^\n\r\"']+")
+SECRET_KEY = rf"[A-Za-z0-9_.-]*(?:{SECRET_WORDS})[A-Za-z0-9_.-]*"
+# 따옴표 안의 값. shlex.join은 작은따옴표를 '"'"'로 이어 붙이고, 큰따옴표 안은 \" 로 이스케이프한다.
+QUOTED_VALUE = {"'": r"(?:'\"'\"'|[^'\r\n])+", '"': r'(?:\\.|[^"\\\r\n])+'}
+# 따옴표로 감싼 값은 닫는 따옴표까지 통째로 가린다. 공백·쉼표·세미콜론이 있어도 남기지 않는다.
+KEY_VALUE_QUOTED = [
+    # 'PASSWORD=alpha bravo' — 키=값 전체를 한 따옴표로 감쌈 (--env 'KEY=값' 을 shlex.join한 모양)
+    *(re.compile(rf"(?i){quote}(?P<key>{SECRET_KEY})\s*[:=]\s*(?P<value>{value}){quote}")
+      for quote, value in QUOTED_VALUE.items()),
+    # password: "alpha bravo" · password='a b;c' · "password": "a b" — 값만 감쌈
+    *(re.compile(rf"(?i)(?P<key>{SECRET_KEY})[\"']?\s*[:=]\s*{quote}(?P<value>{value}){quote}")
+      for quote, value in QUOTED_VALUE.items()),
+]
 KEY_VALUE = re.compile(
-    rf"(?i)(?P<key>[A-Za-z0-9_.-]*(?:{SECRET_WORDS})[A-Za-z0-9_.-]*)"
+    rf"(?i)(?P<key>{SECRET_KEY})"
     r"(?P<sep>[\"']?\s*[:=]\s*[\"']?)(?P<value>[^\s\"',;&}\]]+)"
 )
-URL_USERINFO = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^/\s:@'\"]+:[^/\s@'\"]+@")
+URL_USERINFO = re.compile(
+    r"(?i)\b(?P<scheme>[a-z][a-z0-9+.-]*://)"
+    r"(?:[^/\s:@'\"]+:[^/\s@'\"]+|(?P<name>[^/?#\s:@'\"]+))@"
+)
+URL_PLAIN_USERS = {"git"}  # ssh://git@host 처럼 비밀값이 아닌 관례적 사용자 이름
 URL_QUERY = re.compile(
     r"(?i)([?&](?:access_token|token|key|api_key|apikey|secret|password|pass|sig|signature"
     r"|auth|code|client_secret)=)[^&#\s'\"]+"
@@ -90,6 +108,7 @@ TOKENS = [
     re.compile(r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b"),
     re.compile(r"\bnpm_[A-Za-z0-9]{36}\b"),
+    re.compile(r"\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}\b"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),
     re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
@@ -146,7 +165,15 @@ class Redactor:
                 or (value.isdigit() and len(value) < 8)):
             return match.group(0)
         self.counts["secret"] += 1
-        return f"{match.group('key')}{match.group('sep')}{REDACTED}"
+        # 값 부분만 바꾼다. 키·구분자·따옴표는 그대로 둔다.
+        whole, start = match.group(0), match.start()
+        return f"{whole[:match.start('value') - start]}{REDACTED}{whole[match.end('value') - start:]}"
+
+    def _url_userinfo(self, match: re.Match) -> str:
+        if match.group("name") and match.group("name").lower() in URL_PLAIN_USERS:
+            return match.group(0)
+        self.counts["secret"] += 1
+        return f"{match.group('scheme')}{REDACTED}@"
 
     def text(self, text: str) -> str:
         if not text:
@@ -155,9 +182,11 @@ class Redactor:
             text = self._sub("secret", pattern, REDACTED, text)
         text = AUTHORIZATION.sub(self._authorization, text)
         text = self._sub("secret", COOKIE, rf"\1{REDACTED}", text)
-        text = self._sub("secret", URL_USERINFO, rf"\1{REDACTED}@", text)
+        text = URL_USERINFO.sub(self._url_userinfo, text)
         text = self._sub("secret", URL_QUERY, rf"\1{REDACTED}", text)
-        text = KEY_VALUE.sub(self._key_value, text)
+        # 따옴표 모양을 먼저 가린다. 뒤의 KEY_VALUE는 이미 가린 <redacted>를 건너뛴다.
+        for pattern in (*KEY_VALUE_QUOTED, KEY_VALUE):
+            text = pattern.sub(self._key_value, text)
         if self.root and self.root in text:
             self.counts["project"] += text.count(self.root)
             text = text.replace(self.root, "<project>")
@@ -496,19 +525,26 @@ def plan_run(raw: str, binary: str) -> tuple[list[str] | None, str]:
     separator = args.index("--") if "--" in args else len(args)
     head, tail = args[:separator], args[separator:]
 
-    if not head or head[0] == "help" or any(a in ("--help", "-h", "--version", "-V") for a in head):
+    # 도움말·버전은 clap이 도움말로 읽는 자리에서만 인정한다: `imrule --help`, `imrule mcp --help`,
+    # `imrule apply -h`. 그 밖의 자리(`mcp add demo npx -h`)는 서버 인자일 수 있어 아래 규칙을 따른다.
+    if not head or head[0] in HELP_WORDS:
         return [binary, *args], ""
 
     key: tuple[str, ...] = (head[0],)
     if head[0] in ("mcp", "skills"):
-        if len(head) < 2 or head[1].startswith("-"):
+        if len(head) < 2 or head[1] in HELP_WORDS:
             return [binary, *args], ""  # 하위 명령 도움말만 출력
+        if head[1].startswith("-"):
+            return None, (f"하위 명령을 옵션보다 먼저 적어야 실행함: "
+                          f"imrule {head[0]} <하위 명령> {head[1]} …")
         key = (head[0], head[1])
     if key not in COMMANDS:
         return None, f"알 수 없는 imrule 명령: {' '.join(key)}"
 
     dry_run_supported, verbose_supported = COMMANDS[key]
     rest = head[len(key):]
+    if rest and rest[0] in HELP_FLAGS:
+        return [binary, *args], ""  # `imrule mcp add --help` 처럼 명령 바로 뒤의 도움말
     listing = key in LIST_READ_ONLY and any(a in ("--list", "-l") for a in rest)
     read_only = key in ALWAYS_READ_ONLY or listing
     has_dry_run = "--dry-run" in rest

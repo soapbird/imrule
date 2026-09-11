@@ -4,7 +4,7 @@ description: "imrule CLI(apply·clear·init·mcp·skills add/update/setup/list)�
 compatibility: "gh CLI 권장(없으면 새 이슈 링크로 대체), uv 또는 Python 3.11+ 필요"
 metadata:
   imrule-builtin: "true"
-  imrule-skill-version: "1"
+  imrule-skill-version: "2"
 ---
 
 # imrule 이슈 제보 (imrule-issue)
