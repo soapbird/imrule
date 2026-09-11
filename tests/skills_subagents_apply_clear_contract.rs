@@ -5,18 +5,16 @@ use imrule::application::ports::FileSystemPort;
 use imrule::domain::agent::all_agents;
 use imrule::domain::config::SubagentFrontmatter;
 use imrule::domain::skills::{
-    format_validation_warnings, get_skills_gitignore_paths, parse_skill_source, RemoteSkillSource,
+    RemoteSkillSource, format_validation_warnings, get_skills_gitignore_paths, parse_skill_source,
 };
 use imrule::domain::subagent::{
     build_claude_file, build_codex_file, build_copilot_file, build_cursor_file,
-    map_tools_for_copilot, parse_frontmatter, validate_frontmatter,
+    map_tools_for_copilot, parse_frontmatter, subagents_gitignore_paths, validate_frontmatter,
 };
 use imrule::infrastructure::config_loader::TomlConfigLoader;
 use imrule::infrastructure::file_system::FsFileSystem;
 use imrule::infrastructure::skills::{copy_skills_directory, discover_skills};
-use imrule::infrastructure::subagents::{
-    discover_subagents, get_subagents_gitignore_paths, load_subagent_file,
-};
+use imrule::infrastructure::subagents::{discover_subagents, load_subagent_file};
 use serde_json::json;
 use tempfile::tempdir;
 
@@ -36,9 +34,17 @@ fn discovers_skills_groupings_warnings_copies_and_gitignore_targets() {
         .iter()
         .map(|skill| skill.name.as_str())
         .collect();
-    assert_eq!(names, vec!["nested", "solo"]);
-    assert_eq!(discovered.warnings, vec!["Directory 'stray' in skills has no SKILL.md and contains no sub-skills. It may be malformed or stray."]);
-    assert_eq!(format_validation_warnings(&discovered.warnings), "  - Directory 'stray' in skills has no SKILL.md and contains no sub-skills. It may be malformed or stray.");
+    assert_eq!(names, vec!["group-nested", "solo"]);
+    assert_eq!(
+        discovered.warnings,
+        vec![
+            "Directory 'stray' in skills has no SKILL.md and contains no sub-skills. It may be malformed or stray."
+        ]
+    );
+    assert_eq!(
+        format_validation_warnings(&discovered.warnings),
+        "  - Directory 'stray' in skills has no SKILL.md and contains no sub-skills. It may be malformed or stray."
+    );
 
     copy_skills_directory(&root.join(".imrule/skills"), &root.join(".claude/skills")).unwrap();
     assert_eq!(
@@ -72,6 +78,114 @@ fn discovers_skills_groupings_warnings_copies_and_gitignore_targets() {
             root.join(".kimi-code/skills"),
             root.join(".factory/skills"),
         ]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn copying_skills_again_carries_a_permission_change_on_an_unchanged_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    write_source_skill(&root.join("src"), "demo", "same\n");
+    let script = root.join("src/demo/run.sh");
+    fs::write(&script, "#!/bin/sh\n").unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o644)).unwrap();
+    copy_skills_directory(&root.join("src"), &root.join("dest")).unwrap();
+
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    copy_skills_directory(&root.join("src"), &root.join("dest")).unwrap();
+
+    let mode = fs::metadata(root.join("dest/demo/run.sh"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o755, "the copy kept its old mode");
+}
+
+#[test]
+fn copying_skills_again_leaves_unchanged_files_untouched() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    write_source_skill(&root.join("src"), "demo", "same\n");
+    write_source_skill(&root.join("src"), "edited", "new\n");
+    copy_skills_directory(&root.join("src"), &root.join("dest")).unwrap();
+    fs::write(root.join("dest/edited/SKILL.md"), "old\n").unwrap();
+
+    // Backdate both copies so a rewrite would show up as a fresh mtime.
+    let past = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+    for skill in ["demo", "edited"] {
+        fs::File::options()
+            .write(true)
+            .open(root.join("dest").join(skill).join("SKILL.md"))
+            .unwrap()
+            .set_modified(past)
+            .unwrap();
+    }
+
+    copy_skills_directory(&root.join("src"), &root.join("dest")).unwrap();
+    let modified = |skill: &str| {
+        fs::metadata(root.join("dest").join(skill).join("SKILL.md"))
+            .unwrap()
+            .modified()
+            .unwrap()
+    };
+    assert_eq!(modified("demo"), past, "an identical file was rewritten");
+    assert_ne!(modified("edited"), past, "a changed file was not refreshed");
+    assert_eq!(
+        fs::read_to_string(root.join("dest/edited/SKILL.md")).unwrap(),
+        "new\n"
+    );
+}
+
+#[test]
+fn grouped_skills_are_named_by_their_path_below_the_skills_root() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    // `python/cli` and `rust/cli` share a leaf name; published under it alone,
+    // one would overwrite the other in `.claude/skills/cli`.
+    for (dir, name) in [
+        ("cli", "cli"),
+        ("make/setup", "make-setup"),
+        ("python/cli", "python-cli"),
+        ("rust/cli", "cli"),
+    ] {
+        write_source_skill(
+            &root.join(".imrule/skills"),
+            dir,
+            &format!("---\nname: {name}\ndescription: test\n---\nbody\n"),
+        );
+    }
+
+    let discovered = discover_skills(root).unwrap();
+    let names: Vec<_> = discovered
+        .skills
+        .iter()
+        .map(|skill| skill.name.as_str())
+        .collect();
+    assert_eq!(names, vec!["cli", "make-setup", "python-cli", "rust-cli"]);
+    // Several agents refuse a skill whose `name` differs from its directory.
+    assert_eq!(
+        discovered.warnings,
+        vec![
+            "Skill 'rust/cli' declares name 'cli' but is published as 'rust-cli'; agents that require the name to match the directory will skip it."
+        ]
+    );
+}
+
+#[test]
+fn two_skills_publishing_under_one_name_are_rejected() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    for dir in ["python/cli", "python-cli"] {
+        write_source_skill(&root.join(".imrule/skills"), dir, "x");
+    }
+
+    let error = discover_skills(root).unwrap_err().to_string();
+    assert!(
+        error.contains("'python/cli' and 'python-cli' would both be published as 'python-cli'"),
+        "unexpected error: {error}"
     );
 }
 
@@ -176,7 +290,7 @@ fn discovers_subagents_and_computes_gitignore_targets() {
         .copied()
         .collect();
     assert_eq!(
-        get_subagents_gitignore_paths(root, &selected).unwrap(),
+        subagents_gitignore_paths(root, &selected),
         vec![
             root.join(".claude/agents"),
             root.join(".cursor/agents"),
@@ -223,9 +337,15 @@ fn apply_path_collection_and_file_system_operations_match_contract() {
     assert!(!root.join("RULES.md.bak").exists());
 }
 
+/// Parses with a fixed working directory and no local paths on disk, so each
+/// test decides purely by the source string's shape.
+fn parse_source(source: &str) -> Result<RemoteSkillSource, imrule::domain::error::ImruleError> {
+    parse_skill_source(source, std::path::Path::new("/"), |_| false)
+}
+
 #[test]
 fn parses_github_shorthand_source() {
-    let source = parse_skill_source("vercel-labs/agent-skills").unwrap();
+    let source = parse_source("vercel-labs/agent-skills").unwrap();
     assert_eq!(
         source,
         RemoteSkillSource::Github {
@@ -238,7 +358,7 @@ fn parses_github_shorthand_source() {
 
 #[test]
 fn parses_github_url_source() {
-    let source = parse_skill_source("https://github.com/vercel-labs/agent-skills").unwrap();
+    let source = parse_source("https://github.com/vercel-labs/agent-skills").unwrap();
     assert_eq!(
         source,
         RemoteSkillSource::Github {
@@ -252,7 +372,7 @@ fn parses_github_url_source() {
 #[test]
 fn parses_github_url_with_subpath_source() {
     let source =
-        parse_skill_source("https://github.com/vercel-labs/agent-skills/tree/main/skills/design")
+        parse_source("https://github.com/vercel-labs/agent-skills/tree/main/skills/design")
             .unwrap();
     assert_eq!(
         source,
@@ -266,7 +386,7 @@ fn parses_github_url_with_subpath_source() {
 
 #[test]
 fn parses_gitlab_url_source() {
-    let source = parse_skill_source("https://gitlab.com/org/repo").unwrap();
+    let source = parse_source("https://gitlab.com/org/repo").unwrap();
     assert_eq!(
         source,
         RemoteSkillSource::Gitlab {
@@ -277,7 +397,7 @@ fn parses_gitlab_url_source() {
 
 #[test]
 fn parses_git_ssh_source() {
-    let source = parse_skill_source("git@github.com:vercel-labs/agent-skills.git").unwrap();
+    let source = parse_source("git@github.com:vercel-labs/agent-skills.git").unwrap();
     assert_eq!(
         source,
         RemoteSkillSource::GitSsh {
@@ -291,7 +411,7 @@ fn parses_local_path_source() {
     let tmp = tempdir().unwrap();
     let local_path = tmp.path().join("my-skills");
     fs::create_dir_all(&local_path).unwrap();
-    let source = parse_skill_source(local_path.to_str().unwrap()).unwrap();
+    let source = parse_source(local_path.to_str().unwrap()).unwrap();
     match source {
         RemoteSkillSource::Local { path } => {
             assert_eq!(path, local_path);
@@ -302,7 +422,7 @@ fn parses_local_path_source() {
 
 #[test]
 fn parses_relative_path_source() {
-    let source = parse_skill_source("./my-skills").unwrap();
+    let source = parse_source("./my-skills").unwrap();
     match source {
         RemoteSkillSource::Local { path } => {
             assert!(path.is_absolute());
@@ -314,7 +434,26 @@ fn parses_relative_path_source() {
 
 #[test]
 fn rejects_invalid_source() {
-    assert!(parse_skill_source("invalid-no-slash").is_err());
+    assert!(parse_source("invalid-no-slash").is_err());
+}
+
+#[test]
+fn a_bare_relative_source_is_local_only_when_it_exists() {
+    let existing = parse_skill_source("looks/repo-like", std::path::Path::new("/"), |path| {
+        path == std::path::Path::new("looks/repo-like")
+    })
+    .unwrap();
+    match existing {
+        RemoteSkillSource::Local { path } => {
+            assert_eq!(path, std::path::Path::new("/looks/repo-like"));
+        }
+        _ => panic!("expected Local variant"),
+    }
+    // The same shape parses as a GitHub shorthand when nothing exists there.
+    assert!(matches!(
+        parse_skill_source("looks/repo-like", std::path::Path::new("/"), |_| false).unwrap(),
+        RemoteSkillSource::Github { .. }
+    ));
 }
 
 #[test]
@@ -565,7 +704,7 @@ fn discover_subagents_prefers_imrule_over_ruler() {
 
 #[test]
 fn gjc_skill_config_enables_discovery_from_scratch() {
-    let yaml = imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(None).unwrap();
+    let yaml = imrule::domain::gjc_config::enable_gjc_skill_discovery(None).unwrap();
     let parsed: serde_json::Value = serde_norway::from_str(&yaml).unwrap();
     assert_eq!(parsed["skills"]["enabled"], serde_json::Value::Bool(true));
     assert_eq!(
@@ -577,8 +716,7 @@ fn gjc_skill_config_enables_discovery_from_scratch() {
 #[test]
 fn gjc_skill_config_merges_preserving_existing_keys() {
     let existing = "theme:\n  dark: red-claw\n  light: blue-crab\n";
-    let yaml =
-        imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(Some(existing)).unwrap();
+    let yaml = imrule::domain::gjc_config::enable_gjc_skill_discovery(Some(existing)).unwrap();
     let parsed: serde_json::Value = serde_norway::from_str(&yaml).unwrap();
     assert_eq!(parsed["skills"]["enabled"], serde_json::Value::Bool(true));
     assert_eq!(
@@ -597,9 +735,8 @@ fn gjc_skill_config_merges_preserving_existing_keys() {
 
 #[test]
 fn gjc_skill_config_enable_is_idempotent() {
-    let once = imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(None).unwrap();
-    let twice =
-        imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(Some(&once)).unwrap();
+    let once = imrule::domain::gjc_config::enable_gjc_skill_discovery(None).unwrap();
+    let twice = imrule::domain::gjc_config::enable_gjc_skill_discovery(Some(&once)).unwrap();
     let parsed: serde_json::Value = serde_norway::from_str(&twice).unwrap();
     assert_eq!(parsed["skills"]["enabled"], serde_json::Value::Bool(true));
     assert_eq!(
@@ -610,18 +747,17 @@ fn gjc_skill_config_enable_is_idempotent() {
 
 #[test]
 fn gjc_skill_config_strip_returns_none_when_only_managed_keys() {
-    let yaml = imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(None).unwrap();
-    let result = imrule::infrastructure::gjc_config::strip_gjc_skill_discovery(&yaml).unwrap();
+    let yaml = imrule::domain::gjc_config::enable_gjc_skill_discovery(None).unwrap();
+    let result = imrule::domain::gjc_config::strip_gjc_skill_discovery(&yaml).unwrap();
     assert!(result.is_none());
 }
 
 #[test]
 fn gjc_skill_config_strip_preserves_unmanaged_keys() {
-    let yaml = imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(Some(
-        "goal:\n  enabled: false\n",
-    ))
-    .unwrap();
-    let remaining = imrule::infrastructure::gjc_config::strip_gjc_skill_discovery(&yaml)
+    let yaml =
+        imrule::domain::gjc_config::enable_gjc_skill_discovery(Some("goal:\n  enabled: false\n"))
+            .unwrap();
+    let remaining = imrule::domain::gjc_config::strip_gjc_skill_discovery(&yaml)
         .unwrap()
         .unwrap();
     let parsed: serde_json::Value = serde_norway::from_str(&remaining).unwrap();
@@ -761,6 +897,51 @@ fn update_refetches_registered_sources_and_reports_per_skill_status() {
     assert!(installed.exists(), "the installed copy is left in place");
 }
 
+#[cfg(unix)]
+#[test]
+fn update_refuses_a_project_skills_directory_linked_outside_the_project() {
+    use imrule::application::skills_update_use_case::{SkillsUpdateOptions, SkillsUpdateUseCase};
+
+    let (_tmp, root, source_dir) = skills_fixture();
+    let elsewhere = tempdir().unwrap();
+    let fs_port = FsFileSystem::new();
+    let fetcher = imrule::infrastructure::skill_fetcher::GitSkillFetcher::new().unwrap();
+    let loader = TomlConfigLoader::new().with_xdg_home(root.join("xdg"));
+    imrule::application::skills_add_use_case::SkillsAddUseCase::new(
+        &fetcher, &fs_port, &loader, &loader,
+    )
+    .execute(imrule::application::skills_add_use_case::SkillsAddOptions {
+        project_root: root.clone(),
+        source: source_dir.to_string_lossy().to_string(),
+        skill_names: None,
+        list_only: false,
+        global: false,
+    })
+    .unwrap();
+
+    // The project's skills directory now points at someone else's files.
+    let outside = elsewhere.path().to_path_buf();
+    fs::create_dir_all(outside.join("my-skill")).unwrap();
+    fs::write(outside.join("my-skill/taxes.txt"), "keep").unwrap();
+    fs::remove_dir_all(root.join(".imrule/skills")).unwrap();
+    std::os::unix::fs::symlink(&outside, root.join(".imrule/skills")).unwrap();
+    fs::write(source_dir.join("my-skill/SKILL.md"), "v2").unwrap();
+
+    let result =
+        SkillsUpdateUseCase::new(&fetcher, &fs_port, &loader).execute(SkillsUpdateOptions {
+            project_root: root.clone(),
+            skill_names: None,
+            global: false,
+            dry_run: false,
+        });
+
+    assert!(result.is_err());
+    assert_eq!(
+        fs::read_to_string(outside.join("my-skill/taxes.txt")).unwrap(),
+        "keep"
+    );
+}
+
 #[test]
 fn update_reports_an_unreachable_source_without_aborting_the_run() {
     use imrule::application::skills_update_use_case::{SkillsUpdateOptions, SkillsUpdateUseCase};
@@ -800,7 +981,7 @@ fn update_reports_an_unreachable_source_without_aborting_the_run() {
 
 #[test]
 fn groups_recorded_sources_and_rejects_unregistered_names() {
-    use imrule::domain::skills::{group_skill_sources, SkillUpdateGroup};
+    use imrule::domain::skills::{SkillUpdateGroup, group_skill_sources};
     use std::collections::BTreeMap;
 
     let sources: BTreeMap<String, String> = [
@@ -833,9 +1014,11 @@ fn groups_recorded_sources_and_rejects_unregistered_names() {
     let error = group_skill_sources(&sources, Some(&["nope".to_string()])).unwrap_err();
     assert!(error.to_string().contains("nope"));
 
-    assert!(group_skill_sources(&BTreeMap::new(), None)
-        .unwrap()
-        .is_empty());
+    assert!(
+        group_skill_sources(&BTreeMap::new(), None)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]

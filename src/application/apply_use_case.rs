@@ -5,26 +5,29 @@ use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
 
-use crate::application::mcp_use_case::{resolve_mcp_remote_version, McpRemoteVersionResolverPort};
+use crate::application::mcp_use_case::{McpRemoteVersionResolverPort, resolve_mcp_remote_version};
 use crate::application::ports::{
     AgentWriterPort, CachePort, ConfigPort, FileSystemPort, GitTrackingPort, GitignorePort,
     ManifestPort, McpPort,
 };
-use crate::domain::agent::{all_agents, find_agent, AgentDefinition, AgentOutputPaths};
-use crate::domain::config::{AgentConfig, LoadedConfig, McpRemoteTransport, McpStrategy};
+use crate::domain::agent::{AgentDefinition, AgentOutputPaths, all_agents, find_agent};
+use crate::domain::config::{
+    AgentConfig, LoadedConfig, McpRemoteTransport, McpStrategy, SkillInfo,
+};
 use crate::domain::constants::{
-    normalize_path_separators, GENERATED_BY_IMRULE_MARKER, IMRULE_GENERATED_STATE_PATHS,
+    GENERATED_BY_IMRULE_MARKER, IMRULE_GENERATED_STATE_PATHS, normalize_path_separators,
 };
 use crate::domain::error::ImruleError;
-use crate::domain::manifest::ApplyManifest;
+use crate::domain::manifest::{ApplyManifest, is_project_relative};
 use crate::domain::mcp::{
-    build_imrule_mcp_config, expand_mcp_environment_variables, filter_mcp_config_for_agent,
+    McpRemoteTransportPolicy, McpRemoteVersionCache, build_imrule_mcp_config,
+    expand_mcp_environment_variables, filter_mcp_config_for_agent,
     filter_mcp_config_for_agent_with_package_spec, is_native_mcp_content_empty, merge_mcp,
-    validate_mcp_config_for_remote_transport, McpRemoteTransportPolicy, McpRemoteVersionCache,
+    validate_mcp_config_for_remote_transport,
 };
 use crate::domain::rules::concatenate_rules;
-use crate::domain::skills::get_skills_gitignore_paths;
-use crate::infrastructure::skills::{copy_skills_directory, discover_skills};
+use crate::domain::skills::{SkillsDiscovery, all_skills_roots, get_skills_gitignore_paths};
+use crate::domain::subagent::all_subagent_dirs;
 
 /// Runtime options for `imrule apply`.
 #[derive(Debug, Clone)]
@@ -133,6 +136,20 @@ impl<'a> ApplyUseCase<'a> {
                 ))
             })?;
 
+        // Discover skills before writing anything: two skills that would publish
+        // under one name fail the run, and failing after the rule files are
+        // written would leave them on disk without a `.gitignore` entry.
+        let skills_enabled = config
+            .skills
+            .as_ref()
+            .and_then(|s| s.enabled)
+            .unwrap_or(true);
+        let skills_discovery = if skills_enabled {
+            Some(self.fs_port.discover_skills(&options.project_root)?)
+        } else {
+            None
+        };
+
         let include_agents = config
             .subagents
             .as_ref()
@@ -173,16 +190,16 @@ impl<'a> ApplyUseCase<'a> {
             written_paths.extend(mcp_outcome.targets.iter().map(|(path, _)| path.clone()));
         }
 
-        let skills_enabled = config
-            .skills
-            .as_ref()
-            .and_then(|s| s.enabled)
-            .unwrap_or(true);
-        if skills_enabled {
-            let skills_paths =
-                self.apply_skills(&options.project_root, &selected_agents, options.dry_run)?;
-            written_paths.extend(skills_paths);
-        }
+        let (skills_paths, copied_skills) = match &skills_discovery {
+            Some(discovery) => self.apply_skills(
+                &options.project_root,
+                discovery,
+                &selected_agents,
+                options.dry_run,
+            )?,
+            None => Default::default(),
+        };
+        written_paths.extend(skills_paths);
 
         let subagents_enabled = config
             .subagents
@@ -207,12 +224,21 @@ impl<'a> ApplyUseCase<'a> {
             &written_paths,
             &mcp_outcome.servers,
             &mcp_outcome.targets,
-        );
+        )
+        .with_skills(&options.project_root, &copied_skills);
         if !options.dry_run {
             if let Some(manifest_port) = self.manifest_port {
                 if let Some(previous) = manifest_port.read_manifest(&options.project_root)? {
                     if full_run {
-                        self.prune_stale_outputs(&options.project_root, &previous, &manifest)?;
+                        let kept_roots =
+                            self.prune_stale_outputs(&options.project_root, &previous, &manifest)?;
+                        // A root kept for files the user placed by hand stays
+                        // recorded, so a later run prunes it once it is empty,
+                        // but it is not ignored or untracked: those files are
+                        // the user's.
+                        manifest.paths.extend(kept_roots);
+                        manifest.paths.sort();
+                        manifest.paths.dedup();
                     } else {
                         manifest = manifest.merged_with(&previous);
                     }
@@ -243,10 +269,23 @@ impl<'a> ApplyUseCase<'a> {
                 ".gitignore",
             )?;
             // `.gitignore` has no effect on files git already tracks, so drop
-            // generated files from the index while keeping them on disk.
+            // generated files from the index while keeping them on disk. The
+            // agent directories themselves are left out: they also hold skills
+            // and agents the user placed there and may have committed.
+            let agent_dirs: Vec<PathBuf> = all_skills_roots()
+                .into_iter()
+                .chain(all_subagent_dirs())
+                .map(|dir| options.project_root.join(dir))
+                .collect();
+            let untrack_paths: Vec<PathBuf> = written_paths
+                .iter()
+                .filter(|path| !agent_dirs.contains(path))
+                .chain(&copied_skills)
+                .cloned()
+                .collect();
             untracked = self
                 .git_tracking_port
-                .untrack_generated_files(&options.project_root, &written_paths)?;
+                .untrack_generated_files(&options.project_root, &untrack_paths)?;
             if !untracked.is_empty() {
                 tracing::info!(count = untracked.len(), "untracked generated files");
             }
@@ -335,19 +374,31 @@ impl<'a> ApplyUseCase<'a> {
         let written: Result<Vec<_>, ImruleError> = unique
             .par_iter()
             .map(|(agent, filtered, path)| {
+                // A config linked outside the project is never written, so that
+                // nothing lands where a later run could not safely strip it.
+                if !self
+                    .fs_port
+                    .target_resolves_within(path, &options.project_root)
+                {
+                    tracing::warn!(
+                        path = %path.display(),
+                        "native MCP config resolves outside the project; not written"
+                    );
+                    return Ok(None);
+                }
                 let target = (path.clone(), agent.mcp_server_key.to_string());
                 if options.dry_run {
-                    return Ok(target);
+                    return Ok(Some(target));
                 }
                 let existing = self.mcp_port.read_native_mcp(path)?;
                 let merged = merge_mcp(&existing, filtered, strategy, agent.mcp_server_key);
                 self.mcp_port.write_native_mcp(path, &merged)?;
-                Ok(target)
+                Ok(Some(target))
             })
             .collect();
 
         Ok(McpApplyOutcome {
-            targets: written?,
+            targets: written?.into_iter().flatten().collect(),
             servers: imrule_mcp
                 .get("mcpServers")
                 .and_then(serde_json::Value::as_object)
@@ -367,17 +418,27 @@ impl<'a> ApplyUseCase<'a> {
     /// 3. A generated rule file, skills root, or subagent directory no longer
     ///    produced — delete it, but only when it still carries ImRule's marker,
     ///    so a path the user has since taken over is left alone.
+    ///
+    /// Returns the stale skills roots kept because they still hold skills the
+    /// user placed by hand; the caller keeps them recorded.
     fn prune_stale_outputs(
         &self,
         project_root: &Path,
         previous: &ApplyManifest,
         current: &ApplyManifest,
-    ) -> Result<(), ImruleError> {
+    ) -> Result<Vec<String>, ImruleError> {
         let dropped_servers = previous.stale_mcp_servers(current);
 
+        // Every change below is checked on disk as well: a manifest is a plain
+        // file a repository can commit, and a committed symlink (`docs ->
+        // ../elsewhere`) turns an innocent-looking entry into a path outside
+        // the project. MCP configs are rewritten rather than unlinked, so a
+        // link at the config itself is followed too.
         for target in previous.stale_mcp_targets(current) {
             let path = project_root.join(&target.path);
-            if !self.fs_port.file_exists(&path) {
+            if !self.fs_port.file_exists(&path)
+                || !self.fs_port.target_resolves_within(&path, project_root)
+            {
                 continue;
             }
             self.remove_mcp_servers(&path, &target.server_key, &previous.mcp_servers)?;
@@ -387,7 +448,9 @@ impl<'a> ApplyUseCase<'a> {
         if !dropped_servers.is_empty() {
             for target in &current.mcp_targets {
                 let path = project_root.join(&target.path);
-                if !self.fs_port.file_exists(&path) {
+                if !self.fs_port.file_exists(&path)
+                    || !self.fs_port.target_resolves_within(&path, project_root)
+                {
                     continue;
                 }
                 self.remove_mcp_servers(&path, &target.server_key, &dropped_servers)?;
@@ -395,18 +458,76 @@ impl<'a> ApplyUseCase<'a> {
             }
         }
 
-        for stale in previous.stale_paths(current) {
+        // A skill renamed or removed from `.imrule/skills/` leaves its old copy
+        // in every skills root this run still writes. Only copies imrule made
+        // are recorded, so a skill the user put there by hand is never touched.
+        for stale in previous.stale_skills(current) {
             let path = project_root.join(&stale);
-            if !self.fs_port.file_exists(&path) {
+            if !self.fs_port.dir_exists(&path) || !self.fs_port.resolves_within(&path, project_root)
+            {
                 continue;
             }
-            if path.is_dir() {
-                self.fs_port.remove_dir_all(&path)?;
-            } else if self
-                .fs_port
-                .read_text(&path)
-                .is_ok_and(|content| content.starts_with(GENERATED_BY_IMRULE_MARKER))
+            // On a case-insensitive filesystem a skill renamed from `Foo` to
+            // `foo` is still the directory this run just copied into.
+            if current
+                .skills
+                .iter()
+                .any(|kept| self.fs_port.is_same_entry(&path, &project_root.join(kept)))
             {
+                continue;
+            }
+            self.fs_port.remove_dir_all(&path)?;
+            tracing::info!(path = %path.display(), "removed stale skill copy");
+        }
+
+        let subagent_dirs = all_subagent_dirs();
+        let agent_dirs: Vec<String> = all_skills_roots()
+            .into_iter()
+            .chain(subagent_dirs.iter().cloned())
+            .collect();
+        let in_subagent_dir = |entry: &str| {
+            entry
+                .rsplit_once('/')
+                .is_some_and(|(parent, _)| subagent_dirs.iter().any(|dir| dir == parent))
+        };
+        let mut kept_roots = Vec::new();
+        // Deepest entries first, so a directory's recorded files are gone before
+        // the directory itself is considered.
+        for stale in previous.stale_paths(current).into_iter().rev() {
+            let path = project_root.join(&stale);
+            // An output recorded outside the project stays recorded but is never
+            // deleted: nothing about it proves it is this project's.
+            if !self.fs_port.file_exists(&path)
+                || !is_project_relative(&stale)
+                || !self.fs_port.resolves_within(&path, project_root)
+            {
+                continue;
+            }
+            if self.fs_port.dir_exists(&path) {
+                // An agent skills or subagents directory also holds files the
+                // user put there by hand. imrule's own entries were pruned one
+                // by one first, so the directory goes only once nothing else is
+                // left in it; one that survives stays recorded.
+                if agent_dirs.contains(&stale) {
+                    if !self.fs_port.remove_dir_if_empty(&path)? {
+                        kept_roots.push(stale);
+                        continue;
+                    }
+                } else {
+                    // apply only ever records agent skills and subagent
+                    // directories. A directory at any other recorded path was
+                    // put there since — a `.clinerules/` folder replacing the
+                    // generated file, say — and is the user's.
+                    continue;
+                }
+            } else if in_subagent_dir(&stale)
+                || self
+                    .fs_port
+                    .read_text(&path)
+                    .is_ok_and(|content| content.starts_with(GENERATED_BY_IMRULE_MARKER))
+            {
+                // Subagent files carry no marker, but only files apply wrote
+                // are ever recorded.
                 self.fs_port.remove_file(&path)?;
             } else {
                 continue;
@@ -415,7 +536,7 @@ impl<'a> ApplyUseCase<'a> {
             self.prune_empty_parents(&path, project_root)?;
         }
 
-        Ok(())
+        Ok(kept_roots)
     }
 
     /// Strips `servers` from a native MCP config, deleting the file when nothing
@@ -450,6 +571,41 @@ impl<'a> ApplyUseCase<'a> {
         if is_native_mcp_content_empty(&content) {
             self.fs_port.remove_file(native_path)?;
             tracing::info!(path = %native_path.display(), "removed emptied MCP config");
+        }
+        Ok(())
+    }
+
+    /// Before 0.5 a grouped skill was copied under its leaf directory name
+    /// (`python/cli` became `cli`), and those copies were never recorded, so no
+    /// later run would prune them. A leaf-named copy is removed only when it
+    /// matches the source skill byte for byte, which shows imrule made it;
+    /// anything else under that name is left alone.
+    fn remove_pre_0_5_skill_copies(
+        &self,
+        project_root: &Path,
+        skills: &[SkillInfo],
+        target_dir: &Path,
+    ) -> Result<(), ImruleError> {
+        for skill in skills {
+            let Some(leaf) = skill.path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            // Compared without case: on a case-insensitive filesystem a skill
+            // published as `CLI` is the same directory as a legacy `cli`.
+            if skills
+                .iter()
+                .any(|other| other.name.eq_ignore_ascii_case(leaf))
+            {
+                continue;
+            }
+            let legacy = target_dir.join(leaf);
+            if self.fs_port.dir_exists(&legacy)
+                && self.fs_port.resolves_within(&legacy, project_root)
+                && matches!(self.fs_port.dirs_match(&skill.path, &legacy), Ok(true))
+            {
+                self.fs_port.remove_dir_all(&legacy)?;
+                tracing::info!(path = %legacy.display(), "removed a skill copy left under its pre-0.5 name");
+            }
         }
         Ok(())
     }
@@ -534,8 +690,7 @@ impl<'a> ApplyUseCase<'a> {
         options: &ApplyOptions,
         selected_agents: &[AgentDefinition],
     ) -> Result<Vec<PathBuf>, ImruleError> {
-        let discovery = crate::infrastructure::subagents::discover_subagents(&options.project_root)
-            .map_err(|e| ImruleError::subagent(e.to_string()))?;
+        let discovery = self.fs_port.discover_subagents(&options.project_root)?;
         if discovery.subagents.is_empty() {
             return Ok(Vec::new());
         }
@@ -616,13 +771,12 @@ impl<'a> ApplyUseCase<'a> {
             written.extend(sub_results?.into_iter().flatten());
         }
 
-        let gitignore_paths = crate::infrastructure::subagents::get_subagents_gitignore_paths(
+        // Discovery found subagents above, so the source directory exists and
+        // every selected target is really written.
+        let gitignore_paths = crate::domain::subagent::subagents_gitignore_paths(
             &options.project_root,
             selected_agents,
-        )
-        .map_err(|e| {
-            ImruleError::subagent(format!("failed to get subagent gitignore paths: {e}"))
-        })?;
+        );
         for path in gitignore_paths {
             if !written.contains(&path) {
                 written.push(path);
@@ -632,88 +786,37 @@ impl<'a> ApplyUseCase<'a> {
         Ok(written)
     }
 
+    /// Copies every discovered skill into each selected agent's skills root.
+    /// Returns the roots written (for `.gitignore` and the manifest) and,
+    /// separately, the individual skill directories copied into them.
     fn apply_skills(
         &self,
         project_root: &Path,
+        discovery: &SkillsDiscovery,
         selected_agents: &[AgentDefinition],
         dry_run: bool,
-    ) -> Result<Vec<PathBuf>, ImruleError> {
-        let imrule_skills_dir = project_root.join(crate::domain::constants::IMRULE_SKILLS_PATH);
-        let legacy_skills_dir = project_root.join(crate::domain::constants::LEGACY_SKILLS_PATH);
-        if !imrule_skills_dir.exists() && !legacy_skills_dir.exists() {
-            return Ok(Vec::new());
-        }
-
-        let discovery =
-            discover_skills(project_root).map_err(|e| ImruleError::skills(e.to_string()))?;
+    ) -> Result<(Vec<PathBuf>, Vec<PathBuf>), ImruleError> {
         if discovery.skills.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
-
-        let agent_skill_paths: &[(&str, &str)] = &[
-            ("claude", crate::domain::constants::CLAUDE_SKILLS_PATH),
-            ("copilot", crate::domain::constants::CLAUDE_SKILLS_PATH),
-            ("kilocode", crate::domain::constants::CLAUDE_SKILLS_PATH),
-            ("codex", crate::domain::constants::CODEX_SKILLS_PATH),
-            ("opencode", crate::domain::constants::OPENCODE_SKILLS_PATH),
-            ("pi", crate::domain::constants::PI_SKILLS_PATH),
-            ("goose", crate::domain::constants::GOOSE_SKILLS_PATH),
-            ("amp", crate::domain::constants::GOOSE_SKILLS_PATH),
-            ("mistral", crate::domain::constants::VIBE_SKILLS_PATH),
-            ("roo", crate::domain::constants::ROO_SKILLS_PATH),
-            ("gemini-cli", crate::domain::constants::GEMINI_SKILLS_PATH),
-            ("kimi-cli", crate::domain::constants::KIMI_SKILLS_PATH),
-            ("kimi-code", crate::domain::constants::KIMI_SKILLS_PATH),
-            ("kimi", crate::domain::constants::KIMI_SKILLS_PATH),
-            ("junie", crate::domain::constants::JUNIE_SKILLS_PATH),
-            ("cursor", crate::domain::constants::CURSOR_SKILLS_PATH),
-            ("windsurf", crate::domain::constants::WINDSURF_SKILLS_PATH),
-            ("factory", crate::domain::constants::FACTORY_SKILLS_PATH),
-            (
-                "antigravity",
-                crate::domain::constants::ANTIGRAVITY_SKILLS_PATH,
-            ),
-            ("gjc", crate::domain::constants::GJC_SKILLS_PATH),
-        ];
 
         let mut written = Vec::new();
-        let mut seen_targets = std::collections::BTreeSet::new();
+        let mut copied = Vec::new();
 
-        for agent in selected_agents {
-            if !agent.capabilities.native_skills {
-                continue;
+        for target_dir in get_skills_gitignore_paths(project_root, selected_agents) {
+            if !dry_run {
+                let copy_results: Result<Vec<_>, ImruleError> = discovery
+                    .skills
+                    .par_iter()
+                    .map(|skill| {
+                        let dest = target_dir.join(&skill.name);
+                        self.fs_port.copy_dir(&skill.path, &dest)?;
+                        Ok(dest)
+                    })
+                    .collect();
+                copied.extend(copy_results?);
+                self.remove_pre_0_5_skill_copies(project_root, &discovery.skills, &target_dir)?;
             }
-            let Some(&target_rel) = agent_skill_paths
-                .iter()
-                .find(|(id, _)| id == &agent.identifier)
-                .map(|(_, path)| path)
-            else {
-                continue;
-            };
-
-            let target_dir = project_root.join(target_rel);
-            let target_key = target_dir.to_string_lossy().to_string();
-            if seen_targets.contains(&target_key) {
-                continue;
-            }
-            seen_targets.insert(target_key.clone());
-
-            if dry_run {
-                written.push(target_dir);
-                continue;
-            }
-
-            let copy_results: Result<Vec<_>, ImruleError> = discovery
-                .skills
-                .par_iter()
-                .map(|skill| {
-                    let dest = target_dir.join(&skill.name);
-                    copy_skills_directory(&skill.path, &dest)
-                        .map_err(|e| ImruleError::skills(e.to_string()))?;
-                    Ok(dest)
-                })
-                .collect();
-            copy_results?;
             written.push(target_dir);
         }
 
@@ -730,9 +833,8 @@ impl<'a> ApplyUseCase<'a> {
                 written.push(config_path);
             } else {
                 let existing = self.fs_port.read_text(&config_path).ok();
-                let merged = crate::infrastructure::gjc_config::enable_gjc_skill_discovery(
-                    existing.as_deref(),
-                )?;
+                let merged =
+                    crate::domain::gjc_config::enable_gjc_skill_discovery(existing.as_deref())?;
                 self.fs_port
                     .write_text(&config_path, &merged)
                     .map_err(|e| {
@@ -742,14 +844,7 @@ impl<'a> ApplyUseCase<'a> {
             }
         }
 
-        let gitignore_skill_paths = get_skills_gitignore_paths(project_root, selected_agents);
-        for path in gitignore_skill_paths {
-            if !written.contains(&path) {
-                written.push(path);
-            }
-        }
-
-        Ok(written)
+        Ok((written, copied))
     }
 }
 

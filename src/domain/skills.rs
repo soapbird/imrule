@@ -1,6 +1,6 @@
 //! Skills domain types and pure helpers.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::domain::agent::AgentDefinition;
@@ -36,23 +36,30 @@ pub enum RemoteSkillSource {
 /// - `https://gitlab.com/org/repo`
 /// - `git@github.com:org/repo.git`
 /// - `./local/path` or `/abs/path`
-pub fn parse_skill_source(source: &str) -> Result<RemoteSkillSource, ImruleError> {
+///
+/// `current_dir` and `path_exists` are injected so this stays pure: a bare
+/// relative path is ambiguous with the `org/repo` shorthand, so the caller's
+/// filesystem decides, and relative paths resolve against the caller's
+/// working directory.
+pub fn parse_skill_source(
+    source: &str,
+    current_dir: &Path,
+    path_exists: impl Fn(&Path) -> bool,
+) -> Result<RemoteSkillSource, ImruleError> {
     let trimmed = source.trim();
 
-    // Local path: starts with . or / or has a path separator on non-URL
+    // Local path: starts with . or / or exists on disk as a non-URL
     if trimmed.starts_with("./")
         || trimmed.starts_with('/')
         || trimmed.starts_with("../")
-        || (Path::new(trimmed).exists() && !trimmed.contains("://"))
+        || (path_exists(Path::new(trimmed)) && !trimmed.contains("://"))
     {
         let path = PathBuf::from(trimmed);
         return Ok(RemoteSkillSource::Local {
             path: if path.is_absolute() {
                 path
             } else {
-                std::env::current_dir()
-                    .unwrap_or_else(|_| PathBuf::from("."))
-                    .join(path)
+                current_dir.join(path)
             },
         });
     }
@@ -143,34 +150,68 @@ pub fn format_validation_warnings(warnings: &[String]) -> String {
         .join("\n")
 }
 
+/// The name a skill under a project skills root is published as: its path below
+/// that root with the separators turned into hyphens, so `python/cli` becomes
+/// `python-cli`. Agents only look one level deep, and publishing a grouped
+/// skill under its leaf name alone let `python/cli` and `rust/cli` both land on
+/// `cli`, one silently overwriting the other.
+pub fn flatten_skill_name(relative: &Path) -> String {
+    relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+/// Rejects two skills that publish under the same name — `python/cli` next to a
+/// top-level `python-cli` — since copying both would leave only one of them.
+pub fn ensure_unique_skill_names(skills: &[SkillInfo], root: &Path) -> Result<(), ImruleError> {
+    let mut seen: BTreeMap<&str, &Path> = BTreeMap::new();
+    for skill in skills {
+        if let Some(first) = seen.insert(skill.name.as_str(), skill.path.as_path()) {
+            return Err(ImruleError::skills(format!(
+                "skills '{}' and '{}' would both be published as '{}'; rename one of them",
+                relative_key(root, first),
+                relative_key(root, &skill.path),
+                skill.name
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Gets native skill target paths generated for selected agents.
 pub fn get_skills_gitignore_paths(project_root: &Path, agents: &[AgentDefinition]) -> Vec<PathBuf> {
-    let selected: BTreeSet<_> = agents
+    crate::domain::agent::selected_target_dirs(
+        project_root,
+        agents,
+        |capabilities| capabilities.native_skills,
+        &[
+            (CLAUDE_SKILLS_PATH, &["claude", "copilot", "kilocode"]),
+            (CODEX_SKILLS_PATH, &["codex"]),
+            (OPENCODE_SKILLS_PATH, &["opencode"]),
+            (PI_SKILLS_PATH, &["pi"]),
+            (GOOSE_SKILLS_PATH, &["goose", "amp"]),
+            (VIBE_SKILLS_PATH, &["mistral"]),
+            (ROO_SKILLS_PATH, &["roo"]),
+            (GEMINI_SKILLS_PATH, &["gemini-cli"]),
+            (KIMI_SKILLS_PATH, &["kimi-cli", "kimi-code", "kimi"]),
+            (JUNIE_SKILLS_PATH, &["junie"]),
+            (CURSOR_SKILLS_PATH, &["cursor"]),
+            (WINDSURF_SKILLS_PATH, &["windsurf"]),
+            (FACTORY_SKILLS_PATH, &["factory"]),
+            (ANTIGRAVITY_SKILLS_PATH, &["antigravity"]),
+            (GJC_SKILLS_PATH, &["gjc"]),
+        ],
+    )
+}
+
+/// Every agent skills root, project-relative with forward slashes, whichever
+/// agents are selected.
+pub fn all_skills_roots() -> Vec<String> {
+    get_skills_gitignore_paths(Path::new(""), &crate::domain::agent::all_agents())
         .iter()
-        .filter(|agent| agent.capabilities.native_skills)
-        .map(|agent| agent.identifier)
-        .collect();
-    let target_specs: &[(&str, &[&str])] = &[
-        (CLAUDE_SKILLS_PATH, &["claude", "copilot", "kilocode"]),
-        (CODEX_SKILLS_PATH, &["codex"]),
-        (OPENCODE_SKILLS_PATH, &["opencode"]),
-        (PI_SKILLS_PATH, &["pi"]),
-        (GOOSE_SKILLS_PATH, &["goose", "amp"]),
-        (VIBE_SKILLS_PATH, &["mistral"]),
-        (ROO_SKILLS_PATH, &["roo"]),
-        (GEMINI_SKILLS_PATH, &["gemini-cli"]),
-        (KIMI_SKILLS_PATH, &["kimi-cli", "kimi-code", "kimi"]),
-        (JUNIE_SKILLS_PATH, &["junie"]),
-        (CURSOR_SKILLS_PATH, &["cursor"]),
-        (WINDSURF_SKILLS_PATH, &["windsurf"]),
-        (FACTORY_SKILLS_PATH, &["factory"]),
-        (ANTIGRAVITY_SKILLS_PATH, &["antigravity"]),
-        (GJC_SKILLS_PATH, &["gjc"]),
-    ];
-    target_specs
-        .iter()
-        .filter(|(_, ids)| ids.iter().any(|id| selected.contains(id)))
-        .map(|(path, _)| project_root.join(path))
+        .map(|root| normalize_path_separators(&root.to_string_lossy()))
         .collect()
 }
 
@@ -205,6 +246,21 @@ pub enum SkillUpdateStatus {
     MissingInSource,
     /// The source could not be fetched or read.
     Failed,
+}
+
+impl SkillUpdateStatus {
+    /// Human-facing label for the update report, `would …` under `dry_run`.
+    pub fn label(self, dry_run: bool) -> &'static str {
+        match (self, dry_run) {
+            (Self::Updated, false) => "updated",
+            (Self::Updated, true) => "would update",
+            (Self::Reinstalled, false) => "reinstalled",
+            (Self::Reinstalled, true) => "would reinstall",
+            (Self::Unchanged, _) => "unchanged",
+            (Self::MissingInSource, _) => "missing in source",
+            (Self::Failed, _) => "failed",
+        }
+    }
 }
 
 /// The outcome of updating one skill.

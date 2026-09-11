@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::application::ports::McpPort;
 use crate::domain::constants::LEGACY_DIR_NAME;
@@ -131,7 +131,8 @@ fn write_json_bytes(file_path: &Path, value: &Value) -> Result<(), ImruleError> 
     if let Some(parent) = file_path.parent() {
         fs::create_dir_all(parent).map_err(|e| ImruleError::mcp(e.to_string()))?;
     }
-    let text = serde_json::to_string_pretty(value).expect("serializable JSON value") + "\n";
+    let text =
+        serde_json::to_string_pretty(value).map_err(|e| ImruleError::mcp(e.to_string()))? + "\n";
     fs::write(file_path, text).map_err(|e| ImruleError::mcp(e.to_string()))
 }
 

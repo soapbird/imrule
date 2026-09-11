@@ -1,0 +1,24 @@
+# Docker 타깃 — 기존 Makefile에 붙여 넣는다 (make-setup의 헤더·help 규칙 전제).
+# 자리표시자: {{PROJECT}} {{REGISTRY}}
+
+PROJECT   := {{PROJECT}}
+REGISTRY  ?= {{REGISTRY}}
+IMAGE     := $(REGISTRY)/$(PROJECT)
+VERSION   := $(shell cat VERSION)
+GIT_SHA   := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+PLATFORMS ?= linux/amd64,linux/arm64
+
+.PHONY: docker-build docker-push deploy
+
+docker-build: ## 로컬 플랫폼용 이미지 빌드 (태그: VERSION, latest, git 해시)
+	docker build -t $(IMAGE):$(VERSION) -t $(IMAGE):latest -t $(IMAGE):$(GIT_SHA) .
+
+docker-push: ## docker-build로 만든 이미지 푸시
+	docker push $(IMAGE):$(VERSION)
+	docker push $(IMAGE):latest
+	docker push $(IMAGE):$(GIT_SHA)
+
+deploy: ## 멀티 아키텍처 이미지를 빌드해 레지스트리에 푸시
+	docker buildx build --platform $(PLATFORMS) \
+		-t $(IMAGE):$(VERSION) -t $(IMAGE):latest -t $(IMAGE):$(GIT_SHA) \
+		--push .

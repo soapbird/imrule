@@ -1,0 +1,31 @@
+# .github/workflows/ci.yml — Python (uv)
+# setup 후 모든 uses:를 커밋 SHA로 고정한다: `@<sha> # <tag>` (references/structure.md "SHA 고정").
+# Python 버전은 setup-uv가 .python-version을 따른다.
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: make check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked --all-groups
+      - run: make check

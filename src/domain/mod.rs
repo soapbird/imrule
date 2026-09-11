@@ -1,9 +1,11 @@
 //! Domain layer — pure business logic, zero I/O.
 
 pub mod agent;
+pub mod builtin_skills;
 pub mod config;
 pub mod constants;
 pub mod error;
+pub mod gjc_config;
 pub mod manifest;
 pub mod mcp;
 pub mod rules;

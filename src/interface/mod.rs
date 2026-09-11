@@ -2,3 +2,4 @@
 
 pub mod cli;
 pub mod cli_adapter;
+pub mod skill_picker;

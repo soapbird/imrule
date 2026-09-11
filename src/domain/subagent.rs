@@ -32,6 +32,39 @@ pub struct SubagentsDiscovery {
     pub warnings: Vec<String>,
 }
 
+/// Native subagent directories written for the selected agents.
+pub fn subagents_gitignore_paths(
+    project_root: &std::path::Path,
+    agents: &[crate::domain::agent::AgentDefinition],
+) -> Vec<std::path::PathBuf> {
+    use crate::domain::constants::{
+        CLAUDE_SUBAGENTS_PATH, CODEX_SUBAGENTS_PATH, COPILOT_SUBAGENTS_PATH, CURSOR_SUBAGENTS_PATH,
+    };
+    crate::domain::agent::selected_target_dirs(
+        project_root,
+        agents,
+        |capabilities| capabilities.native_subagents,
+        &[
+            (CLAUDE_SUBAGENTS_PATH, &["claude"]),
+            (CURSOR_SUBAGENTS_PATH, &["cursor"]),
+            (CODEX_SUBAGENTS_PATH, &["codex"]),
+            (COPILOT_SUBAGENTS_PATH, &["copilot"]),
+        ],
+    )
+}
+
+/// Every agent subagents directory, project-relative with forward slashes,
+/// whichever agents are selected.
+pub fn all_subagent_dirs() -> Vec<String> {
+    subagents_gitignore_paths(
+        std::path::Path::new(""),
+        &crate::domain::agent::all_agents(),
+    )
+    .iter()
+    .map(|dir| crate::domain::constants::normalize_path_separators(&dir.to_string_lossy()))
+    .collect()
+}
+
 /// Parses leading YAML frontmatter.
 pub fn parse_frontmatter(content: &str) -> Result<Option<ParsedFrontmatter>, String> {
     let Some(rest) = content.strip_prefix("---") else {
@@ -171,6 +204,10 @@ pub fn map_tools_for_copilot(source_tools: &[String]) -> CopilotToolMapping {
     CopilotToolMapping { tools, unknown }
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "files are only built for subagents whose frontmatter validated"
+)]
 pub fn build_claude_file(sub: &crate::domain::config::SubagentInfo) -> String {
     let fm = sub
         .frontmatter
@@ -202,6 +239,10 @@ pub fn build_claude_file(sub: &crate::domain::config::SubagentInfo) -> String {
     )
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "files are only built for subagents whose frontmatter validated"
+)]
 pub fn build_cursor_file(sub: &crate::domain::config::SubagentInfo) -> String {
     let fm = sub
         .frontmatter
@@ -233,6 +274,10 @@ pub fn build_cursor_file(sub: &crate::domain::config::SubagentInfo) -> String {
     )
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "files are only built for subagents whose frontmatter validated"
+)]
 pub fn build_codex_file(sub: &crate::domain::config::SubagentInfo) -> String {
     let fm = sub
         .frontmatter
@@ -255,6 +300,10 @@ pub fn build_codex_file(sub: &crate::domain::config::SubagentInfo) -> String {
     out
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "files are only built for subagents whose frontmatter validated"
+)]
 pub fn build_copilot_file(sub: &crate::domain::config::SubagentInfo) -> CopilotFile {
     let fm = sub
         .frontmatter

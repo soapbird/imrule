@@ -12,6 +12,7 @@ pub mod init_use_case;
 pub mod mcp_use_case;
 pub mod ports;
 pub mod skills_add_use_case;
+pub mod skills_setup_use_case;
 pub mod skills_update_use_case;
 
 pub use apply_use_case::ApplyResult;

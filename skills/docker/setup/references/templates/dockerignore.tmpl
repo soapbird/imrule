@@ -1,0 +1,38 @@
+# .dockerignore — 빌드 컨텍스트 루트
+# 쓰지 않는 스택 구역은 지워도 되지만 .git과 .env는 항상 남긴다.
+
+# 버전 관리·CI·에이전트 설정
+.git
+.github
+.gitignore
+.imrule
+.claude
+.codex
+.cursor
+.factory
+.gjc
+
+# 비밀값
+.env
+.env.*
+
+# Rust
+target/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+.next/
+
+# 로컬 데이터·로그
+*.log
+*.db
+*.sqlite3
+.DS_Store

@@ -1,0 +1,13 @@
+{
+  "recommendations": [
+    "rust-lang.rust-analyzer",
+    "vadimcn.vscode-lldb",
+    "tamasfe.even-better-toml",
+    "github.vscode-github-actions",
+    "ms-vscode.makefile-tools"
+  ],
+  "unwantedRecommendations": [
+    "rust-lang.rust",
+    "bungcip.better-toml"
+  ]
+}

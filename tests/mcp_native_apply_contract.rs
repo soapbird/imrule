@@ -427,7 +427,9 @@ fn apply_writes_openhands_servers_under_mcp_section() {
     assert!(openhands_config.contains(
         "stdio_servers = [{ name = \"github\", args = [\"-y\", \"@modelcontextprotocol/server-github\"], command = \"npx\" }]"
     ));
-    assert!(openhands_config.contains("shttp_servers = [{ url = \"https://mcp.linear.app/mcp\" }]"));
+    assert!(
+        openhands_config.contains("shttp_servers = [{ url = \"https://mcp.linear.app/mcp\" }]")
+    );
     assert!(!openhands_config.contains("[mcp_servers.github]"));
 }
 

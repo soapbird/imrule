@@ -1,0 +1,26 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "imrule",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["build", "--bin=imrule", "--package=imrule"],
+        "filter": { "name": "imrule", "kind": "bin" }
+      },
+      "args": ["skills", "setup", "--list"],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "imrule: skills setup contract tests",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["test", "--no-run", "--test=skills_setup_contract", "--package=imrule"],
+        "filter": { "name": "skills_setup_contract", "kind": "test" }
+      },
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

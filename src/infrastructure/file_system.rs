@@ -5,10 +5,12 @@ use std::path::{Path, PathBuf};
 
 use crate::application::ports::FileSystemPort;
 use crate::domain::constants::{
-    normalize_path_separators, xdg_config_home, GENERATED_BY_IMRULE_MARKER, LEGACY_DIR_NAME,
-    SKILLS_DIR,
+    GENERATED_BY_IMRULE_MARKER, LEGACY_DIR_NAME, SKILLS_DIR, normalize_path_separators,
+    xdg_config_home,
 };
 use crate::domain::error::ImruleError;
+use crate::domain::skills::SkillsDiscovery;
+use crate::domain::subagent::SubagentsDiscovery;
 const SUBAGENTS_DIR_NAME: &str = "agents";
 
 pub struct FsFileSystem;
@@ -25,7 +27,95 @@ impl Default for FsFileSystem {
     }
 }
 
+/// Same device and inode: one file or directory, whatever case or link spelled
+/// either path.
+#[cfg(unix)]
+fn same_entry(left: &Path, right: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (fs::metadata(left), fs::metadata(right)) {
+        (Ok(left), Ok(right)) => left.dev() == right.dev() && left.ino() == right.ino(),
+        _ => false,
+    }
+}
+
+/// Without inodes, compare the resolved paths: resolving returns each name as
+/// the filesystem stores it, whatever case either path was spelled in.
+#[cfg(not(unix))]
+fn same_entry(left: &Path, right: &Path) -> bool {
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
 impl FileSystemPort for FsFileSystem {
+    fn discover_skills(&self, project_root: &Path) -> Result<SkillsDiscovery, ImruleError> {
+        crate::infrastructure::skills::discover_skills(project_root)
+    }
+
+    fn walk_skills_tree(&self, root: &Path) -> Result<SkillsDiscovery, ImruleError> {
+        crate::infrastructure::skills::walk_skills_tree(root)
+            .map_err(|e| ImruleError::skills(format!("failed to walk skills tree: {e}")))
+    }
+
+    fn walk_project_skills(&self, root: &Path) -> Result<SkillsDiscovery, ImruleError> {
+        crate::infrastructure::skills::walk_project_skills_tree(root)
+    }
+
+    fn copy_dir(&self, from: &Path, to: &Path) -> Result<(), ImruleError> {
+        crate::infrastructure::skills::copy_skills_directory(from, to).map_err(|e| {
+            ImruleError::filesystem(format!("{} -> {}: {e}", from.display(), to.display()))
+        })
+    }
+
+    fn dirs_match(&self, left: &Path, right: &Path) -> Result<bool, ImruleError> {
+        crate::infrastructure::skills::skill_trees_match(left, right).map_err(|e| {
+            ImruleError::filesystem(format!("{} <> {}: {e}", left.display(), right.display()))
+        })
+    }
+
+    fn list_files(&self, dir: &Path) -> Result<Vec<PathBuf>, ImruleError> {
+        let mut files = Vec::new();
+        collect_files(dir, Path::new(""), &mut files)
+            .map_err(|e| ImruleError::filesystem(format!("{}: {e}", dir.display())))?;
+        files.sort();
+        Ok(files)
+    }
+
+    fn resolves_within(&self, path: &Path, root: &Path) -> bool {
+        let (Some(parent), Ok(root)) = (path.parent(), fs::canonicalize(root)) else {
+            return false;
+        };
+        fs::symlink_metadata(path).is_ok()
+            && fs::canonicalize(parent).is_ok_and(|parent| parent.starts_with(&root))
+    }
+
+    fn target_resolves_within(&self, path: &Path, root: &Path) -> bool {
+        let Ok(root) = fs::canonicalize(root) else {
+            return false;
+        };
+        // The deepest part of `path` that exists decides where a write lands.
+        let mut probe = path;
+        loop {
+            if fs::symlink_metadata(probe).is_ok() {
+                return fs::canonicalize(probe).is_ok_and(|resolved| resolved.starts_with(&root));
+            }
+            match probe.parent() {
+                Some(parent) if !parent.as_os_str().is_empty() => probe = parent,
+                _ => return false,
+            }
+        }
+    }
+
+    fn is_same_entry(&self, left: &Path, right: &Path) -> bool {
+        same_entry(left, right)
+    }
+
+    fn discover_subagents(&self, project_root: &Path) -> Result<SubagentsDiscovery, ImruleError> {
+        crate::infrastructure::subagents::discover_subagents(project_root)
+            .map_err(|e| ImruleError::subagent(e.to_string()))
+    }
+
     fn read_text(&self, path: &Path) -> Result<String, ImruleError> {
         fs::read_to_string(path)
             .map_err(|e| ImruleError::filesystem(format!("{}: {e}", path.display())))
@@ -85,6 +175,14 @@ impl FileSystemPort for FsFileSystem {
 
     fn file_exists(&self, path: &Path) -> bool {
         path.exists()
+    }
+
+    fn dir_exists(&self, path: &Path) -> bool {
+        path.is_dir()
+    }
+
+    fn current_dir(&self) -> PathBuf {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     }
 
     fn find_imrule_dir(&self, start_path: &Path, check_global: bool) -> Option<PathBuf> {
@@ -260,6 +358,22 @@ fn walk_markdown(
         }
     }
 
+    Ok(())
+}
+
+/// Pushes every non-directory entry below `dir` onto `files`, as `relative`
+/// joined with its path from `dir`. `DirEntry::file_type` does not follow
+/// symbolic links, so a link — even to a directory — is listed, not entered.
+fn collect_files(dir: &Path, relative: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let entry_relative = relative.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            collect_files(&entry.path(), &entry_relative, files)?;
+        } else {
+            files.push(entry_relative);
+        }
+    }
     Ok(())
 }
 

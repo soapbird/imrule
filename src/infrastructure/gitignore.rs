@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::application::ports::GitignorePort;
-use crate::domain::constants::{normalize_path_separators, IMRULE_GENERATED_STATE_PATHS};
+use crate::domain::constants::{IMRULE_GENERATED_STATE_PATHS, normalize_path_separators};
 use crate::domain::error::ImruleError;
 
 const IMRULE_START_MARKER: &str = "# START ImRule Generated Files";

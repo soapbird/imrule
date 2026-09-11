@@ -1,0 +1,19 @@
+version: 2
+updates:
+  # Actions are pinned to commit SHAs; this keeps the pins (and their
+  # `# vX.Y.Z` comments) moving. One grouped PR per week.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cargo-minor-patch:
+        update-types: ["minor", "patch"]

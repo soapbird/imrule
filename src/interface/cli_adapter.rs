@@ -1,6 +1,5 @@
 //! CLI adapter that wires concrete infrastructure to application use cases.
 
-use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, ExitCode, Stdio};
@@ -11,14 +10,21 @@ use crate::application::apply_use_case::{ApplyOptions, ApplyUseCase};
 use crate::application::clear_use_case::{ClearOptions, ClearUseCase};
 use crate::application::init_use_case::{InitOptions, InitUseCase};
 use crate::application::mcp_use_case::{
-    parse_env_pairs, McpAddOptions, McpAuthOptions, McpAuthRunnerPort,
-    McpRemoteVersionResolverPort, McpRemoveOptions, McpUseCase,
+    McpAddOptions, McpAuthOptions, McpAuthRunnerPort, McpRemoteVersionResolverPort,
+    McpRemoveOptions, McpUseCase, parse_env_pairs,
 };
 
-use crate::application::skills_add_use_case::{SkillsAddOptions, SkillsAddUseCase};
+use crate::application::ports::FileSystemPort;
+use crate::application::skills_add_use_case::{
+    SkillsAddOptions, SkillsAddUseCase, list_installed_skills,
+};
+use crate::application::skills_setup_use_case::{
+    SkillsSetupEntry, SkillsSetupOptions, SkillsSetupPlan, SkillsSetupUseCase, skills_project_root,
+};
 use crate::application::skills_update_use_case::{SkillsUpdateOptions, SkillsUpdateUseCase};
-use crate::domain::skills::SkillUpdateStatus;
+use crate::domain::builtin_skills::BuiltinSkillState;
 use crate::infrastructure::agent_writer::DefaultAgentWriter;
+use crate::infrastructure::builtin_skills::{builtin_catalog, collect_project_signals};
 use crate::infrastructure::config_loader::TomlConfigLoader;
 use crate::infrastructure::file_system::FsFileSystem;
 use crate::infrastructure::git_tracking::GitUntracker;
@@ -27,7 +33,10 @@ use crate::infrastructure::manifest::JsonApplyManifest;
 use crate::infrastructure::mcp_storage::JsonMcpStorage;
 use crate::infrastructure::skill_fetcher::GitSkillFetcher;
 use crate::infrastructure::version_cache::JsonVersionCache;
-use crate::interface::cli::{parse_agents, Cli, Command, McpCommand, SkillsCommand};
+use crate::interface::cli::{
+    Cli, Command, McpCommand, SkillsCommand, SkillsSetupArgs, parse_agents,
+};
+use crate::interface::skill_picker::{Picker, PickerItem, run_picker, truncate};
 
 struct ProcessMcpRemoteRunner;
 
@@ -143,32 +152,55 @@ fn canonical_or_self(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// Runs `apply` so freshly installed or updated skills reach every agent's
-/// native skills directory. Both `skills add` and `skills update` end here.
-#[allow(clippy::too_many_arguments)]
-fn sync_skills_to_agents(
-    fs: &FsFileSystem,
-    config: &TomlConfigLoader,
-    gitignore: &GitignoreUpdater,
-    git_untracker: &GitUntracker,
-    mcp: &JsonMcpStorage,
-    manifest: &JsonApplyManifest,
-    project_root: PathBuf,
-) -> Result<(), CliError> {
-    println!("Syncing skills to agent directories (running apply)...");
-    let agent_writer = DefaultAgentWriter::new(fs);
-    ApplyUseCase::new(config, fs, gitignore, git_untracker, mcp, &agent_writer)
-        .with_manifest(manifest)
+/// The project root a command works in: the `--project-root` argument, or the
+/// current directory when omitted.
+fn resolve_project_root(project_root: &Option<PathBuf>) -> PathBuf {
+    project_root
+        .clone()
+        .unwrap_or_else(|| FsFileSystem.current_dir())
+}
+
+/// The infrastructure wiring every skills command needs to run `apply`.
+struct AgentSync<'a> {
+    fs: &'a FsFileSystem,
+    config: &'a TomlConfigLoader,
+    gitignore: &'a GitignoreUpdater,
+    git_untracker: &'a GitUntracker,
+    mcp: &'a JsonMcpStorage,
+    manifest: &'a JsonApplyManifest,
+}
+
+impl AgentSync<'_> {
+    /// Runs `apply` so skills just written to `install_dir` reach every agent's
+    /// native skills directory — unless they live outside the project `apply`
+    /// syncs, which is explained instead. Every skills command that writes
+    /// skills ends here.
+    fn sync_skills(&self, install_dir: &Path, project_root: PathBuf) -> Result<(), CliError> {
+        if let Some(reason) = skills_sync_skip_reason(install_dir, &project_root) {
+            println!("{reason}");
+            return Ok(());
+        }
+        println!("Syncing skills to agent directories (running apply)...");
+        let agent_writer = DefaultAgentWriter::new(self.fs);
+        ApplyUseCase::new(
+            self.config,
+            self.fs,
+            self.gitignore,
+            self.git_untracker,
+            self.mcp,
+            &agent_writer,
+        )
+        .with_manifest(self.manifest)
         .execute(ApplyOptions {
             project_root,
             agents: None,
             config: None,
             dry_run: false,
             backup: false,
-        })
-        .map_err(|err| CliError::new(1, err.to_string()))?;
-    println!("Skills synced to agent directories.");
-    Ok(())
+        })?;
+        println!("Skills synced to agent directories.");
+        Ok(())
+    }
 }
 
 fn run_inner() -> Result<(), CliError> {
@@ -186,9 +218,7 @@ fn run_inner() -> Result<(), CliError> {
     match cli.command {
         Command::Apply(args) => {
             init_tracing(args.verbose);
-            let project_root = args
-                .project_root
-                .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            let project_root = resolve_project_root(&args.project_root);
             let agents = parse_agents(args.agents);
             let agent_writer = DefaultAgentWriter::new(&fs);
             let use_case = ApplyUseCase::new(
@@ -201,15 +231,13 @@ fn run_inner() -> Result<(), CliError> {
             )
             .with_manifest(&manifest)
             .with_mcp_remote_version_cache(&version_cache, &mcp_remote_runner);
-            let result = use_case
-                .execute(ApplyOptions {
-                    project_root,
-                    agents,
-                    config: args.config,
-                    dry_run: args.dry_run,
-                    backup: args.backup,
-                })
-                .map_err(|err| CliError::new(1, err.to_string()))?;
+            let result = use_case.execute(ApplyOptions {
+                project_root,
+                agents,
+                config: args.config,
+                dry_run: args.dry_run,
+                backup: args.backup,
+            })?;
             if args.dry_run {
                 println!("ImRule apply dry run completed successfully.");
             } else {
@@ -232,25 +260,19 @@ fn run_inner() -> Result<(), CliError> {
         Command::Init(args) => {
             init_tracing(false);
             let use_case = InitUseCase::new(&fs);
-            let root = use_case
-                .execute(InitOptions {
-                    project_root: args.project_root,
-                    global: args.global,
-                })
-                .map_err(|err| CliError::new(1, err.to_string()))?;
+            let root = use_case.execute(InitOptions {
+                project_root: args.project_root,
+                global: args.global,
+            })?;
             println!("ImRule initialized at {}", root.display());
             Ok(())
         }
         Command::Mcp(mcp_args) => match mcp_args.command {
             McpCommand::Add(args) => {
                 init_tracing(false);
-                let project_root = args
-                    .project_root
-                    .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-                let env_map = parse_env_pairs(&args.env.unwrap_or_default())
-                    .map_err(|err| CliError::new(1, err.to_string()))?;
-                let header_map = parse_env_pairs(&args.header.unwrap_or_default())
-                    .map_err(|err| CliError::new(1, err.to_string()))?;
+                let project_root = resolve_project_root(&args.project_root);
+                let env_map = parse_env_pairs(&args.env.unwrap_or_default())?;
+                let header_map = parse_env_pairs(&args.header.unwrap_or_default())?;
 
                 let (command, args_list, url) = match args.transport.into() {
                     crate::domain::config::McpTransport::Stdio => {
@@ -283,23 +305,21 @@ fn run_inner() -> Result<(), CliError> {
                 };
 
                 let use_case = McpUseCase::new(&config, &config);
-                use_case
-                    .add(McpAddOptions {
-                        project_root,
-                        config_path: None,
-                        global: args.global,
-                        dry_run: args.dry_run,
-                        name: args.name,
-                        transport: args.transport.into(),
-                        command,
-                        args: args_list,
-                        url,
-                        env: env_map,
-                        headers: header_map,
-                        timeout: args.timeout,
-                        remote_transport: args.remote_transport.map(Into::into),
-                    })
-                    .map_err(|err| CliError::new(1, err.to_string()))?;
+                use_case.add(McpAddOptions {
+                    project_root,
+                    config_path: None,
+                    global: args.global,
+                    dry_run: args.dry_run,
+                    name: args.name,
+                    transport: args.transport.into(),
+                    command,
+                    args: args_list,
+                    url,
+                    env: env_map,
+                    headers: header_map,
+                    timeout: args.timeout,
+                    remote_transport: args.remote_transport.map(Into::into),
+                })?;
 
                 if args.dry_run {
                     println!("ImRule mcp add dry run completed successfully.");
@@ -310,19 +330,15 @@ fn run_inner() -> Result<(), CliError> {
             }
             McpCommand::Remove(args) => {
                 init_tracing(false);
-                let project_root = args
-                    .project_root
-                    .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+                let project_root = resolve_project_root(&args.project_root);
                 let use_case = McpUseCase::new(&config, &config);
-                use_case
-                    .remove(McpRemoveOptions {
-                        project_root,
-                        config_path: None,
-                        global: args.global,
-                        dry_run: args.dry_run,
-                        name: args.name,
-                    })
-                    .map_err(|err| CliError::new(1, err.to_string()))?;
+                use_case.remove(McpRemoveOptions {
+                    project_root,
+                    config_path: None,
+                    global: args.global,
+                    dry_run: args.dry_run,
+                    name: args.name,
+                })?;
 
                 if args.dry_run {
                     println!("ImRule mcp remove dry run completed successfully.");
@@ -333,23 +349,19 @@ fn run_inner() -> Result<(), CliError> {
             }
             McpCommand::Auth(args) => {
                 init_tracing(false);
-                let project_root = args
-                    .project_root
-                    .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+                let project_root = resolve_project_root(&args.project_root);
                 let use_case = McpUseCase::new(&config, &config);
-                let result = use_case
-                    .auth(
-                        McpAuthOptions {
-                            project_root,
-                            config_path: args.config,
-                        },
-                        &mcp,
-                        &fs,
-                        &version_cache,
-                        &mcp_remote_runner,
-                        &mcp_remote_runner,
-                    )
-                    .map_err(|err| CliError::new(1, err.to_string()))?;
+                let result = use_case.auth(
+                    McpAuthOptions {
+                        project_root,
+                        config_path: args.config,
+                    },
+                    &mcp,
+                    &fs,
+                    &version_cache,
+                    &mcp_remote_runner,
+                    &mcp_remote_runner,
+                )?;
 
                 for server_name in &result.authenticated {
                     println!("Authenticated MCP server '{server_name}'.");
@@ -384,20 +396,16 @@ fn run_inner() -> Result<(), CliError> {
         }
         Command::Clear(args) => {
             init_tracing(args.verbose);
-            let project_root = args
-                .project_root
-                .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            let project_root = resolve_project_root(&args.project_root);
             let use_case =
                 ClearUseCase::new(&config, &fs, &gitignore, &mcp).with_manifest(&manifest);
-            let removed = use_case
-                .execute(ClearOptions {
-                    project_root,
-                    agents: parse_agents(args.agents),
-                    config: args.config,
-                    dry_run: args.dry_run,
-                    remove_source: args.remove_source,
-                })
-                .map_err(|err| CliError::new(1, err.to_string()))?;
+            let removed = use_case.execute(ClearOptions {
+                project_root,
+                agents: parse_agents(args.agents),
+                config: args.config,
+                dry_run: args.dry_run,
+                remove_source: args.remove_source,
+            })?;
             if args.dry_run {
                 println!("ImRule clear dry run completed successfully.");
             } else {
@@ -408,162 +416,339 @@ fn run_inner() -> Result<(), CliError> {
             }
             Ok(())
         }
-        Command::Skills(skills_args) => match skills_args.command {
-            SkillsCommand::Add(args) => {
-                init_tracing(args.verbose);
-                let project_root = args
-                    .project_root
-                    .clone()
-                    .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-                let fetcher =
-                    GitSkillFetcher::new().map_err(|e| CliError::new(1, e.to_string()))?;
-                let use_case = SkillsAddUseCase::new(&fetcher, &fs, &config, &config);
-                let result = use_case
-                    .execute(SkillsAddOptions {
-                        project_root,
+        Command::Skills(skills_args) => {
+            let sync = AgentSync {
+                fs: &fs,
+                config: &config,
+                gitignore: &gitignore,
+                git_untracker: &git_untracker,
+                mcp: &mcp,
+                manifest: &manifest,
+            };
+            match skills_args.command {
+                SkillsCommand::Add(args) => {
+                    init_tracing(args.verbose);
+                    let project_root = resolve_project_root(&args.project_root);
+                    let fetcher = GitSkillFetcher::new()?;
+                    let use_case = SkillsAddUseCase::new(&fetcher, &fs, &config, &config);
+                    let result = use_case.execute(SkillsAddOptions {
+                        project_root: project_root.clone(),
                         source: args.source,
                         skill_names: args.skill,
                         list_only: args.list,
                         global: args.global,
-                    })
-                    .map_err(|err| CliError::new(1, err.to_string()))?;
+                    })?;
 
-                if !result.listed.is_empty() {
-                    println!("Available skills:");
-                    for skill in &result.listed {
-                        println!("  - {}", skill.name);
+                    if !result.listed.is_empty() {
+                        println!("Available skills:");
+                        for skill in &result.listed {
+                            println!("  - {}", skill.name);
+                        }
                     }
+                    if !result.installed.is_empty() {
+                        println!(
+                            "Installed {} skill(s) in {}:",
+                            result.installed.len(),
+                            result.install_dir.display()
+                        );
+                        for name in &result.installed {
+                            println!("  - {name}");
+                        }
+                        sync.sync_skills(&result.install_dir, project_root)?;
+                    }
+                    Ok(())
                 }
-                if !result.installed.is_empty() {
-                    println!(
-                        "Installed {} skill(s) in {}:",
-                        result.installed.len(),
-                        result.install_dir.display()
-                    );
-                    for name in &result.installed {
-                        println!("  - {name}");
-                    }
-
-                    let project_root_for_apply = args.project_root.clone().unwrap_or_else(|| {
-                        env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-                    });
-                    match skills_sync_skip_reason(&result.install_dir, &project_root_for_apply) {
-                        Some(reason) => println!("{reason}"),
-                        None => sync_skills_to_agents(
-                            &fs,
-                            &config,
-                            &gitignore,
-                            &git_untracker,
-                            &mcp,
-                            &manifest,
-                            project_root_for_apply,
-                        )?,
-                    }
-                }
-                Ok(())
-            }
-            SkillsCommand::Update(args) => {
-                init_tracing(args.verbose);
-                let project_root = args
-                    .project_root
-                    .clone()
-                    .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-                let fetcher =
-                    GitSkillFetcher::new().map_err(|e| CliError::new(1, e.to_string()))?;
-                let use_case = SkillsUpdateUseCase::new(&fetcher, &fs, &config);
-                let skill_names = if args.skills.is_empty() {
-                    None
-                } else {
-                    Some(args.skills.clone())
-                };
-                let result = use_case
-                    .execute(SkillsUpdateOptions {
+                SkillsCommand::Update(args) => {
+                    init_tracing(args.verbose);
+                    let project_root = resolve_project_root(&args.project_root);
+                    let fetcher = GitSkillFetcher::new()?;
+                    let use_case = SkillsUpdateUseCase::new(&fetcher, &fs, &config);
+                    let skill_names = if args.skills.is_empty() {
+                        None
+                    } else {
+                        Some(args.skills.clone())
+                    };
+                    let result = use_case.execute(SkillsUpdateOptions {
                         project_root: project_root.clone(),
                         skill_names,
                         global: args.global,
                         dry_run: args.dry_run,
-                    })
-                    .map_err(|err| CliError::new(1, err.to_string()))?;
+                    })?;
 
-                if result.outcomes.is_empty() {
-                    println!(
-                        "No registered skill sources. Run `imrule skills add <source>` first."
-                    );
-                    return Ok(());
-                }
-
-                for outcome in &result.outcomes {
-                    let label = match outcome.status {
-                        SkillUpdateStatus::Updated if args.dry_run => "would update",
-                        SkillUpdateStatus::Updated => "updated",
-                        SkillUpdateStatus::Reinstalled if args.dry_run => "would reinstall",
-                        SkillUpdateStatus::Reinstalled => "reinstalled",
-                        SkillUpdateStatus::Unchanged => "unchanged",
-                        SkillUpdateStatus::MissingInSource => "missing in source",
-                        SkillUpdateStatus::Failed => "failed",
-                    };
-                    println!("  - {} [{label}] ({})", outcome.name, outcome.source);
-                    if let Some(detail) = &outcome.detail {
-                        println!("      {detail}");
+                    if result.outcomes.is_empty() {
+                        println!(
+                            "No registered skill sources. Run `imrule skills add <source>` first."
+                        );
+                        return Ok(());
                     }
-                }
 
-                if result.changed() && !args.dry_run {
-                    match skills_sync_skip_reason(&result.install_dir, &project_root) {
-                        Some(reason) => println!("{reason}"),
-                        None => sync_skills_to_agents(
-                            &fs,
-                            &config,
-                            &gitignore,
-                            &git_untracker,
-                            &mcp,
-                            &manifest,
-                            project_root,
-                        )?,
+                    for outcome in &result.outcomes {
+                        println!(
+                            "  - {} [{}] ({})",
+                            outcome.name,
+                            outcome.status.label(args.dry_run),
+                            outcome.source
+                        );
+                        if let Some(detail) = &outcome.detail {
+                            println!("      {detail}");
+                        }
                     }
-                }
 
-                if result.has_failures() {
-                    return Err(CliError::new(1, "some skill sources could not be fetched"));
+                    if result.changed() && !args.dry_run {
+                        sync.sync_skills(&result.install_dir, project_root)?;
+                    }
+
+                    if result.has_failures() {
+                        return Err(CliError::new(1, "some skill sources could not be fetched"));
+                    }
+                    Ok(())
                 }
-                Ok(())
+                SkillsCommand::Setup(args) => {
+                    init_tracing(args.verbose);
+                    run_skills_setup(args, &sync)
+                }
+                SkillsCommand::List(args) => {
+                    init_tracing(false);
+                    let project_root = resolve_project_root(&args.project_root);
+                    let (skills_dir, discovery) =
+                        list_installed_skills(&fs, &project_root, args.global)?;
+                    if args.json {
+                        let skills: Vec<serde_json::Value> = discovery
+                        .skills
+                        .iter()
+                        .map(|skill| serde_json::json!({ "name": skill.name, "path": skill.path }))
+                        .collect();
+                        return print_json(&serde_json::json!({
+                            "dir": skills_dir,
+                            "skills": skills,
+                            "warnings": discovery.warnings,
+                        }));
+                    }
+                    if discovery.skills.is_empty() {
+                        println!("No skills installed in {}.", skills_dir.display());
+                    } else {
+                        println!("Installed skills ({}):", skills_dir.display());
+                        for skill in &discovery.skills {
+                            println!("  - {} ({})", skill.name, skill.path.display());
+                        }
+                    }
+                    if !discovery.warnings.is_empty() {
+                        eprintln!(
+                            "Warnings:\n{}",
+                            crate::domain::skills::format_validation_warnings(&discovery.warnings)
+                        );
+                    }
+                    Ok(())
+                }
             }
-            SkillsCommand::List(args) => {
-                init_tracing(false);
-                let project_root = args
-                    .project_root
-                    .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-                let imrule_skills = project_root.join(".imrule").join("skills");
-                let legacy_skills = project_root.join(".ruler").join("skills");
-                let skills_dir = if args.global {
-                    crate::domain::constants::xdg_config_home()
-                        .join("imrule")
-                        .join("skills")
-                } else if imrule_skills.exists() {
-                    imrule_skills
-                } else if legacy_skills.exists() {
-                    legacy_skills
-                } else {
-                    imrule_skills
-                };
-                let discovery = if skills_dir.exists() {
-                    crate::infrastructure::skills::walk_skills_tree(&skills_dir)
-                        .map_err(|e| CliError::new(1, e.to_string()))?
-                } else {
-                    crate::domain::skills::SkillsDiscovery::default()
-                };
-                if discovery.skills.is_empty() {
-                    println!("No skills installed in {}.", skills_dir.display());
-                } else {
-                    println!("Installed skills ({}):", skills_dir.display());
-                    for skill in &discovery.skills {
-                        println!("  - {} ({})", skill.name, skill.path.display());
-                    }
-                }
-                Ok(())
-            }
-        },
+        }
     }
+}
+
+/// `imrule skills setup`: choose built-in skills (picker, names, `--yes`, or
+/// `--all`), install them, then sync agents when anything was written.
+fn run_skills_setup(args: SkillsSetupArgs, sync: &AgentSync) -> Result<(), CliError> {
+    use std::io::IsTerminal;
+
+    let requested_root = resolve_project_root(&args.project_root);
+    let catalog = builtin_catalog();
+    let use_case = SkillsSetupUseCase::new(sync.fs, &catalog);
+    // Resolved once. From a subdirectory the install lands in the enclosing
+    // project's `.imrule/skills`, so detection reads that project, unless it is
+    // the home directory or above. The sync still runs only for the requested
+    // root, as `imrule apply` would, and explains itself when the skills live
+    // elsewhere: syncing an ancestor could rewrite files such as `~/CLAUDE.md`.
+    let install_dir = use_case.install_dir(&SkillsSetupOptions {
+        project_root: requested_root.clone(),
+        global: args.global,
+    });
+    let owner_root = skills_project_root(&install_dir, &requested_root, args.global);
+    let detection_root = if encloses_home(&owner_root) {
+        requested_root.clone()
+    } else {
+        owner_root
+    };
+    let plan = use_case.plan_in(install_dir, &collect_project_signals(&detection_root));
+
+    if args.list && args.json {
+        return print_json(&builtin_skills_json(&plan));
+    }
+    if args.list {
+        print_builtin_skills(&plan);
+        return Ok(());
+    }
+
+    let (paths, picked_individually) = if args.all {
+        (plan.all_paths(), None)
+    } else if !args.skills.is_empty() {
+        (use_case.resolve(&args.skills)?, None)
+    } else if args.yes {
+        (plan.recommended_paths(), None)
+    } else if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() {
+        let chosen = run_picker(setup_picker(&plan))
+            .map_err(|err| CliError::new(1, format!("interactive picker failed: {err}")))?;
+        let Some(selection) = chosen else {
+            println!("Cancelled.");
+            return Ok(());
+        };
+        (selection.selected, Some(selection.individually_selected))
+    } else {
+        return Err(CliError::new(
+            2,
+            "no terminal to pick skills interactively. Name them \
+             (`imrule skills setup rust/cli make/setup`), or pass --yes for the detected \
+             skills or --all for every one.",
+        ));
+    };
+
+    if paths.is_empty() {
+        println!("No skills selected.");
+        return Ok(());
+    }
+
+    // A locally modified skill is overwritten only with consent: `--force` for
+    // every chosen skill, or in the picker toggling that skill on by itself.
+    // Select-all is not consent.
+    let consented = if args.force {
+        paths.clone()
+    } else {
+        picked_individually.unwrap_or_default()
+    };
+    let result = use_case.install_with_consent(&plan, &paths, &consented, args.dry_run)?;
+    println!(
+        "{} built-in skill(s) in {}:",
+        if args.dry_run {
+            "Would set up"
+        } else {
+            "Set up"
+        },
+        plan.install_dir.display()
+    );
+    for outcome in &result.outcomes {
+        println!(
+            "  - {} ({}) [{}]",
+            outcome.name,
+            outcome.path,
+            outcome.status.label(args.dry_run)
+        );
+    }
+
+    if result.changed() && !args.dry_run {
+        let owner_root = skills_project_root(&plan.install_dir, &requested_root, args.global);
+        if owner_root == requested_root {
+            sync.sync_skills(&plan.install_dir, requested_root)?;
+        } else {
+            println!(
+                "Skipping agent sync: these skills live in {}, which belongs to {}.\n\
+                 Run `imrule apply` there to sync them to agent directories.",
+                plan.install_dir.display(),
+                owner_root.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Whether `dir` is the home directory or one of its ancestors: never a project
+/// to read on the user's behalf. Both sides are resolved first, so `/tmp` and
+/// `/private/tmp` compare equal.
+fn encloses_home(dir: &Path) -> bool {
+    let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) else {
+        return false;
+    };
+    canonical_or_self(Path::new(&home)).starts_with(canonical_or_self(dir))
+}
+
+/// Tags shown next to a built-in skill: its path, detection, install state.
+fn setup_tags(entry: &SkillsSetupEntry) -> Vec<String> {
+    let mut tags = Vec::new();
+    if entry.skill.path != entry.skill.name {
+        tags.push(entry.skill.path.clone());
+    }
+    if entry.recommended {
+        tags.push("detected".to_string());
+    }
+    if let Some(state) = entry.state.tag() {
+        tags.push(state.to_string());
+    }
+    tags
+}
+
+/// Builds the picker, detected skills first. Detected skills start selected
+/// unless modified locally; each item's id is the skill's catalog path.
+fn setup_picker(plan: &SkillsSetupPlan) -> Picker {
+    let mut entries: Vec<&SkillsSetupEntry> = plan.entries.iter().collect();
+    entries.sort_by_key(|entry| !entry.recommended);
+    let items = entries
+        .iter()
+        .map(|entry| PickerItem {
+            id: entry.skill.path.clone(),
+            title: entry.skill.name.clone(),
+            meta: setup_tags(entry),
+            description: entry.skill.description.clone(),
+            selected: entry.recommended && entry.state != BuiltinSkillState::Modified,
+        })
+        .collect();
+    let subtitle = if plan.detected.is_empty() {
+        "Nothing detected in this project — pick what you need".to_string()
+    } else {
+        format!("Detected: {}", plan.detected.join(" · "))
+    };
+    Picker::new("ImRule built-in skills", subtitle, items)
+}
+
+/// Prints one JSON document on stdout, the whole output of a `--json` run.
+fn print_json(document: &serde_json::Value) -> Result<(), CliError> {
+    let text =
+        serde_json::to_string_pretty(document).map_err(|err| CliError::new(1, err.to_string()))?;
+    println!("{text}");
+    Ok(())
+}
+
+fn builtin_skills_json(plan: &SkillsSetupPlan) -> serde_json::Value {
+    let skills: Vec<serde_json::Value> = plan
+        .entries
+        .iter()
+        .map(|entry| {
+            serde_json::json!({
+                "name": entry.skill.name,
+                "path": entry.skill.path,
+                "description": entry.skill.description,
+                "revision": entry.skill.revision,
+                "recommended": entry.recommended,
+                "state": entry.state.label(),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "install_dir": plan.install_dir,
+        "detected": plan.detected,
+        "skills": skills,
+    })
+}
+
+fn print_builtin_skills(plan: &SkillsSetupPlan) {
+    if plan.detected.is_empty() {
+        println!("Built-in skills (nothing detected):");
+    } else {
+        println!("Built-in skills (detected: {}):", plan.detected.join(", "));
+    }
+    for entry in &plan.entries {
+        let marker = if entry.recommended { "*" } else { " " };
+        let tags = setup_tags(entry);
+        if tags.is_empty() {
+            println!("  {marker} {}", entry.skill.name);
+        } else {
+            println!("  {marker} {} [{}]", entry.skill.name, tags.join(", "));
+        }
+        if !entry.skill.description.is_empty() {
+            println!("      {}", truncate(&entry.skill.description, 100));
+        }
+    }
+    println!(
+        "\n* fits this project. Install with `imrule skills setup` (pick interactively), \
+         `--yes` (detected), `--all`, or by name."
+    );
 }
 
 #[derive(Debug)]
@@ -578,5 +763,12 @@ impl CliError {
             code,
             message: message.into(),
         }
+    }
+}
+
+/// A use case failure exits with code 1 and its message.
+impl From<crate::domain::error::ImruleError> for CliError {
+    fn from(err: crate::domain::error::ImruleError) -> Self {
+        Self::new(1, err.to_string())
     }
 }

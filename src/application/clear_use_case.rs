@@ -1,20 +1,37 @@
 //! Clear use case — removes all imrule-generated assets.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
 
 use crate::application::apply_use_case::{instruction_output_path, resolve_selected_agents};
 use crate::application::ports::{ConfigPort, FileSystemPort, GitignorePort, ManifestPort, McpPort};
-use crate::domain::agent::{all_agents, AgentDefinition};
+use crate::domain::agent::{AgentDefinition, all_agents};
 use crate::domain::config::LoadedConfig;
 use crate::domain::constants::{
-    CLAUDE_SUBAGENTS_PATH, CODEX_SUBAGENTS_PATH, COPILOT_SUBAGENTS_PATH, CURSOR_SUBAGENTS_PATH,
-    GENERATED_BY_IMRULE_MARKER, IMRULE_CACHE_PATH, LEGACY_DIR_NAME,
+    GENERATED_BY_IMRULE_MARKER, IMRULE_CACHE_PATH, LEGACY_DIR_NAME, relative_key,
 };
 use crate::domain::error::ImruleError;
 use crate::domain::manifest::ApplyManifest;
 use crate::domain::mcp::is_native_mcp_content_empty;
+use crate::domain::skills::get_skills_gitignore_paths;
+use crate::domain::subagent::subagents_gitignore_paths;
+
+/// Names of the manifest `entries` that sit directly inside `dir`.
+fn entries_directly_in<'a>(
+    entries: &'a [String],
+    project_root: &Path,
+    dir: &Path,
+) -> impl Iterator<Item = String> + 'a {
+    let prefix = format!("{}/", relative_key(project_root, dir));
+    entries.iter().filter_map(move |entry| {
+        entry
+            .strip_prefix(&prefix)
+            .filter(|name| !name.is_empty() && !name.contains('/'))
+            .map(str::to_string)
+    })
+}
 
 /// Runtime options for `imrule clear`.
 #[derive(Debug, Clone)]
@@ -87,10 +104,11 @@ impl<'a> ClearUseCase<'a> {
         // `--agents` narrows a clear to the agents named, so the manifest — which
         // spans every agent — is only safe to act on for a full clear.
         let full_clear = options.agents.is_none();
-        let manifest = match (full_clear, self.manifest_port) {
-            (true, Some(port)) => port.read_manifest(&options.project_root)?,
-            _ => None,
+        let recorded = match self.manifest_port {
+            Some(port) => port.read_manifest(&options.project_root)?,
+            None => None,
         };
+        let manifest = if full_clear { recorded.clone() } else { None };
         let mut imrule_mcp_keys = self.collect_mcp_keys(&options.project_root, &config)?;
         if let Some(manifest) = &manifest {
             imrule_mcp_keys.extend(manifest.mcp_servers.iter().cloned());
@@ -117,11 +135,11 @@ impl<'a> ClearUseCase<'a> {
             .collect();
         removed.extend(removal_results?.into_iter().flatten());
 
-        // Remove subagent directories created by imrule apply.
-        self.clear_subagents(&options, &selected_agents, &mut removed)?;
-
-        // Remove entire agent skills root directories (created by imrule apply).
-        self.clear_skills(&options, &selected_agents, &mut removed)?;
+        // Remove the subagent files and skill copies imrule apply made. They are
+        // recorded per directory, so even a narrowed clear can use the entries
+        // inside the agents it names.
+        self.clear_subagents(&options, &selected_agents, recorded.as_ref(), &mut removed)?;
+        self.clear_skills(&options, &selected_agents, recorded.as_ref(), &mut removed)?;
 
         // Remove imrule-managed keys from native MCP configs and delete empty ones.
         self.clear_mcp_configs(&options, &selected_agents, &imrule_mcp_keys, &mut removed)?;
@@ -180,64 +198,145 @@ impl<'a> ClearUseCase<'a> {
         Ok(removed)
     }
 
+    /// Removes the subagent files apply wrote — the ones the manifest recorded
+    /// and the ones matching, byte for byte, what `.imrule/agents` generates
+    /// today — and each directory only once nothing else is left in it. A
+    /// subagent the user wrote by hand stays, and so does its directory.
     fn clear_subagents(
         &self,
         options: &ClearOptions,
         selected_agents: &[AgentDefinition],
+        manifest: Option<&ApplyManifest>,
         removed: &mut Vec<PathBuf>,
     ) -> Result<(), ImruleError> {
-        let subagent_targets: &[(&str, &str)] = &[
-            ("claude", CLAUDE_SUBAGENTS_PATH),
-            ("cursor", CURSOR_SUBAGENTS_PATH),
-            ("codex", CODEX_SUBAGENTS_PATH),
-            ("copilot", COPILOT_SUBAGENTS_PATH),
-        ];
+        /// What apply writes for `subagent` into the subagent directory `dir_key`.
+        fn generated_file(
+            dir_key: &str,
+            subagent: &crate::domain::config::SubagentInfo,
+        ) -> Option<String> {
+            use crate::domain::constants::{
+                CLAUDE_SUBAGENTS_PATH, CODEX_SUBAGENTS_PATH, COPILOT_SUBAGENTS_PATH,
+                CURSOR_SUBAGENTS_PATH,
+            };
+            use crate::domain::subagent::{
+                build_claude_file, build_codex_file, build_copilot_file, build_cursor_file,
+            };
+            match dir_key {
+                CLAUDE_SUBAGENTS_PATH => Some(build_claude_file(subagent)),
+                CURSOR_SUBAGENTS_PATH => Some(build_cursor_file(subagent)),
+                CODEX_SUBAGENTS_PATH => Some(build_codex_file(subagent)),
+                COPILOT_SUBAGENTS_PATH => Some(build_copilot_file(subagent).content),
+                _ => None,
+            }
+        }
 
-        let selected_ids: std::collections::BTreeSet<&str> = selected_agents
-            .iter()
-            .filter(|a| a.capabilities.native_subagents)
-            .map(|a| a.identifier)
-            .collect();
-
-        let mut seen = std::collections::BTreeSet::new();
-        for (id, rel_path) in subagent_targets {
-            if !selected_ids.contains(id) {
+        let subagents = self
+            .fs_port
+            .discover_subagents(&options.project_root)
+            .map(|discovery| discovery.subagents)
+            .unwrap_or_default();
+        for dir in subagents_gitignore_paths(&options.project_root, selected_agents) {
+            if !self.fs_port.dir_exists(&dir)
+                || !self.fs_port.resolves_within(&dir, &options.project_root)
+            {
                 continue;
             }
-            let dir = options.project_root.join(rel_path);
-            let key = dir.to_string_lossy().to_string();
-            if !seen.insert(key) {
-                continue;
-            }
-            if self.fs_port.file_exists(&dir) {
-                if !options.dry_run {
-                    self.fs_port.remove_dir_all(&dir)?;
-                    if let Some(parent) = dir.parent() {
-                        self.prune_empty_parents(parent, &options.project_root)?;
-                    }
+            let recorded = manifest.map_or(&[][..], |manifest| manifest.paths.as_slice());
+            let mut names: BTreeSet<String> =
+                entries_directly_in(recorded, &options.project_root, &dir).collect();
+            // A file today's sources generate counts only when it is exactly
+            // that output, so a hand-written agent of the same name stays.
+            let dir_key = relative_key(&options.project_root, &dir);
+            for subagent in &subagents {
+                let name = format!("{}.md", subagent.name);
+                let is_output = generated_file(&dir_key, subagent).is_some_and(|content| {
+                    self.fs_port
+                        .read_text(&dir.join(&name))
+                        .is_ok_and(|existing| existing == content)
+                });
+                if is_output {
+                    names.insert(name);
                 }
-                removed.push(dir);
+            }
+            for name in names {
+                let file = dir.join(&name);
+                if !self.fs_port.file_exists(&file)
+                    || self.fs_port.dir_exists(&file)
+                    || !self.fs_port.resolves_within(&file, &options.project_root)
+                {
+                    continue;
+                }
+                if !options.dry_run {
+                    self.fs_port.remove_file(&file)?;
+                }
+                removed.push(file);
+            }
+            if !options.dry_run && self.fs_port.remove_dir_if_empty(&dir)? {
+                if let Some(parent) = dir.parent() {
+                    self.prune_empty_parents(parent, &options.project_root)?;
+                }
             }
         }
         Ok(())
     }
 
+    /// Removes the skill copies apply made — the ones the manifest recorded and
+    /// the ones identical to a skill in `.imrule/skills` today — and each skills
+    /// root only once nothing else is left in it. A skill the user put in an
+    /// agent directory by hand stays, and so does its root.
     fn clear_skills(
         &self,
         options: &ClearOptions,
         selected_agents: &[AgentDefinition],
+        manifest: Option<&ApplyManifest>,
         removed: &mut Vec<PathBuf>,
     ) -> Result<(), ImruleError> {
-        for skills_root in self.collect_skills_dirs(&options.project_root, selected_agents) {
-            if self.fs_port.file_exists(&skills_root) {
-                if !options.dry_run {
-                    self.fs_port.remove_dir_all(&skills_root)?;
-                    self.prune_empty_parents(
-                        skills_root.parent().unwrap_or(&skills_root),
-                        &options.project_root,
-                    )?;
+        let sources = self
+            .fs_port
+            .discover_skills(&options.project_root)
+            .map(|discovery| discovery.skills)
+            .unwrap_or_default();
+        for skills_root in get_skills_gitignore_paths(&options.project_root, selected_agents) {
+            if !self.fs_port.dir_exists(&skills_root)
+                || !self
+                    .fs_port
+                    .resolves_within(&skills_root, &options.project_root)
+            {
+                continue;
+            }
+            let recorded = manifest.map_or(&[][..], |manifest| manifest.skills.as_slice());
+            let mut copies: BTreeSet<String> =
+                entries_directly_in(recorded, &options.project_root, &skills_root).collect();
+            for skill in &sources {
+                // A copy made before 0.5 sits under the skill's leaf name
+                // (`python/cli` was copied as `cli`) and is recorded nowhere.
+                let leaf = skill.path.file_name().and_then(|name| name.to_str());
+                for name in std::iter::once(skill.name.as_str()).chain(leaf) {
+                    let copy = skills_root.join(name);
+                    if self.fs_port.dir_exists(&copy)
+                        && matches!(self.fs_port.dirs_match(&skill.path, &copy), Ok(true))
+                    {
+                        copies.insert(name.to_string());
+                    }
                 }
-                removed.push(skills_root);
+            }
+            for name in copies {
+                let copy = skills_root.join(&name);
+                if !self.fs_port.dir_exists(&copy)
+                    || !self.fs_port.resolves_within(&copy, &options.project_root)
+                {
+                    continue;
+                }
+                if !options.dry_run {
+                    self.fs_port.remove_dir_all(&copy)?;
+                }
+                removed.push(copy);
+            }
+            if !options.dry_run && self.fs_port.remove_dir_if_empty(&skills_root)? {
+                self.prune_empty_parents(
+                    skills_root.parent().unwrap_or(&skills_root),
+                    &options.project_root,
+                )?;
             }
         }
 
@@ -266,7 +365,11 @@ impl<'a> ClearUseCase<'a> {
         let config_path = options
             .project_root
             .join(crate::domain::constants::GJC_CONFIG_PATH);
-        if !self.fs_port.file_exists(&config_path) {
+        if !self.fs_port.file_exists(&config_path)
+            || !self
+                .fs_port
+                .target_resolves_within(&config_path, &options.project_root)
+        {
             return Ok(());
         }
 
@@ -276,7 +379,7 @@ impl<'a> ClearUseCase<'a> {
         }
 
         let existing = self.fs_port.read_text(&config_path)?;
-        match crate::infrastructure::gjc_config::strip_gjc_skill_discovery(&existing)? {
+        match crate::domain::gjc_config::strip_gjc_skill_discovery(&existing)? {
             Some(remaining) => {
                 self.fs_port
                     .write_text(&config_path, &remaining)
@@ -317,7 +420,13 @@ impl<'a> ClearUseCase<'a> {
             else {
                 continue;
             };
-            if !self.fs_port.file_exists(&native_path) {
+            // The keys to strip may come from a manifest a repository shipped,
+            // so never rewrite a config linked to a file outside the project.
+            if !self.fs_port.file_exists(&native_path)
+                || !self
+                    .fs_port
+                    .target_resolves_within(&native_path, &options.project_root)
+            {
                 continue;
             }
             if options.dry_run {
@@ -348,7 +457,13 @@ impl<'a> ClearUseCase<'a> {
         }
         for target in &manifest.mcp_targets {
             let native_path = options.project_root.join(&target.path);
-            if !self.fs_port.file_exists(&native_path) {
+            // The manifest may come from a cloned repository: never rewrite a
+            // config that resolves, through `..` or a link, outside the project.
+            if !self.fs_port.file_exists(&native_path)
+                || !self
+                    .fs_port
+                    .target_resolves_within(&native_path, &options.project_root)
+            {
                 continue;
             }
             if removed.contains(&native_path) {
@@ -404,55 +519,6 @@ impl<'a> ClearUseCase<'a> {
             }
         }
         Ok(())
-    }
-
-    fn collect_skills_dirs(&self, project_root: &Path, agents: &[AgentDefinition]) -> Vec<PathBuf> {
-        let agent_skill_paths: &[(&str, &str)] = &[
-            ("claude", crate::domain::constants::CLAUDE_SKILLS_PATH),
-            ("copilot", crate::domain::constants::CLAUDE_SKILLS_PATH),
-            ("kilocode", crate::domain::constants::CLAUDE_SKILLS_PATH),
-            ("codex", crate::domain::constants::CODEX_SKILLS_PATH),
-            ("opencode", crate::domain::constants::OPENCODE_SKILLS_PATH),
-            ("pi", crate::domain::constants::PI_SKILLS_PATH),
-            ("goose", crate::domain::constants::GOOSE_SKILLS_PATH),
-            ("amp", crate::domain::constants::GOOSE_SKILLS_PATH),
-            ("mistral", crate::domain::constants::VIBE_SKILLS_PATH),
-            ("roo", crate::domain::constants::ROO_SKILLS_PATH),
-            ("gemini-cli", crate::domain::constants::GEMINI_SKILLS_PATH),
-            ("kimi-cli", crate::domain::constants::KIMI_SKILLS_PATH),
-            ("kimi-code", crate::domain::constants::KIMI_SKILLS_PATH),
-            ("kimi", crate::domain::constants::KIMI_SKILLS_PATH),
-            ("junie", crate::domain::constants::JUNIE_SKILLS_PATH),
-            ("cursor", crate::domain::constants::CURSOR_SKILLS_PATH),
-            ("windsurf", crate::domain::constants::WINDSURF_SKILLS_PATH),
-            ("factory", crate::domain::constants::FACTORY_SKILLS_PATH),
-            (
-                "antigravity",
-                crate::domain::constants::ANTIGRAVITY_SKILLS_PATH,
-            ),
-            ("gjc", crate::domain::constants::GJC_SKILLS_PATH),
-        ];
-
-        let mut dirs = Vec::new();
-        let mut seen = std::collections::BTreeSet::new();
-
-        for agent in agents {
-            if !agent.capabilities.native_skills {
-                continue;
-            }
-            if let Some(&target_rel) = agent_skill_paths
-                .iter()
-                .find(|(id, _)| *id == agent.identifier)
-                .map(|(_, path)| path)
-            {
-                let dir = project_root.join(target_rel);
-                let key = dir.to_string_lossy().to_string();
-                if seen.insert(key) {
-                    dirs.push(dir);
-                }
-            }
-        }
-        dirs
     }
 
     /// Collects every MCP server name that `apply` could have written into native

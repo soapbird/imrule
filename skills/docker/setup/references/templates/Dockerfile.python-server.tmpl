@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1
+# Python 서버 이미지 — uv 멀티스테이지 (uv 공식 Docker 가이드 기반).
+# 자리표시자: {{UV_VERSION}} {{PYTHON_VERSION}} {{PACKAGE}} {{APP_USER}} {{PORT}}
+# 권장: 태그를 확정한 뒤 다이제스트를 붙인다 — FROM image:tag@sha256:...
+
+FROM ghcr.io/astral-sh/uv:{{UV_VERSION}} AS uv
+
+FROM python:{{PYTHON_VERSION}}-slim-bookworm AS builder
+COPY --from=uv /uv /uvx /bin/
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+WORKDIR /app
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --locked --no-dev --no-install-project
+COPY . /app
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-dev --no-editable
+
+FROM python:{{PYTHON_VERSION}}-slim-bookworm AS runtime
+RUN useradd --system --uid 10001 --create-home {{APP_USER}}
+COPY --from=builder --chown={{APP_USER}}:{{APP_USER}} /app/.venv /app/.venv
+# Alembic을 쓰면 마이그레이션 파일도 복사한다 (실행은 compose migrate 서비스 또는 make migrate).
+# COPY --chown={{APP_USER}}:{{APP_USER}} alembic.ini /app/alembic.ini
+# COPY --chown={{APP_USER}}:{{APP_USER}} migrations /app/migrations
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1
+WORKDIR /app
+USER {{APP_USER}}
+EXPOSE {{PORT}}
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:{{PORT}}/healthz', timeout=4)"]
+CMD ["uvicorn", "{{PACKAGE}}.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "{{PORT}}"]

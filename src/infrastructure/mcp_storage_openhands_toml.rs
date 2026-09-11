@@ -1,4 +1,4 @@
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use toml_edit::{Array, DocumentMut, InlineTable, Item, Table};
 
 pub fn read_openhands_mcp(doc: &DocumentMut) -> Value {

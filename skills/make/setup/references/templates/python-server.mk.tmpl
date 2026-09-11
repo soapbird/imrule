@@ -1,0 +1,63 @@
+SHELL := bash
+.SHELLFLAGS := -eu -o pipefail -c
+MAKEFLAGS += --warn-undefined-variables --no-builtin-rules
+.DEFAULT_GOAL := help
+
+PKG := {{pkg}}
+VERSION := $(shell cat VERSION)
+GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null)
+REGISTRY ?= docker.lowapple.io
+IMAGE ?= $(REGISTRY)/$(PKG)
+PLATFORMS ?= linux/amd64,linux/arm64
+PORT ?= {{port}}
+m ?=
+
+.PHONY: help setup fmt fmt-check lint test check build migrate revision run clean docker-build docker-push deploy
+
+help: ## 타깃 목록
+	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+setup: ## 의존성 설치 (uv.lock 기준)
+	uv sync --locked
+
+fmt: ## 포맷·import 정렬 적용
+	uv run ruff check --select I --fix .
+	uv run ruff format .
+
+fmt-check: ## 포맷 검사 (파일 수정 없음)
+	uv run ruff format --check .
+
+lint: ## 린트 + 타입 검사 + 계층 검사
+	uv lock --check
+	uv run ruff check .
+	uv run basedpyright
+	uv run lint-imports
+
+test: ## 테스트
+	uv run pytest
+
+check: fmt-check lint test ## CI 게이트: 포맷 검사 + 린트 + 테스트
+
+build: ## wheel 빌드
+	uv build
+
+migrate: ## DB 마이그레이션 적용
+	uv run alembic upgrade head
+
+revision: ## 마이그레이션 생성 (make revision m="설명")
+	uv run alembic revision --autogenerate -m "$(m)"
+
+run: migrate ## 로컬 서버 실행 (127.0.0.1:$(PORT), 자동 재시작)
+	uv run uvicorn $(PKG).main:app --reload --host 127.0.0.1 --port $(PORT)
+
+clean: ## 빌드 산출물·캐시 삭제
+	rm -rf dist .pytest_cache .ruff_cache
+
+docker-build: ## 로컬 플랫폼 이미지 빌드
+	docker build -t $(IMAGE):$(VERSION) -t $(IMAGE):latest -t $(IMAGE):$(GIT_SHA) .
+
+docker-push: docker-build ## 이미지 푸시
+	docker push --all-tags $(IMAGE)
+
+deploy: ## 멀티 아키텍처 이미지 빌드 후 푸시
+	docker buildx build --platform $(PLATFORMS) -t $(IMAGE):$(VERSION) -t $(IMAGE):latest -t $(IMAGE):$(GIT_SHA) --push .

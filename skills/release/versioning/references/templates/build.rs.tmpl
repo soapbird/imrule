@@ -1,0 +1,24 @@
+// Makes the `VERSION` file the single source of truth for the displayed
+// version. Cargo's `version` field only holds MAJOR.MINOR.PATCH, but releases
+// use MAJOR.MINOR.PATCH.MICRO, so `--version` reads this env var instead of
+// CARGO_PKG_VERSION.
+//
+// Use in clap: #[command(version = env!("{{PROJECT}}_VERSION"))]
+
+use std::fs;
+use std::path::Path;
+
+fn main() {
+    let manifest_dir =
+        std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is always set by Cargo");
+    // Workspace member crates: point this at "../../VERSION".
+    let version_path = Path::new(&manifest_dir).join("VERSION");
+
+    let version = fs::read_to_string(&version_path)
+        .unwrap_or_else(|_| panic!("failed to read VERSION file at {}", version_path.display()))
+        .trim()
+        .to_owned();
+
+    println!("cargo:rustc-env={{PROJECT}}_VERSION={version}");
+    println!("cargo:rerun-if-changed={}", version_path.display());
+}

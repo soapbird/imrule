@@ -1,0 +1,35 @@
+# .github/dependabot.yml
+# github-actions는 항상 둔다. 나머지는 프로젝트에 있는 생태계만 남기고 지운다.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Rust (Cargo.lock)
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Python (uv.lock)
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Node (pnpm-lock.yaml / package-lock.json)
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Dockerfile 베이스 이미지
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

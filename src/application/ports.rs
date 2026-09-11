@@ -9,7 +9,8 @@ use crate::domain::config::{AgentConfig, LoadedConfig};
 use crate::domain::error::ImruleError;
 use crate::domain::manifest::ApplyManifest;
 use crate::domain::mcp::McpRemoteVersionCache;
-use crate::domain::skills::RemoteSkillSource;
+use crate::domain::skills::{RemoteSkillSource, SkillsDiscovery};
+use crate::domain::subagent::SubagentsDiscovery;
 
 /// Loads and parses ImRule configuration.
 pub trait ConfigPort: Send + Sync {
@@ -60,8 +61,15 @@ pub trait FileSystemPort: Send + Sync {
     /// Copy a file.
     fn copy_file(&self, from: &Path, to: &Path) -> Result<(), ImruleError>;
 
-    /// Check whether a path exists as a file.
+    /// Check whether a path exists, whether as a file or a directory.
     fn file_exists(&self, path: &Path) -> bool;
+
+    /// Check whether a path exists as a directory.
+    fn dir_exists(&self, path: &Path) -> bool;
+
+    /// The process working directory, falling back to `.` — the base relative
+    /// skill sources resolve against.
+    fn current_dir(&self) -> PathBuf;
 
     /// Searches upwards for `.imrule`, optionally falling back to global config.
     fn find_imrule_dir(&self, start_path: &Path, check_global: bool) -> Option<PathBuf>;
@@ -75,6 +83,49 @@ pub trait FileSystemPort: Send + Sync {
 
     /// Finds all `.imrule` directories below `start_path`, deepest first.
     fn find_all_imrule_dirs(&self, start_path: &Path) -> Vec<PathBuf>;
+
+    /// Discovers the project's skills (`.imrule/skills`, falling back to
+    /// `.ruler/skills`), each named as `apply` publishes it.
+    fn discover_skills(&self, project_root: &Path) -> Result<SkillsDiscovery, ImruleError>;
+
+    /// Walks a fetched skill source at any depth, keeping each skill's own
+    /// directory name.
+    fn walk_skills_tree(&self, root: &Path) -> Result<SkillsDiscovery, ImruleError>;
+
+    /// Walks a project-style skills root (the project's or the global one),
+    /// naming each skill as `apply` publishes it.
+    fn walk_project_skills(&self, root: &Path) -> Result<SkillsDiscovery, ImruleError>;
+
+    /// Recursively copies a directory into `to`, creating it as needed.
+    fn copy_dir(&self, from: &Path, to: &Path) -> Result<(), ImruleError>;
+
+    /// Whether two directory trees hold byte-identical files.
+    fn dirs_match(&self, left: &Path, right: &Path) -> Result<bool, ImruleError>;
+
+    /// Every entry below `dir` that is not a directory, recursively, as paths
+    /// relative to `dir`, sorted. Symbolic links are listed as entries and
+    /// never followed, so a linked directory's contents are not included.
+    fn list_files(&self, dir: &Path) -> Result<Vec<PathBuf>, ImruleError>;
+
+    /// Whether `path` lies inside `root` on disk: its parent directory, with
+    /// every symbolic link resolved, is `root` or below it. The last component
+    /// is not followed, so a link at `path` itself counts as inside. `false`
+    /// when either cannot be resolved.
+    fn resolves_within(&self, path: &Path, root: &Path) -> bool;
+
+    /// Whether writing to `path` lands inside `root` on disk: `path` itself, or
+    /// its deepest existing ancestor when it does not exist yet, resolves with
+    /// every link followed (a link at `path` too) to `root` or below. For
+    /// files that are written, or read and written back.
+    fn target_resolves_within(&self, path: &Path, root: &Path) -> bool;
+
+    /// Whether two existing paths name the same file or directory, as a
+    /// case-insensitive filesystem or a link can make them.
+    fn is_same_entry(&self, left: &Path, right: &Path) -> bool;
+
+    /// Discovers subagent definitions (`.imrule/agents`, falling back to
+    /// `.ruler/agents`).
+    fn discover_subagents(&self, project_root: &Path) -> Result<SubagentsDiscovery, ImruleError>;
 }
 
 /// Updates ignore files with generated paths.

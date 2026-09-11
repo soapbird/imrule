@@ -154,6 +154,93 @@ Surfaced during the develop → main release-promotion pre-landing review
   **Note:** `infer_mcp_transport` returns `Http` whenever `url` is present. A stdio server with
   a legacy `url` field is treated as HTTP. Consider inferring from `command` presence first.
 
+## Skills
+
+Deferred from the v0.5.0.0 pre-landing review (develop → main, 2026-09-11). The
+data-loss findings (manifest paths, skills root pruning, case-only renames,
+`skills setup` overwriting user skills) were fixed in that release.
+
+- [ ] Skill copy and discovery follow symlinks  
+  **Priority:** P2  
+  **Note:** `infrastructure/skills.rs` `copy_recursive`/`walk` use `is_dir()` and `fs::copy`,
+  which follow links. A fetched source can ship `notes.md -> ~/.ssh/id_ed25519`, which is then
+  copied as a plain file into `.imrule/skills/` (usually committed) and every agent root; a link
+  loop recurses forever. Skip symlinks via `symlink_metadata`/`DirEntry::file_type` or refuse
+  links whose target leaves the source tree. Confidence 7/10.
+
+- [ ] Built-in `check.py` scripts never run in CI  
+  **Priority:** P2  
+  **Note:** ~9,000 lines of Python ship to users; the contract test only checks the shared helper
+  block. Add `python3 -m py_compile` plus a fixture run with `--format json` per checker. Nothing
+  guards `requires-python >= 3.11`: macOS's python3 3.9 raises a TypeError on `set[str] | None`.
+
+- [ ] Checker false passes found by review  
+  **Priority:** P2  
+  **Note:** (1) `ci/github-actions` and `docker/optimize` do not parse YAML flow mappings/arrays, so
+  `services: {app: {privileged: true}}` passes DOPT-011 and flow-style `steps` skip pin checks.
+  (2) `rust/cli` and `rust/server` cut everything after the first `#[cfg(test)]`, so a leading
+  `#[cfg(test)] mod tests;` hides all production code. (3) `python/server` and `rust/server` treat
+  an unparseable manifest as "not a server" and skip every check with exit 0. Each change needs a
+  skill revision bump.
+
+- [ ] `skills setup` writes are not atomic  
+  **Priority:** P3  
+  **Note:** `write_skill` removes the directory and writes files one by one; a failure midway leaves
+  a same-revision skill that reads as modified from then on. Write to a sibling temp dir and rename.
+
+- [ ] Built-in skill installed inside a user skill folder never publishes  
+  **Priority:** P3  
+  **Note:** with `.imrule/skills/python/SKILL.md` present, `setup python/cli` reports installed but
+  discovery never descends into a skill folder, so it is copied as part of the user's `python` skill.
+
+- [ ] `build.rs` embedding edge cases and line endings  
+  **Priority:** P3  
+  **Note:** `include_str!` breaks the build on a non-UTF-8 file under `skills/`, the collector
+  follows symlinks without a depth limit, and there is no `.gitattributes` `eol=lf` for `skills/**`,
+  so a CRLF checkout on the Windows release runner would make every installed built-in read as modified.
+
+- [ ] Picker search cannot contain spaces  
+  **Priority:** P3  
+  **Note:** `Space` toggles selection, so the multi-word search `filtered()` supports cannot be typed;
+  a `(0, 0)` terminal size draws nothing. `setup_picker` preselection and the TTY loop are untested.
+
+- [ ] `imrule-issue` redaction still misses two shapes  
+  **Priority:** P2  
+  **Note:** in escaped JSON an Authorization value with spaces (`{\"authorization\": \"Digest a b\"}`)
+  keeps its tail, and double-escaped JSON (`\\\"token\\\": \\\"x\\\"`) is not redacted. The skill's
+  mandatory full-draft review mitigates it. An all-caps `$UPPERCASE` value is kept as an env
+  reference by design.
+
+- [ ] Writes still follow symlinks and `output_path` outside the project  
+  **Priority:** P1  
+  **Note:** deletions and native MCP rewrites now check containment on disk (0.5.0.0), but `apply`
+  still writes rule files (`agent_writer.rs`, no backup by default), skill copies, subagent files and
+  `.gjc/config.yml` through a symlinked agent directory or file a cloned repository commits, and
+  `[agent.*] output_path` in `imrule.toml` may be absolute or contain `..` (`resolve_project_path`),
+  which `clear` then deletes. `skills setup` also writes into a linked grouping directory. Add one
+  write-containment check for every write path (refuse or warn), decide whether dotfiles-style links
+  stay supported, and restrict `output_path` to project-relative paths outside the global config.
+  Pre-existing; found by the 0.5.0.0 pre-landing review.
+
+- [ ] A committed manifest can still name user files inside agent directories  
+  **Priority:** P2  
+  **Note:** apply removes a stale recorded file directly in a subagent directory without the
+  generated marker, trusting that only apply-written files are recorded. A manifest committed to a
+  cloned repository can list `.github/agents/<name>.md` ahead of time and delete a hand-written agent
+  the user adds later. Record a content hash per subagent file (or add a marker) before removing.
+
+- [ ] `clear --agents` empties the whole `.gitignore` block  
+  **Priority:** P3  
+  **Note:** a narrowed clear resets the managed block, so the generated files of agents it did not
+  clear become un-ignored. Rebuild the block from the manifest minus the cleared agents. Pre-existing.
+
+- [ ] Smaller review follow-ups  
+  **Priority:** P3  
+  **Note:** `parse_skill_source` checks existence with the raw relative path but resolves against the
+  injected cwd; `architecture_contract.rs` reads layer dirs non-recursively; `test-e2e-skills.sh` hides
+  the log when the network step fails; copying re-reads every source file once per agent root;
+  `cli/scripts/check.py` has no per-file size cap; unused constants in three checkers.
+
 ## Coverage
 
 - [ ] Test `GitSkillFetcher` (GitHub/GitLab/SSH fetch paths)  

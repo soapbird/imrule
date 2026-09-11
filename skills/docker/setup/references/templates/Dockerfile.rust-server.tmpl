@@ -1,0 +1,30 @@
+# syntax=docker/dockerfile:1
+# Rust 서버 이미지 — cargo-chef로 의존성 레이어를 캐시한다.
+# 자리표시자: {{RUST_VERSION}} {{CARGO_CHEF_VERSION}} {{BINARY}} {{APP_USER}} {{PORT}}
+# 권장: 태그를 확정한 뒤 다이제스트를 붙인다 — FROM image:tag@sha256:...
+
+FROM rust:{{RUST_VERSION}}-slim-bookworm AS chef
+RUN cargo install cargo-chef --locked --version {{CARGO_CHEF_VERSION}}
+WORKDIR /app
+
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+COPY . .
+RUN cargo build --release --locked --bin {{BINARY}}
+
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+RUN useradd --system --uid 10001 --create-home {{APP_USER}}
+COPY --from=builder /app/target/release/{{BINARY}} /usr/local/bin/{{BINARY}}
+USER {{APP_USER}}
+EXPOSE {{PORT}}
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["curl", "-fsS", "http://127.0.0.1:{{PORT}}/healthz"]
+ENTRYPOINT ["/usr/local/bin/{{BINARY}}"]

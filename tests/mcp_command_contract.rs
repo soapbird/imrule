@@ -1,7 +1,7 @@
 use std::fs;
 
 use imrule::application::mcp_use_case::{
-    parse_env_pair, parse_env_pairs, McpAddOptions, McpRemoveOptions, McpUseCase,
+    McpAddOptions, McpRemoveOptions, McpUseCase, parse_env_pair, parse_env_pairs,
 };
 use imrule::application::ports::ConfigPort;
 use imrule::domain::config::{McpRemoteTransport, McpTransport};
