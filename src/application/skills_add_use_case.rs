@@ -6,7 +6,7 @@ use crate::application::ports::{ConfigPort, ConfigWritePort, FileSystemPort, Ski
 use crate::domain::config::SkillInfo;
 use crate::domain::constants::SKILL_MD_FILENAME;
 use crate::domain::error::ImruleError;
-use crate::domain::skills::{parse_skill_source, skill_source_key};
+use crate::domain::skills::{SkillsDiscovery, parse_skill_source, skill_source_key};
 
 /// Runtime options for `imrule skills add`.
 #[derive(Debug, Clone)]
@@ -161,6 +161,22 @@ pub fn resolve_skills_base(
             .unwrap_or_else(|| project_root.join(".imrule"));
         imrule_dir.join("skills")
     }
+}
+
+/// The directory installed skills live in, and what `skills list` shows from
+/// it: every skill named as `apply` publishes it, empty when nothing is
+/// installed there yet.
+pub fn list_installed_skills(
+    fs_port: &dyn FileSystemPort,
+    project_root: &Path,
+    global: bool,
+) -> Result<(PathBuf, SkillsDiscovery), ImruleError> {
+    let skills_dir = resolve_skills_base(fs_port, project_root, global);
+    if !fs_port.dir_exists(&skills_dir) {
+        return Ok((skills_dir, SkillsDiscovery::default()));
+    }
+    let discovery = fs_port.walk_project_skills(&skills_dir)?;
+    Ok((skills_dir, discovery))
 }
 
 /// Resolves the root the skill source registry is read from and written to.

@@ -427,6 +427,16 @@ GITHUB_TOKEN = "actual-secret"
 
 스킬 디렉터리를 여기에 둡니다. 각 스킬에는 `SKILL.md` 파일이 필요합니다. `imrule apply`를 실행하면 에이전트별 디렉터리(예: `.claude/skills/`, `.cursor/rules/`)로 전파됩니다.
 
+스킬을 폴더로 묶을 수 있습니다. 대부분의 에이전트는 스킬 디렉터리를 한 단계 깊이까지만 찾으므로, 묶인 스킬은 경로를 `-`로 이은 이름으로 전파됩니다.
+
+```text
+.imrule/skills/cli/SKILL.md         → .claude/skills/cli/
+.imrule/skills/python/cli/SKILL.md  → .claude/skills/python-cli/
+.imrule/skills/rust/cli/SKILL.md    → .claude/skills/rust-cli/
+```
+
+`SKILL.md` frontmatter의 `name`도 전파되는 이름(`python-cli`)과 같게 적으세요. VS Code Copilot, Cursor, OpenCode는 `name`이 디렉터리 이름과 다르면 스킬을 불러오지 않으므로 `imrule skills list`가 경고합니다. 서로 다른 경로가 같은 이름이 되면(`python/cli`와 `python-cli`) `apply`가 실패합니다. `.imrule/skills/`에서 지우거나 옮긴 스킬은 다음 `apply` 때 에이전트 디렉터리에서도 지워지며, 에이전트 디렉터리에 직접 넣은 스킬은 건드리지 않습니다.
+
 원격 저장소에서 스킬을 설치할 수도 있습니다.
 
 ```bash

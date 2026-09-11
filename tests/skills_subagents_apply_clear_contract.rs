@@ -34,7 +34,7 @@ fn discovers_skills_groupings_warnings_copies_and_gitignore_targets() {
         .iter()
         .map(|skill| skill.name.as_str())
         .collect();
-    assert_eq!(names, vec!["nested", "solo"]);
+    assert_eq!(names, vec!["group-nested", "solo"]);
     assert_eq!(
         discovered.warnings,
         vec![
@@ -78,6 +78,56 @@ fn discovers_skills_groupings_warnings_copies_and_gitignore_targets() {
             root.join(".kimi-code/skills"),
             root.join(".factory/skills"),
         ]
+    );
+}
+
+#[test]
+fn grouped_skills_are_named_by_their_path_below_the_skills_root() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    // `python/cli` and `rust/cli` share a leaf name; published under it alone,
+    // one would overwrite the other in `.claude/skills/cli`.
+    for (dir, name) in [
+        ("cli", "cli"),
+        ("make/setup", "make-setup"),
+        ("python/cli", "python-cli"),
+        ("rust/cli", "cli"),
+    ] {
+        write_source_skill(
+            &root.join(".imrule/skills"),
+            dir,
+            &format!("---\nname: {name}\ndescription: test\n---\nbody\n"),
+        );
+    }
+
+    let discovered = discover_skills(root).unwrap();
+    let names: Vec<_> = discovered
+        .skills
+        .iter()
+        .map(|skill| skill.name.as_str())
+        .collect();
+    assert_eq!(names, vec!["cli", "make-setup", "python-cli", "rust-cli"]);
+    // Several agents refuse a skill whose `name` differs from its directory.
+    assert_eq!(
+        discovered.warnings,
+        vec![
+            "Skill 'rust/cli' declares name 'cli' but is published as 'rust-cli'; agents that require the name to match the directory will skip it."
+        ]
+    );
+}
+
+#[test]
+fn two_skills_publishing_under_one_name_are_rejected() {
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    for dir in ["python/cli", "python-cli"] {
+        write_source_skill(&root.join(".imrule/skills"), dir, "x");
+    }
+
+    let error = discover_skills(root).unwrap_err().to_string();
+    assert!(
+        error.contains("'python/cli' and 'python-cli' would both be published as 'python-cli'"),
+        "unexpected error: {error}"
     );
 }
 

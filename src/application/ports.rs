@@ -92,6 +92,10 @@ pub trait FileSystemPort: Send + Sync {
     /// directory name.
     fn walk_skills_tree(&self, root: &Path) -> Result<SkillsDiscovery, ImruleError>;
 
+    /// Walks a project-style skills root (the project's or the global one),
+    /// naming each skill as `apply` publishes it.
+    fn walk_project_skills(&self, root: &Path) -> Result<SkillsDiscovery, ImruleError>;
+
     /// Recursively copies a directory into `to`, creating it as needed.
     fn copy_dir(&self, from: &Path, to: &Path) -> Result<(), ImruleError>;
 

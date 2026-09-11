@@ -150,6 +150,36 @@ pub fn format_validation_warnings(warnings: &[String]) -> String {
         .join("\n")
 }
 
+/// The name a skill under a project skills root is published as: its path below
+/// that root with the separators turned into hyphens, so `python/cli` becomes
+/// `python-cli`. Agents only look one level deep, and publishing a grouped
+/// skill under its leaf name alone let `python/cli` and `rust/cli` both land on
+/// `cli`, one silently overwriting the other.
+pub fn flatten_skill_name(relative: &Path) -> String {
+    relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+/// Rejects two skills that publish under the same name — `python/cli` next to a
+/// top-level `python-cli` — since copying both would leave only one of them.
+pub fn ensure_unique_skill_names(skills: &[SkillInfo], root: &Path) -> Result<(), ImruleError> {
+    let mut seen: BTreeMap<&str, &Path> = BTreeMap::new();
+    for skill in skills {
+        if let Some(first) = seen.insert(skill.name.as_str(), skill.path.as_path()) {
+            return Err(ImruleError::skills(format!(
+                "skills '{}' and '{}' would both be published as '{}'; rename one of them",
+                relative_key(root, first),
+                relative_key(root, &skill.path),
+                skill.name
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Gets native skill target paths generated for selected agents.
 pub fn get_skills_gitignore_paths(project_root: &Path, agents: &[AgentDefinition]) -> Vec<PathBuf> {
     crate::domain::agent::selected_target_dirs(

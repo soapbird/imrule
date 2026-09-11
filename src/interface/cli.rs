@@ -229,6 +229,9 @@ pub struct SkillsListArgs {
     /// List global skills instead of project skills.
     #[arg(long, short = 'g', default_value_t = false)]
     pub global: bool,
+    /// Print the list as one JSON document.
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
     /// Project root directory.
     #[arg(long = "project-root", value_name = "DIR")]
     pub project_root: Option<PathBuf>,

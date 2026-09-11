@@ -64,10 +64,10 @@ src/
 - `agent.rs` — Compile-time `const` array of 36 `AgentDefinition`s (identifier, name, output paths, MCP keys, capabilities). This is the single source of truth for the agent registry.
 - `config.rs` — Config structs: `LoadedConfig`, `AgentConfig`, `McpConfig`, `McpServerDefinition`, `McpTransport`, `GitignoreConfig`, `SkillsConfig`, `SubagentsConfig`, `SubagentFrontmatter`.
 - `error.rs` — Unified `ImruleError` enum (`thiserror`) with variants: `UnknownAgent`, `Config`, `Mcp`, `Subagent`, `Rules`, `Skills`, `Filesystem`, `Gitignore`.
-- `manifest.rs` — `ApplyManifest`/`McpTarget`: the record of what a run generated, plus the pure diffs (`stale_paths`, `stale_mcp_targets`, `stale_mcp_servers`, `merged_with`) that let a later run clean up what it no longer produces.
+- `manifest.rs` — `ApplyManifest`/`McpTarget`: the record of what a run generated, plus the pure diffs (`stale_paths`, `stale_mcp_targets`, `stale_mcp_servers`, `stale_skills`, `merged_with`) that let a later run clean up what it no longer produces.
 - `mcp.rs` — MCP capability filtering, remote→stdio transformation, merge/overwrite logic, conversion of `McpServerDefinition` values to agent-native JSON, and native-config emptiness checks (`is_json_effectively_empty`, `is_native_mcp_content_empty`).
 - `rules.rs` — Markdown concatenation with `<!-- Source: relative/path -->` markers.
-- `skills.rs` — Skills discovery types, gitignore path helpers, and the pure grouping/status types behind `skills update`.
+- `skills.rs` — Skills discovery types, gitignore path helpers, `flatten_skill_name` (a grouped skill `python/cli` is published as `python-cli`) with collision detection, and the pure grouping/status types behind `skills update`.
 - `subagent.rs` — YAML frontmatter parsing/validation and agent-native file builders (Claude, Cursor, Codex, Copilot).
 
 ### Application (`src/application/`)

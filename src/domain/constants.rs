@@ -67,3 +67,10 @@ pub fn xdg_config_home() -> std::path::PathBuf {
 pub fn normalize_path_separators(path: &str) -> String {
     path.replace('\\', "/")
 }
+
+/// The project-relative form of `path` with forward slashes, used as a key in
+/// manifests, skill-name checks, and error messages.
+pub fn relative_key(project_root: &std::path::Path, path: &std::path::Path) -> String {
+    let relative = path.strip_prefix(project_root).unwrap_or(path);
+    normalize_path_separators(&relative.to_string_lossy())
+}

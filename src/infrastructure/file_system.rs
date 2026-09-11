@@ -30,12 +30,15 @@ impl Default for FsFileSystem {
 impl FileSystemPort for FsFileSystem {
     fn discover_skills(&self, project_root: &Path) -> Result<SkillsDiscovery, ImruleError> {
         crate::infrastructure::skills::discover_skills(project_root)
-            .map_err(|e| ImruleError::skills(e.to_string()))
     }
 
     fn walk_skills_tree(&self, root: &Path) -> Result<SkillsDiscovery, ImruleError> {
         crate::infrastructure::skills::walk_skills_tree(root)
             .map_err(|e| ImruleError::skills(format!("failed to walk skills tree: {e}")))
+    }
+
+    fn walk_project_skills(&self, root: &Path) -> Result<SkillsDiscovery, ImruleError> {
+        crate::infrastructure::skills::walk_project_skills_tree(root)
     }
 
     fn copy_dir(&self, from: &Path, to: &Path) -> Result<(), ImruleError> {

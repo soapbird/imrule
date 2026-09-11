@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Grouped skills are published under their path**: `.imrule/skills/` could group skills in folders, but `apply` copied each one under its leaf directory name — so `python/cli` and `rust/cli` both landed in `.claude/skills/cli`, and which one survived depended on copy order. A grouped skill is now published under its path joined with hyphens (`python-cli`, `rust-cli`), the one-level layout Claude Code and Gemini CLI discover. Two skills that would share a name fail `apply` instead of overwriting each other, and `imrule skills list` warns when a `SKILL.md` declares a `name` other than the published one, since VS Code Copilot, Cursor and OpenCode skip such skills. Top-level skills keep their names. A grouped skill already propagated under its leaf name leaves that one copy behind; delete it by hand or run `imrule clear` before upgrading.
+
+### Fixed
+
+- **Skills removed from `.imrule/skills/` lingered in agent directories**: `apply` only ever copied skills in, so a renamed or deleted skill stayed in `.claude/skills/` and every other agent's skills root until `imrule clear`. The manifest now records each skill copy, and the next `apply` removes the copies it no longer makes — a skill placed in an agent directory by hand is never recorded, so it is never touched.
+
 ## [0.4.2.0] - 2026-09-11
 
 ### Added

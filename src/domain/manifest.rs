@@ -14,7 +14,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::constants::normalize_path_separators;
+use crate::domain::constants::relative_key;
 
 /// Schema version of the on-disk manifest. Bump when the shape changes
 /// incompatibly; readers treat an unrecognized version as "no manifest".
@@ -46,6 +46,12 @@ pub struct ApplyManifest {
     /// Native MCP config files those servers were written into.
     #[serde(default)]
     pub mcp_targets: Vec<McpTarget>,
+    /// Skill directories copied into agent skill roots, project-relative. Kept
+    /// apart from `paths`, which feed `.gitignore` — each root already covers
+    /// its skills there — so that a skill renamed or removed from
+    /// `.imrule/skills/` is pruned instead of lingering beside its successor.
+    #[serde(default)]
+    pub skills: Vec<String>,
 }
 
 impl ApplyManifest {
@@ -57,10 +63,6 @@ impl ApplyManifest {
         mcp_servers: &[String],
         mcp_targets: &[(std::path::PathBuf, String)],
     ) -> Self {
-        let paths: BTreeSet<String> = paths
-            .iter()
-            .map(|path| relative_key(project_root, path))
-            .collect();
         let mcp_servers: BTreeSet<String> = mcp_servers.iter().cloned().collect();
         let mut targets: Vec<McpTarget> = mcp_targets
             .iter()
@@ -74,10 +76,17 @@ impl ApplyManifest {
 
         Self {
             version: MANIFEST_VERSION,
-            paths: paths.into_iter().collect(),
+            paths: relative_keys(project_root, paths),
             mcp_servers: mcp_servers.into_iter().collect(),
             mcp_targets: targets,
+            skills: Vec::new(),
         }
+    }
+
+    /// Records the skill directories this run copied into agent skill roots.
+    pub fn with_skills(mut self, project_root: &Path, skills: &[std::path::PathBuf]) -> Self {
+        self.skills = relative_keys(project_root, skills);
+        self
     }
 
     /// Folds an earlier manifest into this one, keeping every entry from both.
@@ -101,28 +110,33 @@ impl ApplyManifest {
             }
         }
         mcp_targets.sort_by(|a, b| a.path.cmp(&b.path));
+        let skills: BTreeSet<String> = self.skills.iter().chain(&earlier.skills).cloned().collect();
 
         Self {
             version: MANIFEST_VERSION,
             paths: paths.into_iter().collect(),
             mcp_servers: mcp_servers.into_iter().collect(),
             mcp_targets,
+            skills: skills.into_iter().collect(),
         }
+    }
+
+    /// Skill directories this manifest recorded that `current` no longer copies.
+    pub fn stale_skills(&self, current: &ApplyManifest) -> Vec<String> {
+        stale_of(&self.skills, current.skills.iter().map(String::as_str))
     }
 
     /// Paths this manifest recorded that `current` no longer produces.
     pub fn stale_paths(&self, current: &ApplyManifest) -> Vec<String> {
-        let kept: BTreeSet<&str> = current.paths.iter().map(String::as_str).collect();
-        let mcp_kept: BTreeSet<&str> = current
-            .mcp_targets
-            .iter()
-            .map(|target| target.path.as_str())
-            .collect();
-        self.paths
-            .iter()
-            .filter(|path| !kept.contains(path.as_str()) && !mcp_kept.contains(path.as_str()))
-            .cloned()
-            .collect()
+        stale_of(
+            &self.paths,
+            current.paths.iter().map(String::as_str).chain(
+                current
+                    .mcp_targets
+                    .iter()
+                    .map(|target| target.path.as_str()),
+            ),
+        )
     }
 
     /// Native MCP configs this manifest recorded that `current` no longer writes.
@@ -143,12 +157,10 @@ impl ApplyManifest {
     /// These linger inside configs `apply` still writes, because the merge
     /// strategy only adds keys.
     pub fn stale_mcp_servers(&self, current: &ApplyManifest) -> Vec<String> {
-        let kept: BTreeSet<&str> = current.mcp_servers.iter().map(String::as_str).collect();
-        self.mcp_servers
-            .iter()
-            .filter(|name| !kept.contains(name.as_str()))
-            .cloned()
-            .collect()
+        stale_of(
+            &self.mcp_servers,
+            current.mcp_servers.iter().map(String::as_str),
+        )
     }
 
     /// Returns `true` when the manifest was written by a schema this build
@@ -158,7 +170,21 @@ impl ApplyManifest {
     }
 }
 
-fn relative_key(project_root: &Path, path: &Path) -> String {
-    let relative = path.strip_prefix(project_root).unwrap_or(path);
-    normalize_path_separators(&relative.to_string_lossy())
+/// `paths` as project-relative keys, sorted and deduplicated.
+fn relative_keys(project_root: &Path, paths: &[std::path::PathBuf]) -> Vec<String> {
+    let keys: BTreeSet<String> = paths
+        .iter()
+        .map(|path| relative_key(project_root, path))
+        .collect();
+    keys.into_iter().collect()
+}
+
+/// Entries from `previous` that `kept` no longer contains.
+fn stale_of<'a>(previous: &[String], kept: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let kept: BTreeSet<&str> = kept.collect();
+    previous
+        .iter()
+        .filter(|entry| !kept.contains(entry.as_str()))
+        .cloned()
+        .collect()
 }

@@ -178,11 +178,12 @@ impl<'a> ApplyUseCase<'a> {
             .as_ref()
             .and_then(|s| s.enabled)
             .unwrap_or(true);
-        if skills_enabled {
-            let skills_paths =
-                self.apply_skills(&options.project_root, &selected_agents, options.dry_run)?;
-            written_paths.extend(skills_paths);
-        }
+        let (skills_paths, copied_skills) = if skills_enabled {
+            self.apply_skills(&options.project_root, &selected_agents, options.dry_run)?
+        } else {
+            Default::default()
+        };
+        written_paths.extend(skills_paths);
 
         let subagents_enabled = config
             .subagents
@@ -207,7 +208,8 @@ impl<'a> ApplyUseCase<'a> {
             &written_paths,
             &mcp_outcome.servers,
             &mcp_outcome.targets,
-        );
+        )
+        .with_skills(&options.project_root, &copied_skills);
         if !options.dry_run {
             if let Some(manifest_port) = self.manifest_port {
                 if let Some(previous) = manifest_port.read_manifest(&options.project_root)? {
@@ -392,6 +394,17 @@ impl<'a> ApplyUseCase<'a> {
                 }
                 self.remove_mcp_servers(&path, &target.server_key, &dropped_servers)?;
                 self.prune_empty_parents(&path, project_root)?;
+            }
+        }
+
+        // A skill renamed or removed from `.imrule/skills/` leaves its old copy
+        // in every skills root this run still writes. Only copies imrule made
+        // are recorded, so a skill the user put there by hand is never touched.
+        for stale in previous.stale_skills(current) {
+            let path = project_root.join(&stale);
+            if self.fs_port.dir_exists(&path) {
+                self.fs_port.remove_dir_all(&path)?;
+                tracing::info!(path = %path.display(), "removed stale skill copy");
             }
         }
 
@@ -630,18 +643,22 @@ impl<'a> ApplyUseCase<'a> {
         Ok(written)
     }
 
+    /// Copies every discovered skill into each selected agent's skills root.
+    /// Returns the roots written (for `.gitignore` and the manifest) and,
+    /// separately, the individual skill directories copied into them.
     fn apply_skills(
         &self,
         project_root: &Path,
         selected_agents: &[AgentDefinition],
         dry_run: bool,
-    ) -> Result<Vec<PathBuf>, ImruleError> {
+    ) -> Result<(Vec<PathBuf>, Vec<PathBuf>), ImruleError> {
         let discovery = self.fs_port.discover_skills(project_root)?;
         if discovery.skills.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
 
         let mut written = Vec::new();
+        let mut copied = Vec::new();
 
         for target_dir in get_skills_gitignore_paths(project_root, selected_agents) {
             if !dry_run {
@@ -654,7 +671,7 @@ impl<'a> ApplyUseCase<'a> {
                         Ok(dest)
                     })
                     .collect();
-                copy_results?;
+                copied.extend(copy_results?);
             }
             written.push(target_dir);
         }
@@ -683,7 +700,7 @@ impl<'a> ApplyUseCase<'a> {
             }
         }
 
-        Ok(written)
+        Ok((written, copied))
     }
 }
 

@@ -98,6 +98,32 @@ fn stale_mcp_targets_and_servers_track_a_shrinking_config() {
 }
 
 #[test]
+fn stale_skills_are_the_copies_the_current_run_no_longer_makes() {
+    let root = PathBuf::from("/project");
+    let copies = |names: &[&str]| {
+        names
+            .iter()
+            .map(|name| root.join(".claude/skills").join(name))
+            .collect::<Vec<_>>()
+    };
+    let previous = manifest(&[".claude/skills"], &[], &[])
+        .with_skills(&root, &copies(&["rust-cli", "cli", "cli"]));
+    let current = manifest(&[".claude/skills"], &[], &[]).with_skills(&root, &copies(&["cli"]));
+
+    assert_eq!(
+        previous.skills,
+        vec![".claude/skills/cli", ".claude/skills/rust-cli"]
+    );
+    assert_eq!(
+        previous.stale_skills(&current),
+        vec![".claude/skills/rust-cli"]
+    );
+    // Skill copies are reconciled on their own, never through `paths`.
+    assert!(previous.stale_paths(&current).is_empty());
+    assert_eq!(current.merged_with(&previous).skills, previous.skills);
+}
+
+#[test]
 fn native_mcp_emptiness_covers_json_and_toml_and_spares_user_data() {
     assert!(is_json_effectively_empty(&json!({"mcpServers": {}})));
     assert!(!is_json_effectively_empty(
@@ -298,6 +324,51 @@ fn a_generated_file_the_user_has_taken_over_is_never_removed() {
     assert_eq!(
         fs::read_to_string(root.join("AGENTS.md")).unwrap(),
         "my own notes\n"
+    );
+}
+
+fn write_skill(root: &std::path::Path, dir: &str) {
+    let path = root.join(".imrule/skills").join(dir);
+    fs::create_dir_all(&path).unwrap();
+    fs::write(path.join("SKILL.md"), dir).unwrap();
+}
+
+#[test]
+fn grouped_skills_publish_under_path_names_and_dropped_ones_are_pruned() {
+    let temporary = project("\"claude\", \"codex\"", "");
+    let root = temporary.path();
+    write_skill(root, "cli");
+    write_skill(root, "python/cli");
+    write_skill(root, "rust/cli");
+    // A skill the user put into the agent root by hand, not through imrule.
+    fs::create_dir_all(root.join(".claude/skills/mine")).unwrap();
+    fs::write(root.join(".claude/skills/mine/SKILL.md"), "mine").unwrap();
+
+    apply(root, &[]);
+    for skills_root in [".claude/skills", ".codex/skills"] {
+        for (published, source) in [
+            ("cli", "cli"),
+            ("python-cli", "python/cli"),
+            ("rust-cli", "rust/cli"),
+        ] {
+            assert_eq!(
+                fs::read_to_string(root.join(skills_root).join(published).join("SKILL.md"))
+                    .unwrap(),
+                source,
+                "{skills_root}/{published}"
+            );
+        }
+    }
+
+    fs::remove_dir_all(root.join(".imrule/skills/rust")).unwrap();
+    apply(root, &[]);
+
+    assert!(!root.join(".claude/skills/rust-cli").exists());
+    assert!(!root.join(".codex/skills/rust-cli").exists());
+    assert!(root.join(".claude/skills/python-cli").exists());
+    assert!(
+        root.join(".claude/skills/mine/SKILL.md").exists(),
+        "a skill imrule never copied was removed"
     );
 }
 

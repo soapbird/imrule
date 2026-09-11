@@ -5,23 +5,62 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::domain::config::SkillInfo;
-use crate::domain::constants::{normalize_path_separators, *};
-use crate::domain::skills::SkillsDiscovery;
+use crate::domain::constants::{
+    IMRULE_SKILLS_PATH, LEGACY_SKILLS_PATH, SKILL_MD_FILENAME, normalize_path_separators,
+    relative_key,
+};
+use crate::domain::error::ImruleError;
+use crate::domain::skills::{SkillsDiscovery, ensure_unique_skill_names, flatten_skill_name};
 
-/// Discovers skills in `.imrule/skills` (falls back to `.ruler/skills`).
-pub fn discover_skills(project_root: &Path) -> io::Result<SkillsDiscovery> {
+/// Discovers skills in `.imrule/skills` (falls back to `.ruler/skills`), each
+/// named as `apply` publishes it.
+pub fn discover_skills(project_root: &Path) -> Result<SkillsDiscovery, ImruleError> {
     let skills_dir = project_root.join(IMRULE_SKILLS_PATH);
     if skills_dir.exists() {
-        return walk_skills_tree(&skills_dir);
+        return walk_project_skills_tree(&skills_dir);
     }
     let legacy_dir = project_root.join(LEGACY_SKILLS_PATH);
     if legacy_dir.exists() {
-        return walk_skills_tree(&legacy_dir);
+        return walk_project_skills_tree(&legacy_dir);
     }
     Ok(SkillsDiscovery::default())
 }
 
-/// Walks a skills root, returning valid skills plus validation warnings.
+/// Walks a project (or global) skills root, naming each skill by its flattened
+/// path below the root (`python/cli` → `python-cli`). Fails when two skills
+/// flatten to the same name, and warns when a skill's frontmatter `name`
+/// disagrees with it.
+pub fn walk_project_skills_tree(root: &Path) -> Result<SkillsDiscovery, ImruleError> {
+    let mut discovery = walk_skills_tree(root).map_err(|e| ImruleError::skills(e.to_string()))?;
+    let mut mismatches = Vec::new();
+    for skill in &mut discovery.skills {
+        let relative = skill.path.strip_prefix(root).unwrap_or(&skill.path);
+        skill.name = flatten_skill_name(relative);
+        if let Some(declared) = declared_skill_name(&skill.path.join(SKILL_MD_FILENAME)) {
+            if declared != skill.name {
+                mismatches.push(format!(
+                    "Skill '{}' declares name '{declared}' but is published as '{}'; agents that require the name to match the directory will skip it.",
+                    relative_key(root, &skill.path),
+                    skill.name
+                ));
+            }
+        }
+    }
+    ensure_unique_skill_names(&discovery.skills, root)?;
+    discovery.warnings.extend(mismatches);
+    Ok(discovery)
+}
+
+/// The `name` a `SKILL.md` declares in its frontmatter, if it declares one.
+fn declared_skill_name(skill_md: &Path) -> Option<String> {
+    let content = fs::read_to_string(skill_md).ok()?;
+    let parsed = crate::domain::subagent::parse_frontmatter(&content).ok()??;
+    parsed.meta.get("name")?.as_str().map(str::to_string)
+}
+
+/// Walks a skills root, returning valid skills plus validation warnings. Skills
+/// keep their directory's own name, which is what a fetched source repository
+/// is matched by.
 pub fn walk_skills_tree(root: &Path) -> io::Result<SkillsDiscovery> {
     let mut result = SkillsDiscovery::default();
     walk(root, Path::new(""), &mut result)?;

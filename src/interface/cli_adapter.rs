@@ -15,7 +15,9 @@ use crate::application::mcp_use_case::{
 };
 
 use crate::application::ports::FileSystemPort;
-use crate::application::skills_add_use_case::{SkillsAddOptions, SkillsAddUseCase};
+use crate::application::skills_add_use_case::{
+    SkillsAddOptions, SkillsAddUseCase, list_installed_skills,
+};
 use crate::application::skills_update_use_case::{SkillsUpdateOptions, SkillsUpdateUseCase};
 use crate::infrastructure::agent_writer::DefaultAgentWriter;
 use crate::infrastructure::config_loader::TomlConfigLoader;
@@ -496,25 +498,20 @@ fn run_inner() -> Result<(), CliError> {
                 SkillsCommand::List(args) => {
                     init_tracing(false);
                     let project_root = resolve_project_root(&args.project_root);
-                    let imrule_skills = project_root.join(".imrule").join("skills");
-                    let legacy_skills = project_root.join(".ruler").join("skills");
-                    let skills_dir = if args.global {
-                        crate::domain::constants::xdg_config_home()
-                            .join("imrule")
-                            .join("skills")
-                    } else if imrule_skills.exists() {
-                        imrule_skills
-                    } else if legacy_skills.exists() {
-                        legacy_skills
-                    } else {
-                        imrule_skills
-                    };
-                    let discovery = if skills_dir.exists() {
-                        crate::infrastructure::skills::walk_skills_tree(&skills_dir)
-                            .map_err(|e| CliError::new(1, e.to_string()))?
-                    } else {
-                        crate::domain::skills::SkillsDiscovery::default()
-                    };
+                    let (skills_dir, discovery) =
+                        list_installed_skills(&fs, &project_root, args.global)?;
+                    if args.json {
+                        let skills: Vec<serde_json::Value> = discovery
+                        .skills
+                        .iter()
+                        .map(|skill| serde_json::json!({ "name": skill.name, "path": skill.path }))
+                        .collect();
+                        return print_json(&serde_json::json!({
+                            "dir": skills_dir,
+                            "skills": skills,
+                            "warnings": discovery.warnings,
+                        }));
+                    }
                     if discovery.skills.is_empty() {
                         println!("No skills installed in {}.", skills_dir.display());
                     } else {
@@ -523,11 +520,25 @@ fn run_inner() -> Result<(), CliError> {
                             println!("  - {} ({})", skill.name, skill.path.display());
                         }
                     }
+                    if !discovery.warnings.is_empty() {
+                        eprintln!(
+                            "Warnings:\n{}",
+                            crate::domain::skills::format_validation_warnings(&discovery.warnings)
+                        );
+                    }
                     Ok(())
                 }
             }
         }
     }
+}
+
+/// Prints one JSON document on stdout, the whole output of a `--json` run.
+fn print_json(document: &serde_json::Value) -> Result<(), CliError> {
+    let text =
+        serde_json::to_string_pretty(document).map_err(|err| CliError::new(1, err.to_string()))?;
+    println!("{text}");
+    Ok(())
 }
 
 #[derive(Debug)]
