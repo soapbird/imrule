@@ -135,8 +135,20 @@ fn copy_recursive(src: &Path, dest: &Path) -> io::Result<()> {
             let entry = entry?;
             copy_recursive(&entry.path(), &dest.join(entry.file_name()))?;
         }
-    } else if !same_contents(src, dest) {
+    } else if same_contents(src, dest) {
+        // `fs::copy` carried the permissions too, so skipping the write must
+        // not skip a mode change such as a script made executable.
+        sync_permissions(src, dest)?;
+    } else {
         fs::copy(src, dest)?;
+    }
+    Ok(())
+}
+
+fn sync_permissions(src: &Path, dest: &Path) -> io::Result<()> {
+    let wanted = fs::metadata(src)?.permissions();
+    if fs::metadata(dest)?.permissions() != wanted {
+        fs::set_permissions(dest, wanted)?;
     }
     Ok(())
 }

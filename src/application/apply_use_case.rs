@@ -11,7 +11,9 @@ use crate::application::ports::{
     ManifestPort, McpPort,
 };
 use crate::domain::agent::{AgentDefinition, AgentOutputPaths, all_agents, find_agent};
-use crate::domain::config::{AgentConfig, LoadedConfig, McpRemoteTransport, McpStrategy};
+use crate::domain::config::{
+    AgentConfig, LoadedConfig, McpRemoteTransport, McpStrategy, SkillInfo,
+};
 use crate::domain::constants::{
     GENERATED_BY_IMRULE_MARKER, IMRULE_GENERATED_STATE_PATHS, normalize_path_separators,
 };
@@ -24,7 +26,7 @@ use crate::domain::mcp::{
     validate_mcp_config_for_remote_transport,
 };
 use crate::domain::rules::concatenate_rules;
-use crate::domain::skills::get_skills_gitignore_paths;
+use crate::domain::skills::{SkillsDiscovery, all_skills_roots, get_skills_gitignore_paths};
 
 /// Runtime options for `imrule apply`.
 #[derive(Debug, Clone)]
@@ -133,6 +135,20 @@ impl<'a> ApplyUseCase<'a> {
                 ))
             })?;
 
+        // Discover skills before writing anything: two skills that would publish
+        // under one name fail the run, and failing after the rule files are
+        // written would leave them on disk without a `.gitignore` entry.
+        let skills_enabled = config
+            .skills
+            .as_ref()
+            .and_then(|s| s.enabled)
+            .unwrap_or(true);
+        let skills_discovery = if skills_enabled {
+            Some(self.fs_port.discover_skills(&options.project_root)?)
+        } else {
+            None
+        };
+
         let include_agents = config
             .subagents
             .as_ref()
@@ -173,15 +189,14 @@ impl<'a> ApplyUseCase<'a> {
             written_paths.extend(mcp_outcome.targets.iter().map(|(path, _)| path.clone()));
         }
 
-        let skills_enabled = config
-            .skills
-            .as_ref()
-            .and_then(|s| s.enabled)
-            .unwrap_or(true);
-        let (skills_paths, copied_skills) = if skills_enabled {
-            self.apply_skills(&options.project_root, &selected_agents, options.dry_run)?
-        } else {
-            Default::default()
+        let (skills_paths, copied_skills) = match &skills_discovery {
+            Some(discovery) => self.apply_skills(
+                &options.project_root,
+                discovery,
+                &selected_agents,
+                options.dry_run,
+            )?,
+            None => Default::default(),
         };
         written_paths.extend(skills_paths);
 
@@ -408,13 +423,23 @@ impl<'a> ApplyUseCase<'a> {
             }
         }
 
+        let skills_roots = all_skills_roots();
         for stale in previous.stale_paths(current) {
             let path = project_root.join(&stale);
             if !self.fs_port.file_exists(&path) {
                 continue;
             }
             if self.fs_port.dir_exists(&path) {
-                self.fs_port.remove_dir_all(&path)?;
+                // A skills root also holds skills the user put there by hand.
+                // imrule's own copies were pruned one by one above, so the root
+                // itself goes only once nothing else is left in it.
+                if skills_roots.contains(&stale) {
+                    if !self.fs_port.remove_dir_if_empty(&path)? {
+                        continue;
+                    }
+                } else {
+                    self.fs_port.remove_dir_all(&path)?;
+                }
             } else if self
                 .fs_port
                 .read_text(&path)
@@ -468,6 +493,39 @@ impl<'a> ApplyUseCase<'a> {
     }
 
     /// Removes now-empty directories from `path`'s parent up to `project_root`.
+    /// Before 0.5 a grouped skill was copied under its leaf directory name
+    /// (`python/cli` became `cli`), and those copies were never recorded, so no
+    /// later run would prune them. A leaf-named copy is removed only when it
+    /// matches the source skill byte for byte, which shows imrule made it;
+    /// anything else under that name is left alone.
+    fn remove_pre_0_5_skill_copies(
+        &self,
+        skills: &[SkillInfo],
+        target_dir: &Path,
+    ) -> Result<(), ImruleError> {
+        for skill in skills {
+            let Some(leaf) = skill.path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            // Compared without case: on a case-insensitive filesystem a skill
+            // published as `CLI` is the same directory as a legacy `cli`.
+            if skills
+                .iter()
+                .any(|other| other.name.eq_ignore_ascii_case(leaf))
+            {
+                continue;
+            }
+            let legacy = target_dir.join(leaf);
+            if self.fs_port.dir_exists(&legacy)
+                && matches!(self.fs_port.dirs_match(&skill.path, &legacy), Ok(true))
+            {
+                self.fs_port.remove_dir_all(&legacy)?;
+                tracing::info!(path = %legacy.display(), "removed a skill copy left under its pre-0.5 name");
+            }
+        }
+        Ok(())
+    }
+
     fn prune_empty_parents(&self, path: &Path, project_root: &Path) -> Result<(), ImruleError> {
         let mut dir = match path.parent() {
             Some(parent) => parent.to_path_buf(),
@@ -649,10 +707,10 @@ impl<'a> ApplyUseCase<'a> {
     fn apply_skills(
         &self,
         project_root: &Path,
+        discovery: &SkillsDiscovery,
         selected_agents: &[AgentDefinition],
         dry_run: bool,
     ) -> Result<(Vec<PathBuf>, Vec<PathBuf>), ImruleError> {
-        let discovery = self.fs_port.discover_skills(project_root)?;
         if discovery.skills.is_empty() {
             return Ok((Vec::new(), Vec::new()));
         }
@@ -672,6 +730,7 @@ impl<'a> ApplyUseCase<'a> {
                     })
                     .collect();
                 copied.extend(copy_results?);
+                self.remove_pre_0_5_skill_copies(&discovery.skills, &target_dir)?;
             }
             written.push(target_dir);
         }

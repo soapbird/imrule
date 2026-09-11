@@ -206,6 +206,15 @@ pub fn get_skills_gitignore_paths(project_root: &Path, agents: &[AgentDefinition
     )
 }
 
+/// Every agent skills root, project-relative with forward slashes, whichever
+/// agents are selected.
+pub fn all_skills_roots() -> Vec<String> {
+    get_skills_gitignore_paths(Path::new(""), &crate::domain::agent::all_agents())
+        .iter()
+        .map(|root| normalize_path_separators(&root.to_string_lossy()))
+        .collect()
+}
+
 /// The string recorded for a source in `[skills.sources]`. Local paths are
 /// stored resolved so a later `update` run from another working directory
 /// still points at the same tree.

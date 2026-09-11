@@ -43,7 +43,16 @@ impl ManifestPort for JsonApplyManifest {
         // treated as absent. Cleanup then skips this run instead of failing an
         // apply that is otherwise entirely valid.
         match serde_json::from_slice::<ApplyManifest>(&bytes) {
-            Ok(manifest) if manifest.is_readable() => Ok(Some(manifest)),
+            Ok(manifest) if manifest.is_readable() => {
+                let (manifest, dropped) = manifest.without_escaping_entries();
+                if dropped > 0 {
+                    tracing::warn!(
+                        dropped,
+                        "apply manifest names paths outside the project; ignoring those entries"
+                    );
+                }
+                Ok(Some(manifest))
+            }
             Ok(manifest) => {
                 tracing::warn!(
                     version = manifest.version,

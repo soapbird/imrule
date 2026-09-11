@@ -10,11 +10,12 @@
 //! previous run's outputs forward.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use serde::{Deserialize, Serialize};
 
 use crate::domain::constants::relative_key;
+use crate::domain::skills::all_skills_roots;
 
 /// Schema version of the on-disk manifest. Bump when the shape changes
 /// incompatibly; readers treat an unrecognized version as "no manifest".
@@ -121,9 +122,41 @@ impl ApplyManifest {
         }
     }
 
+    /// Drops every entry that could name something outside the project: an
+    /// absolute path, a `..` step, or, for `skills`, anything but a directory
+    /// directly inside a known agent skills root. Each entry is a deletion
+    /// candidate, and the manifest is a plain file a repository can commit.
+    /// Returns the manifest and how many entries were dropped.
+    pub fn without_escaping_entries(mut self) -> (Self, usize) {
+        let count = |manifest: &Self| {
+            manifest.paths.len() + manifest.mcp_targets.len() + manifest.skills.len()
+        };
+        let before = count(&self);
+        self.paths.retain(|entry| is_contained_relative(entry));
+        self.mcp_targets
+            .retain(|target| is_contained_relative(&target.path));
+        let roots = all_skills_roots();
+        self.skills
+            .retain(|entry| is_skill_copy_entry(entry, &roots));
+        let dropped = before - count(&self);
+        (self, dropped)
+    }
+
     /// Skill directories this manifest recorded that `current` no longer copies.
+    /// Compared without case: on a case-insensitive filesystem a skill renamed
+    /// from `Foo` to `foo` is still the directory this run just copied into, and
+    /// pruning the old entry would delete that copy.
     pub fn stale_skills(&self, current: &ApplyManifest) -> Vec<String> {
-        stale_of(&self.skills, current.skills.iter().map(String::as_str))
+        let kept: BTreeSet<String> = current
+            .skills
+            .iter()
+            .map(|entry| entry.to_lowercase())
+            .collect();
+        self.skills
+            .iter()
+            .filter(|entry| !kept.contains(&entry.to_lowercase()))
+            .cloned()
+            .collect()
     }
 
     /// Paths this manifest recorded that `current` no longer produces.
@@ -177,6 +210,22 @@ fn relative_keys(project_root: &Path, paths: &[std::path::PathBuf]) -> Vec<Strin
         .map(|path| relative_key(project_root, path))
         .collect();
     keys.into_iter().collect()
+}
+
+/// A non-empty relative path made only of plain names: no root, drive prefix,
+/// `.` or `..`.
+fn is_contained_relative(entry: &str) -> bool {
+    !entry.is_empty()
+        && Path::new(entry)
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+}
+
+/// `<skills root>/<name>`: one directory directly inside a known skills root.
+fn is_skill_copy_entry(entry: &str, roots: &[String]) -> bool {
+    entry.rsplit_once('/').is_some_and(|(root, name)| {
+        roots.iter().any(|known| known == root) && is_contained_relative(name)
+    })
 }
 
 /// Entries from `previous` that `kept` no longer contains.

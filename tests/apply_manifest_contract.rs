@@ -199,6 +199,183 @@ fn a_manifest_written_before_skill_copies_were_recorded_still_loads() {
     assert!(loaded.skills.is_empty());
 }
 
+#[test]
+fn manifest_entries_that_could_reach_outside_the_project_are_dropped() {
+    let recorded = ApplyManifest {
+        version: MANIFEST_VERSION,
+        paths: vec![
+            "CLAUDE.md".to_string(),
+            "../victim".to_string(),
+            "/etc".to_string(),
+            "docs/../../victim".to_string(),
+            String::new(),
+        ],
+        mcp_servers: vec!["linear".to_string()],
+        mcp_targets: vec![
+            McpTarget {
+                path: ".mcp.json".to_string(),
+                server_key: "mcpServers".to_string(),
+            },
+            McpTarget {
+                path: "../.mcp.json".to_string(),
+                server_key: "mcpServers".to_string(),
+            },
+        ],
+        skills: vec![
+            ".claude/skills/cli".to_string(),
+            ".codex/skills/python-cli".to_string(),
+            ".claude/skills/../../victim".to_string(),
+            ".claude/skills".to_string(),
+            ".claude/skills/python/cli".to_string(),
+            "docs/cli".to_string(),
+            "/elsewhere/.claude/skills/cli".to_string(),
+        ],
+    };
+
+    let (kept, dropped) = recorded.without_escaping_entries();
+
+    assert_eq!(kept.paths, vec!["CLAUDE.md"]);
+    assert_eq!(kept.mcp_servers, vec!["linear"]);
+    assert_eq!(
+        kept.mcp_targets,
+        vec![McpTarget {
+            path: ".mcp.json".to_string(),
+            server_key: "mcpServers".to_string(),
+        }]
+    );
+    assert_eq!(
+        kept.skills,
+        vec![".claude/skills/cli", ".codex/skills/python-cli"]
+    );
+    assert_eq!(dropped, 10);
+}
+
+#[test]
+fn a_case_only_rename_does_not_make_the_new_copy_stale() {
+    // On a case-insensitive filesystem `Foo` and `foo` are one directory, and
+    // it now holds the copy this run made.
+    let previous = ApplyManifest {
+        skills: vec![
+            ".claude/skills/Foo".to_string(),
+            ".claude/skills/gone".to_string(),
+        ],
+        ..ApplyManifest::default()
+    };
+    let current = ApplyManifest {
+        skills: vec![".claude/skills/foo".to_string()],
+        ..ApplyManifest::default()
+    };
+
+    assert_eq!(previous.stale_skills(&current), vec![".claude/skills/gone"]);
+}
+
+#[test]
+fn a_tampered_manifest_cannot_delete_anything_outside_the_project() {
+    let workspace = tempdir().unwrap();
+    let root = workspace.path().join("project");
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        "default_agents = [\"claude\"]\n",
+    )
+    .unwrap();
+    fs::write(root.join(".imrule/AGENTS.md"), "# rules\n").unwrap();
+    let victims = ["victim-skill", "victim-path"].map(|name| workspace.path().join(name));
+    for victim in &victims {
+        fs::create_dir_all(victim.join("deep")).unwrap();
+        fs::write(victim.join("deep/keep"), "keep").unwrap();
+    }
+    let outside = tempdir().unwrap();
+    fs::write(outside.path().join("keep"), "keep").unwrap();
+    let outside_path = outside.path().to_str().unwrap();
+    apply(&root, &[]);
+
+    // A manifest is a plain file; a cloned repository can ship any content.
+    let manifest_path = root.join(IMRULE_MANIFEST_PATH);
+    let mut recorded: Value =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    recorded["skills"] = json!([
+        "../victim-skill/deep",
+        ".claude/skills/../../victim-skill",
+        outside_path,
+    ]);
+    recorded["paths"] = json!(["../victim-path", outside_path]);
+    fs::write(&manifest_path, recorded.to_string()).unwrap();
+    apply(&root, &[]);
+
+    for victim in &victims {
+        assert!(victim.join("deep/keep").exists(), "{victim:?} was deleted");
+    }
+    assert!(
+        outside.path().join("keep").exists(),
+        "{outside_path} was deleted"
+    );
+}
+
+#[test]
+fn removing_every_skill_keeps_the_skills_placed_in_an_agent_root_by_hand() {
+    let temporary = project("\"claude\", \"codex\"", "");
+    let root = temporary.path();
+    write_skill(root, "cli");
+    fs::create_dir_all(root.join(".claude/skills/mine")).unwrap();
+    fs::write(root.join(".claude/skills/mine/SKILL.md"), "mine").unwrap();
+    apply(root, &[]);
+    assert!(root.join(".codex/skills/cli/SKILL.md").exists());
+
+    fs::remove_dir_all(root.join(".imrule/skills")).unwrap();
+    apply(root, &[]);
+    assert!(!root.join(".claude/skills/cli").exists());
+    assert!(
+        root.join(".claude/skills/mine/SKILL.md").exists(),
+        "pruning the last copy removed a skill imrule never copied"
+    );
+    assert!(
+        !root.join(".codex/skills").exists(),
+        "a skills root left empty should still be pruned"
+    );
+
+    // Turning skills off prunes the same way as removing them.
+    write_skill(root, "cli");
+    apply(root, &[]);
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        "default_agents = [\"claude\", \"codex\"]\n\n[skills]\nenabled = false\n",
+    )
+    .unwrap();
+    apply(root, &[]);
+    assert!(!root.join(".claude/skills/cli").exists());
+    assert!(root.join(".claude/skills/mine/SKILL.md").exists());
+}
+
+#[test]
+fn copies_left_under_a_pre_0_5_leaf_name_are_removed_only_when_they_match_the_source() {
+    let temporary = project("\"claude\", \"codex\"", "");
+    let root = temporary.path();
+    write_skill(root, "python/cli");
+    // What 0.4.2 left behind: the grouped skill copied under its leaf name,
+    // once untouched and once edited in the agent directory.
+    for (skills_root, content) in [
+        (".claude/skills", "python/cli"),
+        (".codex/skills", "edited by hand"),
+    ] {
+        let legacy = root.join(skills_root).join("cli");
+        fs::create_dir_all(&legacy).unwrap();
+        fs::write(legacy.join("SKILL.md"), content).unwrap();
+    }
+
+    apply(root, &[]);
+
+    assert!(root.join(".claude/skills/python-cli/SKILL.md").exists());
+    assert!(
+        !root.join(".claude/skills/cli").exists(),
+        "an identical pre-0.5 copy was left behind"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".codex/skills/cli/SKILL.md")).unwrap(),
+        "edited by hand"
+    );
+}
+
 // ------------------------------------------------------------------- cli ---
 
 /// A project wired to two agents and one stdio MCP server. Stdio is deliberate:
@@ -425,6 +602,10 @@ fn skills_that_would_publish_under_one_name_fail_apply_and_list() {
     assert!(
         !root.join(".claude/skills").exists(),
         "neither colliding skill may be copied"
+    );
+    assert!(
+        !root.join("CLAUDE.md").exists(),
+        "apply wrote rule files before failing on the collision"
     );
 }
 

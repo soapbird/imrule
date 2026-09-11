@@ -81,6 +81,29 @@ fn discovers_skills_groupings_warnings_copies_and_gitignore_targets() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn copying_skills_again_carries_a_permission_change_on_an_unchanged_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempdir().unwrap();
+    let root = tmp.path();
+    write_source_skill(&root.join("src"), "demo", "same\n");
+    let script = root.join("src/demo/run.sh");
+    fs::write(&script, "#!/bin/sh\n").unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o644)).unwrap();
+    copy_skills_directory(&root.join("src"), &root.join("dest")).unwrap();
+
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    copy_skills_directory(&root.join("src"), &root.join("dest")).unwrap();
+
+    let mode = fs::metadata(root.join("dest/demo/run.sh"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o755, "the copy kept its old mode");
+}
+
 #[test]
 fn copying_skills_again_leaves_unchanged_files_untouched() {
     let tmp = tempdir().unwrap();
