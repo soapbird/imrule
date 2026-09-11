@@ -14,11 +14,12 @@ Clone the repository and verify your environment:
 ```bash
 git clone https://github.com/soapbird/imrule.git
 cd imrule
-make
+make setup
+make check
 ```
 
-`make` runs formatting checks, Clippy lints, the full test suite, and a release
-build.
+`make` alone lists every target. `make check` runs the formatting check, Clippy
+lints, and the full test suite without modifying files — the same gate CI runs.
 
 ## Project structure
 
@@ -36,10 +37,13 @@ contract tests in `tests/`.
 ## Making changes
 
 1. Open an issue or discussion first for large features or breaking changes.
-2. Create a feature branch from `main`.
+2. Create a feature branch from `develop` (`feature/<name>`). ImRule follows
+   git-flow: features merge into `develop`; releases are cut on
+   `release/X.Y.Z.W`, merged into `main`, tagged `vX.Y.Z.W`, and merged back
+   into `develop`.
 3. Make focused, minimal changes.
 4. Add or update contract tests in `tests/` for any changed behavior.
-5. Run `make` before pushing.
+5. Run `make fmt` to format, then `make check` before pushing.
 
 ## Commit messages
 
@@ -63,8 +67,8 @@ feat: add support for Zed agent
 
 ## Code style
 
-- Run `cargo fmt` before committing.
-- Keep Clippy clean: `cargo clippy -- -D warnings`.
+- Run `make fmt` before committing.
+- Keep Clippy clean: `make lint` (`cargo clippy --all-targets --all-features -- -D warnings`).
 - Do not import domain or infrastructure modules directly from `main.rs`.
 - Preserve the existing architecture contract enforced by
   `tests/architecture_contract.rs`.
@@ -72,14 +76,16 @@ feat: add support for Zed agent
 ## Testing
 
 ```bash
-make test          # integration/contract tests
-make test-e2e      # shell-based end-to-end tests
-make coverage      # generate an lcov coverage report
+make check            # fmt-check + lint + test (read-only, what CI runs)
+make test             # integration/contract tests
+make test-e2e         # shell-based end-to-end tests (scripts/test-e2e.sh)
+make test-e2e-skills  # skills end-to-end tests, including a remote GitHub source
+make coverage         # generate an lcov coverage report
 ```
 
 ## Pull request checklist
 
-- [ ] `make` passes locally.
+- [ ] `make check` passes locally.
 - [ ] New behavior is covered by a contract test.
 - [ ] Documentation (`README.md`, `.imrule/AGENTS.md`) is updated if needed.
 - [ ] `CHANGELOG.md` is updated if the change is user-facing.

@@ -27,25 +27,30 @@ This is a native Rust project (edition 2024, MSRV 1.85). It was rewritten from a
 ## Build and Test Commands
 
 ```bash
-# Full pipeline: format check + lint + test + release build
-make
+make                 # list targets (help is the default goal)
+make setup           # rustup component add rustfmt clippy + cargo fetch
+
+# CI gate (read-only): fmt-check + lint + test
+make check
 
 # Individual targets
-make build          # cargo build --release
-make check          # cargo check (fast compile check)
-make test           # cargo test (integration/contract tests)
-make test-e2e       # end-to-end shell tests against test-e2e/ fixtures
-make lint           # cargo clippy -- -D warnings
-make fmt            # cargo fmt -- --check
-make fmt-fix        # cargo fmt (auto-format)
-make clean          # cargo clean
-make install        # copy binary to $HOME/.local/bin/imrule
-make install-system # copy binary to /usr/local/bin/imrule (needs sudo)
-make uninstall      # remove installed binary
-make run ARGS="..." # cargo run -- ...
+make fmt             # cargo fmt --all (writes)
+make fmt-check       # cargo fmt --all --check
+make lint            # cargo clippy --all-targets --all-features -- -D warnings
+make test            # cargo test (integration/contract tests)
+make build           # cargo build --release
+make run ARGS="..."  # cargo run -- ...
+make clean           # cargo clean
+make test-e2e        # scripts/test-e2e.sh against the release binary and test-e2e/ fixtures
+make test-e2e-skills # scripts/test-e2e-skills.sh (includes a remote GitHub source)
+make coverage        # cargo llvm-cov → lcov.info
+make changelog       # git cliff --unreleased --prepend CHANGELOG.md
+make install         # copy binary to $HOME/.local/bin/imrule
+make install-system  # copy binary to /usr/local/bin/imrule (needs sudo)
+make uninstall       # remove installed binary
 ```
 
-There is no `rustfmt.toml` or custom Clippy configuration; the project uses default Rust tooling settings.
+Tooling configuration: `rust-toolchain.toml` pins 1.85 (the MSRV, also used by CI and release builds), `[lints]` in `Cargo.toml` forbids `unsafe` and warns on `dbg!`/`todo!`, `src/lib.rs` warns on `unwrap`/`expect` in production code (a crate-root attribute, so tests and benches may still unwrap), and `deny.toml` holds the cargo-deny license/advisory/source policy (`make deny`). rustfmt uses defaults.
 
 ## Code Organization
 
@@ -64,7 +69,7 @@ skills/                # Built-in skills embedded into the binary by build.rs (s
 
 ### Domain (`src/domain/`)
 - `builtin_skills.rs` — Built-in skill catalog built from embedded files, `ProjectSignals` → `recommend_builtin_skills` detection rules, and `BuiltinSkillState` (not installed / up to date / outdated revision / modified locally).
-- `agent.rs` — Compile-time `const` array of 36 `AgentDefinition`s (identifier, name, output paths, MCP keys, capabilities). This is the single source of truth for the agent registry.
+- `agent.rs` — Compile-time `const` array of 36 `AgentDefinition`s (identifier, name, output paths, MCP keys, capabilities). This is the single source of truth for the agent registry. `AGENT_ALIASES` maps alternate names users type (`droid` → `factory`) onto registry identifiers; resolve names through `find_agent`/`canonical_agent_identifier` rather than comparing `identifier` directly.
 - `config.rs` — Config structs: `LoadedConfig`, `AgentConfig`, `McpConfig`, `McpServerDefinition`, `McpTransport`, `GitignoreConfig`, `SkillsConfig`, `SubagentsConfig`, `SubagentFrontmatter`.
 - `error.rs` — Unified `ImruleError` enum (`thiserror`) with variants: `UnknownAgent`, `Config`, `Mcp`, `Subagent`, `Rules`, `Skills`, `Filesystem`, `Gitignore`.
 - `manifest.rs` — `ApplyManifest`/`McpTarget`: the record of what a run generated, plus the pure diffs (`stale_paths`, `stale_mcp_targets`, `stale_mcp_servers`, `stale_skills`, `merged_with`) that let a later run clean up what it no longer produces.

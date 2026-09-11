@@ -10,6 +10,13 @@
 /tmp/
 /.omx/
 
+# VS Code: share project settings, ignore everything else
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
 # Agent runtime state (session transcripts, caches)
 /.gjc/
 

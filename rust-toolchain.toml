@@ -1,0 +1,6 @@
+# The MSRV is also the toolchain CI and release builds use, so local builds match
+# them. The stable CI job overrides it with RUSTUP_TOOLCHAIN.
+[toolchain]
+channel = "1.85"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
