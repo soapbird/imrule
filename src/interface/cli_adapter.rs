@@ -553,14 +553,22 @@ fn run_skills_setup(args: SkillsSetupArgs, sync: &AgentSync) -> Result<(), CliEr
     let requested_root = resolve_project_root(&args.project_root);
     let catalog = builtin_catalog();
     let use_case = SkillsSetupUseCase::new(sync.fs, &catalog);
-    // Resolved once: from a subdirectory, the install lands in the enclosing
-    // project's `.imrule/skills`, so detection and the sync use that project.
+    // Resolved once. From a subdirectory the install lands in the enclosing
+    // project's `.imrule/skills`, so detection reads that project, unless it is
+    // the home directory or above. The sync still runs only for the requested
+    // root, as `imrule apply` would, and explains itself when the skills live
+    // elsewhere: syncing an ancestor could rewrite files such as `~/CLAUDE.md`.
     let install_dir = use_case.install_dir(&SkillsSetupOptions {
         project_root: requested_root.clone(),
         global: args.global,
     });
-    let project_root = skills_project_root(&install_dir, &requested_root, args.global);
-    let plan = use_case.plan_in(install_dir, &collect_project_signals(&project_root));
+    let owner_root = skills_project_root(&install_dir, &requested_root, args.global);
+    let detection_root = if encloses_home(&owner_root) {
+        requested_root.clone()
+    } else {
+        owner_root
+    };
+    let plan = use_case.plan_in(install_dir, &collect_project_signals(&detection_root));
 
     if args.list && args.json {
         return print_json(&builtin_skills_json(&plan));
@@ -626,9 +634,29 @@ fn run_skills_setup(args: SkillsSetupArgs, sync: &AgentSync) -> Result<(), CliEr
     }
 
     if result.changed() && !args.dry_run {
-        sync.sync_skills(&plan.install_dir, project_root)?;
+        let owner_root = skills_project_root(&plan.install_dir, &requested_root, args.global);
+        if owner_root == requested_root {
+            sync.sync_skills(&plan.install_dir, requested_root)?;
+        } else {
+            println!(
+                "Skipping agent sync: these skills live in {}, which belongs to {}.\n\
+                 Run `imrule apply` there to sync them to agent directories.",
+                plan.install_dir.display(),
+                owner_root.display()
+            );
+        }
     }
     Ok(())
+}
+
+/// Whether `dir` is the home directory or one of its ancestors: never a project
+/// to read on the user's behalf. Both sides are resolved first, so `/tmp` and
+/// `/private/tmp` compare equal.
+fn encloses_home(dir: &Path) -> bool {
+    let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) else {
+        return false;
+    };
+    canonical_or_self(Path::new(&home)).starts_with(canonical_or_self(dir))
 }
 
 /// Tags shown next to a built-in skill: its path, detection, install state.

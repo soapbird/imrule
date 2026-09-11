@@ -306,11 +306,14 @@ pub fn recommend_builtin_skills(signals: &ProjectSignals) -> BTreeSet<&'static s
         .collect()
 }
 
-/// A hidden entry or Python bytecode anywhere in `path` (relative, with
-/// forward slashes): never part of an embedded skill, never user content.
+/// Litter an operating system or a checker run leaves in a skill folder
+/// (`path` is relative, with forward slashes): never part of an embedded
+/// skill, never user content. Other hidden files, such as `.env`, are the
+/// user's.
 fn is_incidental_file(path: &str) -> bool {
-    path.split('/')
-        .any(|part| part.starts_with('.') || part == "__pycache__")
+    let name = path.rsplit('/').next().unwrap_or(path);
+    matches!(name, ".DS_Store" | "Thumbs.db" | "desktop.ini")
+        || path.split('/').any(|part| part == "__pycache__")
 }
 
 /// Whether frontmatter metadata carries the built-in marker.
@@ -362,9 +365,8 @@ impl BuiltinSkillState {
             return Self::Modified;
         };
         // A file the embedded skill does not ship was added by the user, and
-        // replacing the directory would delete it. Hidden files and
-        // `__pycache__` are left out, as they are when the skills are embedded:
-        // a Finder `.DS_Store` or a checker's bytecode is not user content.
+        // replacing the directory would delete it. Only operating-system litter
+        // (`.DS_Store`) and a checker's `__pycache__` are left out.
         let embedded: BTreeSet<&str> = skill.files.iter().map(|(path, _)| path.as_str()).collect();
         if installed_files
             .iter()

@@ -894,8 +894,22 @@ fn install_state_compares_contents_before_revisions() {
             ]
         ),
         BuiltinSkillState::Outdated,
-        "hidden files and bytecode are not user content"
+        "operating-system litter and bytecode are not user content"
     );
+    for user_file in [".env", ".git/config", ".drafts/ideas.md"] {
+        assert_eq!(
+            state_of(
+                alpha,
+                &[
+                    ("SKILL.md", ALPHA_V1),
+                    ("scripts/check.py", old_check),
+                    (user_file, "the user's"),
+                ]
+            ),
+            BuiltinSkillState::Modified,
+            "{user_file} is the user's even though it is hidden"
+        );
+    }
     assert_eq!(
         state_of(alpha, &[("SKILL.md", ALPHA_V2)]),
         BuiltinSkillState::Modified,
@@ -1597,7 +1611,7 @@ fn setup_skips_a_locally_modified_skill_until_forced() {
 }
 
 #[test]
-fn setup_from_a_subdirectory_detects_and_syncs_the_enclosing_project() {
+fn setup_from_a_subdirectory_detects_the_enclosing_project_but_syncs_only_where_it_ran() {
     let (_tmp, project) = claude_project();
     fs::write(
         project.join("Cargo.toml"),
@@ -1625,13 +1639,58 @@ fn setup_from_a_subdirectory_detects_and_syncs_the_enclosing_project() {
         stdout.contains("rust-cli (rust/cli) [installed]"),
         "the project's Cargo.toml was not detected from src/: {stdout}"
     );
-    assert!(
-        stdout.contains("Skills synced to agent directories."),
-        "{stdout}"
-    );
+    // Like `imrule apply`, the sync runs for the directory setup ran in, so it
+    // explains itself instead of rewriting an ancestor.
+    assert!(stdout.contains("Skipping agent sync"), "{stdout}");
     assert!(project.join(".imrule/skills/rust/cli/SKILL.md").is_file());
-    assert!(project.join(".claude/skills/rust-cli/SKILL.md").is_file());
+    assert!(!project.join(".claude/skills").exists());
     assert!(!src.join(".imrule").exists() && !src.join(".claude").exists());
+}
+
+#[test]
+fn setup_below_a_home_with_imrule_never_reads_or_rewrites_the_home_directory() {
+    let tmp = tempdir().unwrap();
+    let home = tmp.path().join("home");
+    fs::create_dir_all(home.join(".imrule")).unwrap();
+    fs::write(
+        home.join(".imrule/imrule.toml"),
+        "default_agents = [\"claude\"]\n",
+    )
+    .unwrap();
+    fs::write(home.join(".imrule/AGENTS.md"), "# rules\n").unwrap();
+    fs::write(home.join("CLAUDE.md"), "my own notes\n").unwrap();
+    fs::write(
+        home.join("Cargo.toml"),
+        "[package]\nname = \"scratch\"\n\n[dependencies]\nclap = \"4\"\n",
+    )
+    .unwrap();
+    let project = home.join("code/newproj");
+    fs::create_dir_all(&project).unwrap();
+
+    let output = Command::cargo_bin("imrule")
+        .unwrap()
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", tmp.path().join("xdg"))
+        .args(["skills", "setup", "--yes", "--project-root"])
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = stdout_of(&output);
+    assert!(
+        !stdout.contains("rust-cli"),
+        "the home directory was read as the project: {stdout}"
+    );
+    assert_eq!(
+        fs::read_to_string(home.join("CLAUDE.md")).unwrap(),
+        "my own notes\n"
+    );
+    assert!(!home.join("AGENTS.md").exists());
+    assert!(!home.join(".claude").exists());
 }
 
 #[test]
