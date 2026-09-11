@@ -1,6 +1,6 @@
 [package]
 name = "imrule"
-version = "0.4.2"
+version = "0.5.0"
 edition = "2024"
 description = "ImRule — apply the same rules to all coding agents"
 license = "MIT"
