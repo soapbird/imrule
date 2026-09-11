@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use crate::application::ports::FileSystemPort;
 use crate::domain::constants::{
-    normalize_path_separators, xdg_config_home, GENERATED_BY_IMRULE_MARKER, LEGACY_DIR_NAME,
-    SKILLS_DIR,
+    GENERATED_BY_IMRULE_MARKER, LEGACY_DIR_NAME, SKILLS_DIR, normalize_path_separators,
+    xdg_config_home,
 };
 use crate::domain::error::ImruleError;
 const SUBAGENTS_DIR_NAME: &str = "agents";

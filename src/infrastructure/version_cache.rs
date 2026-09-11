@@ -39,7 +39,7 @@ impl CachePort for JsonVersionCache {
                 return Err(ImruleError::mcp(format!(
                     "could not read version cache at {}: {error}",
                     cache_path.display()
-                )))
+                )));
             }
         };
         let cache: McpRemoteVersionCache = serde_json::from_slice(&bytes).map_err(|error| {

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::domain::agent::AgentDefinition;
 use crate::domain::config::SubagentInfo;
 use crate::domain::constants::*;
-use crate::domain::subagent::{parse_frontmatter, validate_frontmatter, SubagentsDiscovery};
+use crate::domain::subagent::{SubagentsDiscovery, parse_frontmatter, validate_frontmatter};
 
 /// Loads and validates one subagent file.
 pub fn load_subagent_file(file_path: &Path) -> io::Result<SubagentInfo> {
@@ -24,14 +24,14 @@ pub fn load_subagent_file(file_path: &Path) -> io::Result<SubagentInfo> {
                 stem.clone(),
                 file_path.to_path_buf(),
                 format!("{stem}.md: missing YAML frontmatter"),
-            ))
+            ));
         }
         Err(err) => {
             return Ok(SubagentInfo::invalid(
                 stem.clone(),
                 file_path.to_path_buf(),
                 format!("{stem}.md: invalid YAML frontmatter: {err}"),
-            ))
+            ));
         }
     };
     match validate_frontmatter(&parsed.meta, &stem) {

@@ -3,8 +3,8 @@ use std::fs;
 
 use imrule::application::ports::AgentWriterPort;
 use imrule::domain::agent::{
-    all_agents, canonical_agent_identifier, find_agent, get_agent_identifiers_for_cli_help,
-    AgentOutputPaths,
+    AgentOutputPaths, all_agents, canonical_agent_identifier, find_agent,
+    get_agent_identifiers_for_cli_help,
 };
 use imrule::domain::config::AgentConfig;
 use imrule::infrastructure::agent_writer::DefaultAgentWriter;

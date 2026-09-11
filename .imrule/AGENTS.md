@@ -11,7 +11,7 @@ The binary provides these subcommands:
 - `imrule mcp` — manages MCP server definitions in `imrule.toml`.
 - `imrule skills` — manages agent skills.
 
-This is a native Rust project (edition 2021, MSRV 1.85). It was rewritten from a prior TypeScript/npm runtime; no JS/TS artifacts remain in the source tree.
+This is a native Rust project (edition 2024, MSRV 1.85). It was rewritten from a prior TypeScript/npm runtime; no JS/TS artifacts remain in the source tree.
 
 ## Technology Stack
 

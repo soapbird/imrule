@@ -1,7 +1,7 @@
 [package]
 name = "imrule"
 version = "0.4.2"
-edition = "2021"
+edition = "2024"
 description = "ImRule — apply the same rules to all coding agents"
 license = "MIT"
 repository = "https://github.com/soapbird/imrule"
@@ -44,6 +44,16 @@ criterion = "0.5"
 [[bench]]
 name = "rules_concat"
 harness = false
+[lints.rust]
+unsafe_code = "forbid"
+
+# unwrap_used/expect_used are enabled at the crate roots of src/ instead: a
+# [lints] entry also reaches helper functions in tests/ and benches/, which
+# clippy.toml's allow-*-in-tests does not cover.
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+
 [profile.release]
 opt-level = 3
 lto = "fat"

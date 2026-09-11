@@ -6,7 +6,7 @@ use rayon::prelude::*;
 
 use crate::application::apply_use_case::{instruction_output_path, resolve_selected_agents};
 use crate::application::ports::{ConfigPort, FileSystemPort, GitignorePort, ManifestPort, McpPort};
-use crate::domain::agent::{all_agents, AgentDefinition};
+use crate::domain::agent::{AgentDefinition, all_agents};
 use crate::domain::config::LoadedConfig;
 use crate::domain::constants::{
     CLAUDE_SUBAGENTS_PATH, CODEX_SUBAGENTS_PATH, COPILOT_SUBAGENTS_PATH, CURSOR_SUBAGENTS_PATH,

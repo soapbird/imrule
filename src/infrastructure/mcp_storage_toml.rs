@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table};
 
 use crate::domain::error::ImruleError;

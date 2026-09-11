@@ -36,7 +36,7 @@ impl ManifestPort for JsonApplyManifest {
                 return Err(ImruleError::filesystem(format!(
                     "could not read apply manifest at {}: {error}",
                     path.display()
-                )))
+                )));
             }
         };
         // A manifest that cannot be parsed, or that a newer imrule wrote, is

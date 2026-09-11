@@ -280,13 +280,17 @@ fn init_scaffolds_imrule_files_without_overwriting_existing_content() {
 
     let agents = tmp.path().join(".imrule/AGENTS.md");
     let toml = tmp.path().join(".imrule/imrule.toml");
-    assert!(fs::read_to_string(&agents)
-        .unwrap()
-        .contains("Centralised AI agent instructions"));
+    assert!(
+        fs::read_to_string(&agents)
+            .unwrap()
+            .contains("Centralised AI agent instructions")
+    );
     assert!(fs::read_to_string(&toml).unwrap().contains("agents = ["));
-    assert!(fs::read_to_string(&toml)
-        .unwrap()
-        .contains("remote_transport = \"mcp-remote\""));
+    assert!(
+        fs::read_to_string(&toml)
+            .unwrap()
+            .contains("remote_transport = \"mcp-remote\"")
+    );
 
     fs::write(&agents, "custom").unwrap();
     Command::cargo_bin("imrule")
@@ -681,10 +685,11 @@ fn clear_removes_entire_skills_directory() {
 
     // Skills propagated to agent dirs.
     assert!(tmp.path().join(".claude/skills/openai/SKILL.md").exists());
-    assert!(tmp
-        .path()
-        .join(".claude/skills/openai/openai.yaml")
-        .exists());
+    assert!(
+        tmp.path()
+            .join(".claude/skills/openai/openai.yaml")
+            .exists()
+    );
     assert!(tmp.path().join(".codex/skills/openai/SKILL.md").exists());
     assert!(tmp.path().join(".codex/skills/openai/openai.yaml").exists());
 
@@ -1038,8 +1043,10 @@ fn mcp_add_accepts_a_per_server_remote_transport() {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr)
-        .contains("--remote-transport applies only to http/sse servers"));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("--remote-transport applies only to http/sse servers")
+    );
 }
 
 #[test]
@@ -1512,9 +1519,11 @@ fn apply_accepts_droid_as_an_alias_for_factory() {
         .success();
 
     // ...and `[agent.droid]` configures the same adapter `factory` names.
-    assert!(fs::read_to_string(root.join("DROID.md"))
-        .unwrap()
-        .contains("Always be concise."));
+    assert!(
+        fs::read_to_string(root.join("DROID.md"))
+            .unwrap()
+            .contains("Always be concise.")
+    );
 
     // The same holds on the command line.
     Command::cargo_bin("imrule")

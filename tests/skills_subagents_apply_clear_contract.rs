@@ -5,7 +5,7 @@ use imrule::application::ports::FileSystemPort;
 use imrule::domain::agent::all_agents;
 use imrule::domain::config::SubagentFrontmatter;
 use imrule::domain::skills::{
-    format_validation_warnings, get_skills_gitignore_paths, parse_skill_source, RemoteSkillSource,
+    RemoteSkillSource, format_validation_warnings, get_skills_gitignore_paths, parse_skill_source,
 };
 use imrule::domain::subagent::{
     build_claude_file, build_codex_file, build_copilot_file, build_cursor_file,
@@ -37,8 +37,16 @@ fn discovers_skills_groupings_warnings_copies_and_gitignore_targets() {
         .map(|skill| skill.name.as_str())
         .collect();
     assert_eq!(names, vec!["nested", "solo"]);
-    assert_eq!(discovered.warnings, vec!["Directory 'stray' in skills has no SKILL.md and contains no sub-skills. It may be malformed or stray."]);
-    assert_eq!(format_validation_warnings(&discovered.warnings), "  - Directory 'stray' in skills has no SKILL.md and contains no sub-skills. It may be malformed or stray.");
+    assert_eq!(
+        discovered.warnings,
+        vec![
+            "Directory 'stray' in skills has no SKILL.md and contains no sub-skills. It may be malformed or stray."
+        ]
+    );
+    assert_eq!(
+        format_validation_warnings(&discovered.warnings),
+        "  - Directory 'stray' in skills has no SKILL.md and contains no sub-skills. It may be malformed or stray."
+    );
 
     copy_skills_directory(&root.join(".imrule/skills"), &root.join(".claude/skills")).unwrap();
     assert_eq!(
@@ -800,7 +808,7 @@ fn update_reports_an_unreachable_source_without_aborting_the_run() {
 
 #[test]
 fn groups_recorded_sources_and_rejects_unregistered_names() {
-    use imrule::domain::skills::{group_skill_sources, SkillUpdateGroup};
+    use imrule::domain::skills::{SkillUpdateGroup, group_skill_sources};
     use std::collections::BTreeMap;
 
     let sources: BTreeMap<String, String> = [
@@ -833,9 +841,11 @@ fn groups_recorded_sources_and_rejects_unregistered_names() {
     let error = group_skill_sources(&sources, Some(&["nope".to_string()])).unwrap_err();
     assert!(error.to_string().contains("nope"));
 
-    assert!(group_skill_sources(&BTreeMap::new(), None)
-        .unwrap()
-        .is_empty());
+    assert!(
+        group_skill_sources(&BTreeMap::new(), None)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]

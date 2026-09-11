@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use tempfile::TempDir;
 
 use imrule::application::ports::FileSystemPort;

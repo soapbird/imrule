@@ -5,22 +5,23 @@ use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
 
-use crate::application::mcp_use_case::{resolve_mcp_remote_version, McpRemoteVersionResolverPort};
+use crate::application::mcp_use_case::{McpRemoteVersionResolverPort, resolve_mcp_remote_version};
 use crate::application::ports::{
     AgentWriterPort, CachePort, ConfigPort, FileSystemPort, GitTrackingPort, GitignorePort,
     ManifestPort, McpPort,
 };
-use crate::domain::agent::{all_agents, find_agent, AgentDefinition, AgentOutputPaths};
+use crate::domain::agent::{AgentDefinition, AgentOutputPaths, all_agents, find_agent};
 use crate::domain::config::{AgentConfig, LoadedConfig, McpRemoteTransport, McpStrategy};
 use crate::domain::constants::{
-    normalize_path_separators, GENERATED_BY_IMRULE_MARKER, IMRULE_GENERATED_STATE_PATHS,
+    GENERATED_BY_IMRULE_MARKER, IMRULE_GENERATED_STATE_PATHS, normalize_path_separators,
 };
 use crate::domain::error::ImruleError;
 use crate::domain::manifest::ApplyManifest;
 use crate::domain::mcp::{
-    build_imrule_mcp_config, expand_mcp_environment_variables, filter_mcp_config_for_agent,
+    McpRemoteTransportPolicy, McpRemoteVersionCache, build_imrule_mcp_config,
+    expand_mcp_environment_variables, filter_mcp_config_for_agent,
     filter_mcp_config_for_agent_with_package_spec, is_native_mcp_content_empty, merge_mcp,
-    validate_mcp_config_for_remote_transport, McpRemoteTransportPolicy, McpRemoteVersionCache,
+    validate_mcp_config_for_remote_transport,
 };
 use crate::domain::rules::concatenate_rules;
 use crate::domain::skills::get_skills_gitignore_paths;

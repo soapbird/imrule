@@ -10,8 +10,8 @@ use crate::application::ports::{CachePort, ConfigPort, ConfigWritePort, FileSyst
 use crate::domain::config::{McpRemoteTransport, McpServerDefinition, McpTransport};
 use crate::domain::error::ImruleError;
 use crate::domain::mcp::{
-    build_imrule_mcp_config, expand_mcp_environment_variables, McpRemoteTransportPolicy,
-    McpRemoteVersionCache,
+    McpRemoteTransportPolicy, McpRemoteVersionCache, build_imrule_mcp_config,
+    expand_mcp_environment_variables,
 };
 
 /// Runtime options for `imrule mcp add`.

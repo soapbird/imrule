@@ -171,6 +171,10 @@ pub fn map_tools_for_copilot(source_tools: &[String]) -> CopilotToolMapping {
     CopilotToolMapping { tools, unknown }
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "files are only built for subagents whose frontmatter validated"
+)]
 pub fn build_claude_file(sub: &crate::domain::config::SubagentInfo) -> String {
     let fm = sub
         .frontmatter
@@ -202,6 +206,10 @@ pub fn build_claude_file(sub: &crate::domain::config::SubagentInfo) -> String {
     )
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "files are only built for subagents whose frontmatter validated"
+)]
 pub fn build_cursor_file(sub: &crate::domain::config::SubagentInfo) -> String {
     let fm = sub
         .frontmatter
@@ -233,6 +241,10 @@ pub fn build_cursor_file(sub: &crate::domain::config::SubagentInfo) -> String {
     )
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "files are only built for subagents whose frontmatter validated"
+)]
 pub fn build_codex_file(sub: &crate::domain::config::SubagentInfo) -> String {
     let fm = sub
         .frontmatter
@@ -255,6 +267,10 @@ pub fn build_codex_file(sub: &crate::domain::config::SubagentInfo) -> String {
     out
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "files are only built for subagents whose frontmatter validated"
+)]
 pub fn build_copilot_file(sub: &crate::domain::config::SubagentInfo) -> CopilotFile {
     let fm = sub
         .frontmatter

@@ -14,7 +14,7 @@ use crate::application::skills_add_use_case::{
 use crate::domain::config::SkillInfo;
 use crate::domain::error::ImruleError;
 use crate::domain::skills::{
-    group_skill_sources, parse_skill_source, SkillUpdateOutcome, SkillUpdateStatus,
+    SkillUpdateOutcome, SkillUpdateStatus, group_skill_sources, parse_skill_source,
 };
 use crate::infrastructure::skills::{copy_skills_directory, skill_trees_match};
 

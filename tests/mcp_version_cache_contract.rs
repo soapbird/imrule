@@ -1,10 +1,10 @@
 use std::fs;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use imrule::application::mcp_use_case::{
-    resolve_mcp_remote_version, McpAuthOptions, McpAuthRunnerPort, McpRemoteVersionResolverPort,
-    McpUseCase,
+    McpAuthOptions, McpAuthRunnerPort, McpRemoteVersionResolverPort, McpUseCase,
+    resolve_mcp_remote_version,
 };
 use imrule::application::ports::CachePort;
 use imrule::domain::agent::all_agents;
@@ -13,12 +13,12 @@ use imrule::domain::constants::{
     IMRULE_CACHE_PATH, MCP_REMOTE_LATEST_PACKAGE_SPEC, MCP_REMOTE_PACKAGE,
 };
 use imrule::domain::error::ImruleError;
-use imrule::domain::mcp::{filter_mcp_config_for_agent_with_version_cache, McpRemoteVersionCache};
+use imrule::domain::mcp::{McpRemoteVersionCache, filter_mcp_config_for_agent_with_version_cache};
 use imrule::infrastructure::config_loader::TomlConfigLoader;
 use imrule::infrastructure::file_system::FsFileSystem;
 use imrule::infrastructure::mcp_storage::JsonMcpStorage;
 use imrule::infrastructure::version_cache::JsonVersionCache;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tempfile::tempdir;
 
 #[test]
@@ -96,9 +96,11 @@ fn version_cache_rejects_unknown_or_non_concrete_data() {
     let error = storage
         .read_mcp_remote_version(temporary.path())
         .unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("version cache package must be 'mcp-remote'"));
+    assert!(
+        error
+            .to_string()
+            .contains("version cache package must be 'mcp-remote'")
+    );
 
     assert!(McpRemoteVersionCache::new("latest", 1_700_000_000).is_err());
     assert!(McpRemoteVersionCache::new("https://example.test", 1_700_000_000).is_err());
@@ -601,9 +603,11 @@ url = "https://second.example.test/sse"
         )
         .unwrap_err();
     // The first authentication fails and aborts the sequential run.
-    assert!(error
-        .to_string()
-        .contains("authentication failed for MCP server 'first'"));
+    assert!(
+        error
+            .to_string()
+            .contains("authentication failed for MCP server 'first'")
+    );
 }
 
 #[test]

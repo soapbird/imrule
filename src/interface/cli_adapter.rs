@@ -11,8 +11,8 @@ use crate::application::apply_use_case::{ApplyOptions, ApplyUseCase};
 use crate::application::clear_use_case::{ClearOptions, ClearUseCase};
 use crate::application::init_use_case::{InitOptions, InitUseCase};
 use crate::application::mcp_use_case::{
-    parse_env_pairs, McpAddOptions, McpAuthOptions, McpAuthRunnerPort,
-    McpRemoteVersionResolverPort, McpRemoveOptions, McpUseCase,
+    McpAddOptions, McpAuthOptions, McpAuthRunnerPort, McpRemoteVersionResolverPort,
+    McpRemoveOptions, McpUseCase, parse_env_pairs,
 };
 
 use crate::application::skills_add_use_case::{SkillsAddOptions, SkillsAddUseCase};
@@ -27,7 +27,7 @@ use crate::infrastructure::manifest::JsonApplyManifest;
 use crate::infrastructure::mcp_storage::JsonMcpStorage;
 use crate::infrastructure::skill_fetcher::GitSkillFetcher;
 use crate::infrastructure::version_cache::JsonVersionCache;
-use crate::interface::cli::{parse_agents, Cli, Command, McpCommand, SkillsCommand};
+use crate::interface::cli::{Cli, Command, McpCommand, SkillsCommand, parse_agents};
 
 struct ProcessMcpRemoteRunner;
 

@@ -12,11 +12,11 @@ use std::path::PathBuf;
 use assert_cmd::Command;
 use imrule::application::ports::ManifestPort;
 use imrule::domain::constants::{IMRULE_CACHE_PATH, IMRULE_MANIFEST_PATH};
-use imrule::domain::manifest::{ApplyManifest, McpTarget, MANIFEST_VERSION};
+use imrule::domain::manifest::{ApplyManifest, MANIFEST_VERSION, McpTarget};
 use imrule::domain::mcp::{is_json_effectively_empty, is_native_mcp_content_empty};
 use imrule::infrastructure::manifest::JsonApplyManifest;
-use serde_json::{json, Value};
-use tempfile::{tempdir, TempDir};
+use serde_json::{Value, json};
+use tempfile::{TempDir, tempdir};
 
 // ---------------------------------------------------------------- domain ---
 

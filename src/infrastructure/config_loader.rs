@@ -13,7 +13,7 @@ use crate::domain::config::{
     AgentConfig, GitignoreConfig, LoadedConfig, McpConfig, McpRemoteTransport, McpServerDefinition,
     McpStrategy, McpTransport, SkillsConfig, SubagentsConfig,
 };
-use crate::domain::constants::{xdg_config_home, LEGACY_CONFIG_FILENAME, LEGACY_DIR_NAME};
+use crate::domain::constants::{LEGACY_CONFIG_FILENAME, LEGACY_DIR_NAME, xdg_config_home};
 use crate::domain::error::ImruleError;
 
 const SUBAGENT_RESERVED_KEYS: &[&str] = &["enabled", "include_in_rules"];
@@ -534,6 +534,10 @@ fn sync_skills_sources_table(document: &mut toml_edit::DocumentMut, skills: Opti
     *sources_table = toml_edit::Item::Table(replacement);
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "the `mcp_servers` table and its children are inserted as tables just above"
+)]
 fn sync_mcp_servers_table(
     document: &mut toml_edit::DocumentMut,
     servers: &BTreeMap<String, McpServerDefinition>,
