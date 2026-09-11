@@ -294,7 +294,13 @@ impl<'a> ClearUseCase<'a> {
             else {
                 continue;
             };
-            if !self.fs_port.file_exists(&native_path) {
+            // The keys to strip may come from a manifest a repository shipped,
+            // so never rewrite a config linked to a file outside the project.
+            if !self.fs_port.file_exists(&native_path)
+                || !self
+                    .fs_port
+                    .target_resolves_within(&native_path, &options.project_root)
+            {
                 continue;
             }
             if options.dry_run {
@@ -325,7 +331,13 @@ impl<'a> ClearUseCase<'a> {
         }
         for target in &manifest.mcp_targets {
             let native_path = options.project_root.join(&target.path);
-            if !self.fs_port.file_exists(&native_path) {
+            // The manifest may come from a cloned repository: never rewrite a
+            // config that resolves, through `..` or a link, outside the project.
+            if !self.fs_port.file_exists(&native_path)
+                || !self
+                    .fs_port
+                    .target_resolves_within(&native_path, &options.project_root)
+            {
                 continue;
             }
             if removed.contains(&native_path) {

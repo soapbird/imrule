@@ -107,6 +107,21 @@ pub trait FileSystemPort: Send + Sync {
     /// never followed, so a linked directory's contents are not included.
     fn list_files(&self, dir: &Path) -> Result<Vec<PathBuf>, ImruleError>;
 
+    /// Whether `path` lies inside `root` on disk: its parent directory, with
+    /// every symbolic link resolved, is `root` or below it. The last component
+    /// is not followed, so a link at `path` itself counts as inside. `false`
+    /// when either cannot be resolved.
+    fn resolves_within(&self, path: &Path, root: &Path) -> bool;
+
+    /// Like [`resolves_within`](Self::resolves_within), but also follows a link
+    /// at `path` itself: for a file that is read and written back, where
+    /// writing would go through the link.
+    fn target_resolves_within(&self, path: &Path, root: &Path) -> bool;
+
+    /// Whether two existing paths name the same file or directory, as a
+    /// case-insensitive filesystem or a link can make them.
+    fn is_same_entry(&self, left: &Path, right: &Path) -> bool;
+
     /// Discovers subagent definitions (`.imrule/agents`, falling back to
     /// `.ruler/agents`).
     fn discover_subagents(&self, project_root: &Path) -> Result<SubagentsDiscovery, ImruleError>;

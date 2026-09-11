@@ -18,7 +18,7 @@ use crate::domain::constants::{
     GENERATED_BY_IMRULE_MARKER, IMRULE_GENERATED_STATE_PATHS, normalize_path_separators,
 };
 use crate::domain::error::ImruleError;
-use crate::domain::manifest::ApplyManifest;
+use crate::domain::manifest::{ApplyManifest, is_project_relative};
 use crate::domain::mcp::{
     McpRemoteTransportPolicy, McpRemoteVersionCache, build_imrule_mcp_config,
     expand_mcp_environment_variables, filter_mcp_config_for_agent,
@@ -229,7 +229,17 @@ impl<'a> ApplyUseCase<'a> {
             if let Some(manifest_port) = self.manifest_port {
                 if let Some(previous) = manifest_port.read_manifest(&options.project_root)? {
                     if full_run {
-                        self.prune_stale_outputs(&options.project_root, &previous, &manifest)?;
+                        let kept_roots =
+                            self.prune_stale_outputs(&options.project_root, &previous, &manifest)?;
+                        for kept in kept_roots {
+                            let path = options.project_root.join(&kept);
+                            if !written_paths.contains(&path) {
+                                written_paths.push(path);
+                            }
+                            manifest.paths.push(kept);
+                        }
+                        manifest.paths.sort();
+                        manifest.paths.dedup();
                     } else {
                         manifest = manifest.merged_with(&previous);
                     }
@@ -384,17 +394,27 @@ impl<'a> ApplyUseCase<'a> {
     /// 3. A generated rule file, skills root, or subagent directory no longer
     ///    produced — delete it, but only when it still carries ImRule's marker,
     ///    so a path the user has since taken over is left alone.
+    ///
+    /// Returns the stale skills roots kept because they still hold skills the
+    /// user placed by hand; the caller keeps them recorded.
     fn prune_stale_outputs(
         &self,
         project_root: &Path,
         previous: &ApplyManifest,
         current: &ApplyManifest,
-    ) -> Result<(), ImruleError> {
+    ) -> Result<Vec<String>, ImruleError> {
         let dropped_servers = previous.stale_mcp_servers(current);
 
+        // Every change below is checked on disk as well: a manifest is a plain
+        // file a repository can commit, and a committed symlink (`docs ->
+        // ../elsewhere`) turns an innocent-looking entry into a path outside
+        // the project. MCP configs are rewritten rather than unlinked, so a
+        // link at the config itself is followed too.
         for target in previous.stale_mcp_targets(current) {
             let path = project_root.join(&target.path);
-            if !self.fs_port.file_exists(&path) {
+            if !self.fs_port.file_exists(&path)
+                || !self.fs_port.target_resolves_within(&path, project_root)
+            {
                 continue;
             }
             self.remove_mcp_servers(&path, &target.server_key, &previous.mcp_servers)?;
@@ -404,7 +424,9 @@ impl<'a> ApplyUseCase<'a> {
         if !dropped_servers.is_empty() {
             for target in &current.mcp_targets {
                 let path = project_root.join(&target.path);
-                if !self.fs_port.file_exists(&path) {
+                if !self.fs_port.file_exists(&path)
+                    || !self.fs_port.target_resolves_within(&path, project_root)
+                {
                     continue;
                 }
                 self.remove_mcp_servers(&path, &target.server_key, &dropped_servers)?;
@@ -417,34 +439,58 @@ impl<'a> ApplyUseCase<'a> {
         // are recorded, so a skill the user put there by hand is never touched.
         for stale in previous.stale_skills(current) {
             let path = project_root.join(&stale);
-            if self.fs_port.dir_exists(&path) {
-                self.fs_port.remove_dir_all(&path)?;
-                tracing::info!(path = %path.display(), "removed stale skill copy");
+            if !self.fs_port.dir_exists(&path) || !self.fs_port.resolves_within(&path, project_root)
+            {
+                continue;
             }
+            // On a case-insensitive filesystem a skill renamed from `Foo` to
+            // `foo` is still the directory this run just copied into.
+            if current
+                .skills
+                .iter()
+                .any(|kept| self.fs_port.is_same_entry(&path, &project_root.join(kept)))
+            {
+                continue;
+            }
+            self.fs_port.remove_dir_all(&path)?;
+            tracing::info!(path = %path.display(), "removed stale skill copy");
         }
 
         let skills_roots = all_skills_roots();
+        let mut kept_roots = Vec::new();
         for stale in previous.stale_paths(current) {
             let path = project_root.join(&stale);
             if !self.fs_port.file_exists(&path) {
                 continue;
             }
             if self.fs_port.dir_exists(&path) {
+                if !is_project_relative(&stale)
+                    || !self.fs_port.resolves_within(&path, project_root)
+                {
+                    continue;
+                }
                 // A skills root also holds skills the user put there by hand.
                 // imrule's own copies were pruned one by one above, so the root
-                // itself goes only once nothing else is left in it.
+                // itself goes only once nothing else is left in it. One that
+                // survives stays recorded, and so stays out of git.
                 if skills_roots.contains(&stale) {
                     if !self.fs_port.remove_dir_if_empty(&path)? {
+                        kept_roots.push(stale);
                         continue;
                     }
                 } else {
                     self.fs_port.remove_dir_all(&path)?;
                 }
-            } else if self
-                .fs_port
-                .read_text(&path)
-                .is_ok_and(|content| content.starts_with(GENERATED_BY_IMRULE_MARKER))
+            } else if is_project_relative(&stale)
+                && self.fs_port.resolves_within(&path, project_root)
+                && self
+                    .fs_port
+                    .read_text(&path)
+                    .is_ok_and(|content| content.starts_with(GENERATED_BY_IMRULE_MARKER))
             {
+                // An output recorded outside the project stays recorded but is
+                // never deleted: the marker alone does not prove it is this
+                // project's.
                 self.fs_port.remove_file(&path)?;
             } else {
                 continue;
@@ -453,7 +499,7 @@ impl<'a> ApplyUseCase<'a> {
             self.prune_empty_parents(&path, project_root)?;
         }
 
-        Ok(())
+        Ok(kept_roots)
     }
 
     /// Strips `servers` from a native MCP config, deleting the file when nothing
@@ -492,7 +538,6 @@ impl<'a> ApplyUseCase<'a> {
         Ok(())
     }
 
-    /// Removes now-empty directories from `path`'s parent up to `project_root`.
     /// Before 0.5 a grouped skill was copied under its leaf directory name
     /// (`python/cli` became `cli`), and those copies were never recorded, so no
     /// later run would prune them. A leaf-named copy is removed only when it
@@ -500,6 +545,7 @@ impl<'a> ApplyUseCase<'a> {
     /// anything else under that name is left alone.
     fn remove_pre_0_5_skill_copies(
         &self,
+        project_root: &Path,
         skills: &[SkillInfo],
         target_dir: &Path,
     ) -> Result<(), ImruleError> {
@@ -517,6 +563,7 @@ impl<'a> ApplyUseCase<'a> {
             }
             let legacy = target_dir.join(leaf);
             if self.fs_port.dir_exists(&legacy)
+                && self.fs_port.resolves_within(&legacy, project_root)
                 && matches!(self.fs_port.dirs_match(&skill.path, &legacy), Ok(true))
             {
                 self.fs_port.remove_dir_all(&legacy)?;
@@ -526,6 +573,7 @@ impl<'a> ApplyUseCase<'a> {
         Ok(())
     }
 
+    /// Removes now-empty directories from `path`'s parent up to `project_root`.
     fn prune_empty_parents(&self, path: &Path, project_root: &Path) -> Result<(), ImruleError> {
         let mut dir = match path.parent() {
             Some(parent) => parent.to_path_buf(),
@@ -730,7 +778,7 @@ impl<'a> ApplyUseCase<'a> {
                     })
                     .collect();
                 copied.extend(copy_results?);
-                self.remove_pre_0_5_skill_copies(&discovery.skills, &target_dir)?;
+                self.remove_pre_0_5_skill_copies(project_root, &discovery.skills, &target_dir)?;
             }
             written.push(target_dir);
         }

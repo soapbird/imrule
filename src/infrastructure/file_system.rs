@@ -27,6 +27,27 @@ impl Default for FsFileSystem {
     }
 }
 
+/// Same device and inode: one file or directory, whatever case or link spelled
+/// either path.
+#[cfg(unix)]
+fn same_entry(left: &Path, right: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (fs::metadata(left), fs::metadata(right)) {
+        (Ok(left), Ok(right)) => left.dev() == right.dev() && left.ino() == right.ino(),
+        _ => false,
+    }
+}
+
+/// Without inodes, compare the resolved paths: resolving returns each name as
+/// the filesystem stores it, whatever case either path was spelled in.
+#[cfg(not(unix))]
+fn same_entry(left: &Path, right: &Path) -> bool {
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
 impl FileSystemPort for FsFileSystem {
     fn discover_skills(&self, project_root: &Path) -> Result<SkillsDiscovery, ImruleError> {
         crate::infrastructure::skills::discover_skills(project_root)
@@ -59,6 +80,25 @@ impl FileSystemPort for FsFileSystem {
             .map_err(|e| ImruleError::filesystem(format!("{}: {e}", dir.display())))?;
         files.sort();
         Ok(files)
+    }
+
+    fn resolves_within(&self, path: &Path, root: &Path) -> bool {
+        let (Some(parent), Ok(root)) = (path.parent(), fs::canonicalize(root)) else {
+            return false;
+        };
+        fs::symlink_metadata(path).is_ok()
+            && fs::canonicalize(parent).is_ok_and(|parent| parent.starts_with(&root))
+    }
+
+    fn target_resolves_within(&self, path: &Path, root: &Path) -> bool {
+        match (fs::canonicalize(path), fs::canonicalize(root)) {
+            (Ok(path), Ok(root)) => path.starts_with(root),
+            _ => false,
+        }
+    }
+
+    fn is_same_entry(&self, left: &Path, right: &Path) -> bool {
+        same_entry(left, right)
     }
 
     fn discover_subagents(&self, project_root: &Path) -> Result<SubagentsDiscovery, ImruleError> {

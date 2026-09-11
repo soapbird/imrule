@@ -10,10 +10,12 @@ use std::fs;
 use std::path::PathBuf;
 
 use assert_cmd::Command;
+use imrule::application::ports::FileSystemPort;
 use imrule::application::ports::ManifestPort;
 use imrule::domain::constants::{IMRULE_CACHE_PATH, IMRULE_MANIFEST_PATH};
-use imrule::domain::manifest::{ApplyManifest, MANIFEST_VERSION, McpTarget};
+use imrule::domain::manifest::{ApplyManifest, MANIFEST_VERSION, McpTarget, is_project_relative};
 use imrule::domain::mcp::{is_json_effectively_empty, is_native_mcp_content_empty};
+use imrule::infrastructure::file_system::FsFileSystem;
 use imrule::infrastructure::manifest::JsonApplyManifest;
 use serde_json::{Value, json};
 use tempfile::{TempDir, tempdir};
@@ -200,7 +202,7 @@ fn a_manifest_written_before_skill_copies_were_recorded_still_loads() {
 }
 
 #[test]
-fn manifest_entries_that_could_reach_outside_the_project_are_dropped() {
+fn skill_and_mcp_entries_that_could_reach_outside_the_project_are_dropped_on_read() {
     let recorded = ApplyManifest {
         version: MANIFEST_VERSION,
         paths: vec![
@@ -232,10 +234,13 @@ fn manifest_entries_that_could_reach_outside_the_project_are_dropped() {
         ],
     };
 
-    let (kept, dropped) = recorded.without_escaping_entries();
+    let (kept, dropped) = recorded.clone().without_escaping_entries();
 
-    assert_eq!(kept.paths, vec!["CLAUDE.md"]);
-    assert_eq!(kept.mcp_servers, vec!["linear"]);
+    // Paths stay known, so an output written outside the project is not
+    // forgotten; apply checks each one on disk before deleting it. Native MCP
+    // configs always live inside the project, so an MCP target that does not
+    // is dropped with the skill copies.
+    assert_eq!(kept.paths, recorded.paths);
     assert_eq!(
         kept.mcp_targets,
         vec![McpTarget {
@@ -247,13 +252,23 @@ fn manifest_entries_that_could_reach_outside_the_project_are_dropped() {
         kept.skills,
         vec![".claude/skills/cli", ".codex/skills/python-cli"]
     );
-    assert_eq!(dropped, 10);
+    assert_eq!(dropped, 6);
+    for (entry, contained) in [
+        ("CLAUDE.md", true),
+        (".claude/skills", true),
+        ("../victim", false),
+        ("/etc", false),
+        ("docs/../../victim", false),
+        ("", false),
+    ] {
+        assert_eq!(is_project_relative(entry), contained, "{entry:?}");
+    }
 }
 
 #[test]
-fn a_case_only_rename_does_not_make_the_new_copy_stale() {
-    // On a case-insensitive filesystem `Foo` and `foo` are one directory, and
-    // it now holds the copy this run made.
+fn stale_skills_compare_names_exactly_and_leave_case_to_the_disk() {
+    // On a case-sensitive filesystem `Foo` and `foo` are two copies and the old
+    // one must go; on a case-insensitive one apply sees they are one directory.
     let previous = ApplyManifest {
         skills: vec![
             ".claude/skills/Foo".to_string(),
@@ -266,7 +281,193 @@ fn a_case_only_rename_does_not_make_the_new_copy_stale() {
         ..ApplyManifest::default()
     };
 
-    assert_eq!(previous.stale_skills(&current), vec![".claude/skills/gone"]);
+    assert_eq!(
+        previous.stale_skills(&current),
+        vec![".claude/skills/Foo", ".claude/skills/gone"]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn the_filesystem_port_resolves_links_before_answering_containment_and_identity() {
+    let workspace = tempdir().unwrap();
+    let root = workspace.path().join("project");
+    let outside = workspace.path().join("outside");
+    fs::create_dir_all(root.join("real/skill")).unwrap();
+    fs::create_dir_all(outside.join("victim")).unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("docs")).unwrap();
+    std::os::unix::fs::symlink(root.join("real/skill"), root.join("real/alias")).unwrap();
+    let fs_port = FsFileSystem::new();
+
+    assert!(fs_port.resolves_within(&root.join("real/skill"), &root));
+    assert!(!fs_port.resolves_within(&root.join("docs/victim"), &root));
+    // A link at the path itself is inside; removing it never follows it.
+    assert!(fs_port.resolves_within(&root.join("docs"), &root));
+    assert!(!fs_port.resolves_within(&root.join("missing"), &root));
+
+    assert!(fs_port.is_same_entry(&root.join("real/skill"), &root.join("real/alias")));
+    assert!(!fs_port.is_same_entry(&root.join("real/skill"), &root.join("real")));
+    assert!(!fs_port.is_same_entry(&root.join("real/skill"), &root.join("missing")));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_committed_symlink_cannot_carry_a_manifest_entry_outside_the_project() {
+    let workspace = tempdir().unwrap();
+    let root = workspace.path().join("project");
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        "default_agents = [\"claude\"]\n",
+    )
+    .unwrap();
+    fs::write(root.join(".imrule/AGENTS.md"), "# rules\n").unwrap();
+    let outside = workspace.path().join("outside");
+    for victim in ["Documents", "skills/keep"] {
+        fs::create_dir_all(outside.join(victim)).unwrap();
+        fs::write(outside.join(victim).join("keep"), "keep").unwrap();
+    }
+    std::os::unix::fs::symlink(&outside, root.join("docs")).unwrap();
+    apply(&root, &[]);
+
+    // `.claude` swapped for a link after the first run, as a pull could do.
+    fs::remove_dir_all(root.join(".claude")).ok();
+    std::os::unix::fs::symlink(&outside, root.join(".claude")).unwrap();
+    let manifest_path = root.join(IMRULE_MANIFEST_PATH);
+    let mut recorded: Value =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    recorded["paths"] = json!(["docs/Documents"]);
+    recorded["skills"] = json!([".claude/skills/keep"]);
+    fs::write(&manifest_path, recorded.to_string()).unwrap();
+    apply(&root, &[]);
+
+    assert!(outside.join("Documents/keep").exists(), "followed docs/");
+    assert!(
+        outside.join("skills/keep/keep").exists(),
+        "followed .claude/"
+    );
+}
+
+/// A project wired to claude only, beside an `outside` directory the tests
+/// try to reach through a tampered manifest.
+fn project_beside_outside() -> (TempDir, PathBuf, PathBuf) {
+    let workspace = tempdir().unwrap();
+    let root = workspace.path().join("project");
+    fs::create_dir_all(root.join(".imrule")).unwrap();
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        "default_agents = [\"claude\"]\n",
+    )
+    .unwrap();
+    fs::write(root.join(".imrule/AGENTS.md"), "# rules\n").unwrap();
+    let outside = workspace.path().join("outside");
+    fs::create_dir_all(&outside).unwrap();
+    (workspace, root, outside)
+}
+
+fn tamper_manifest(root: &std::path::Path, edit: impl Fn(&mut Value)) {
+    let manifest_path = root.join(IMRULE_MANIFEST_PATH);
+    let mut recorded: Value =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    edit(&mut recorded);
+    fs::write(&manifest_path, recorded.to_string()).unwrap();
+}
+
+fn clear(root: &std::path::Path) {
+    Command::cargo_bin("imrule")
+        .unwrap()
+        .args(["clear", "--project-root", root.to_str().unwrap()])
+        .assert()
+        .success();
+}
+
+const OUTSIDE_MCP: &str =
+    "{\"mcpServers\": {\"github\": {\"command\": \"gh\"}, \"mine\": {\"command\": \"mine\"}}}";
+const OUTSIDE_RULES: &str = "<!-- Generated by ImRule -->\nanother project's rules\n";
+
+#[test]
+fn a_manifest_cannot_point_apply_or_clear_at_files_outside_the_project() {
+    let (_workspace, root, outside) = project_beside_outside();
+    let victim_config = outside.join(".mcp.json");
+    let victim_rules = outside.join("CLAUDE.md");
+    fs::write(&victim_config, OUTSIDE_MCP).unwrap();
+    fs::write(&victim_rules, OUTSIDE_RULES).unwrap();
+    apply(&root, &[]);
+
+    let point_outside = |recorded: &mut Value| {
+        recorded["mcp_servers"] = json!(["github", "mine"]);
+        recorded["mcp_targets"] = json!([
+            {"path": "../outside/.mcp.json", "server_key": "mcpServers"},
+            {"path": victim_config.to_str().unwrap(), "server_key": "mcpServers"},
+        ]);
+        recorded["paths"] = json!(["../outside/CLAUDE.md", victim_rules.to_str().unwrap()]);
+    };
+    tamper_manifest(&root, point_outside);
+    apply(&root, &[]);
+    assert_eq!(fs::read_to_string(&victim_config).unwrap(), OUTSIDE_MCP);
+    assert_eq!(fs::read_to_string(&victim_rules).unwrap(), OUTSIDE_RULES);
+
+    tamper_manifest(&root, point_outside);
+    clear(&root);
+    assert_eq!(fs::read_to_string(&victim_config).unwrap(), OUTSIDE_MCP);
+    assert_eq!(fs::read_to_string(&victim_rules).unwrap(), OUTSIDE_RULES);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_cannot_carry_an_mcp_rewrite_or_a_marked_file_outside_the_project() {
+    let (_workspace, root, outside) = project_beside_outside();
+    let victim_config = outside.join("mcp.json");
+    fs::write(&victim_config, OUTSIDE_MCP).unwrap();
+    fs::write(outside.join("CLAUDE.md"), OUTSIDE_RULES).unwrap();
+    apply(&root, &[]);
+    fs::create_dir_all(root.join(".cursor")).unwrap();
+    std::os::unix::fs::symlink(&victim_config, root.join(".cursor/mcp.json")).unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("docs")).unwrap();
+
+    let through_links = |recorded: &mut Value| {
+        recorded["mcp_servers"] = json!(["github", "mine"]);
+        recorded["mcp_targets"] = json!([{"path": ".cursor/mcp.json", "server_key": "mcpServers"}]);
+        recorded["paths"] = json!(["docs/CLAUDE.md"]);
+    };
+    tamper_manifest(&root, through_links);
+    apply(&root, &[]);
+    assert_eq!(fs::read_to_string(&victim_config).unwrap(), OUTSIDE_MCP);
+    assert_eq!(
+        fs::read_to_string(outside.join("CLAUDE.md")).unwrap(),
+        OUTSIDE_RULES
+    );
+
+    tamper_manifest(&root, through_links);
+    clear(&root);
+    assert_eq!(fs::read_to_string(&victim_config).unwrap(), OUTSIDE_MCP);
+}
+
+#[test]
+fn a_skills_root_kept_for_hand_placed_skills_stays_ignored() {
+    // A 0.4.2 manifest records the root but not the copies it made, so after
+    // the last skill is removed the root survives with those copies inside.
+    let temporary = project("\"claude\"", "");
+    let root = temporary.path();
+    write_skill(root, "cli");
+    apply(root, &[]);
+    let manifest_path = root.join(IMRULE_MANIFEST_PATH);
+    let mut recorded: Value =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    recorded.as_object_mut().unwrap().remove("skills");
+    fs::write(&manifest_path, recorded.to_string()).unwrap();
+
+    fs::remove_dir_all(root.join(".imrule/skills")).unwrap();
+    apply(root, &[]);
+
+    assert!(root.join(".claude/skills/cli/SKILL.md").exists());
+    assert!(
+        ignore_block(root)
+            .iter()
+            .any(|line| line.contains(".claude/skills")),
+        "the surviving root fell out of .gitignore: {:?}",
+        ignore_block(root)
+    );
 }
 
 #[test]
