@@ -884,6 +884,19 @@ fn install_state_compares_contents_before_revisions() {
         "a file the embedded skill does not ship was added locally"
     );
     assert_eq!(
+        state_of(
+            alpha,
+            &[
+                ("SKILL.md", ALPHA_V1),
+                ("scripts/check.py", old_check),
+                (".DS_Store", "finder"),
+                ("scripts/__pycache__/check.cpython-312.pyc", "bytecode"),
+            ]
+        ),
+        BuiltinSkillState::Outdated,
+        "hidden files and bytecode are not user content"
+    );
+    assert_eq!(
         state_of(alpha, &[("SKILL.md", ALPHA_V2)]),
         BuiltinSkillState::Modified,
         "a file deleted at the current revision is a local change"
