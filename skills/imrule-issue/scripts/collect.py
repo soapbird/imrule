@@ -77,10 +77,6 @@ AUTHORIZATION = re.compile(
     r"((?:(?:bearer|basic|token|digest)[\s-]+)?(?:[^\s\"'\\,;]|\\(?![\"']))+)"
 )
 AUTH_SCHEME = re.compile(r"(?i)^(?:bearer|basic|token|digest)[\s-]+")
-COOKIE = re.compile(
-    rf"(?im)\b((?:set-)?cookie{OPTIONAL_QUOTE}\s*[:=]\s*{OPTIONAL_QUOTE})"
-    r"(?:[^\n\r\"'\\]|\\(?![\"']))+"
-)
 # 환경 변수 참조 하나로만 이뤄진 값($VAR·${VAR})은 비밀값이 아니라 변수 이름이므로 남긴다.
 # 중괄호 없는 $VAR는 대문자 관례만 인정한다 — $ecr3t 같은 비밀번호와 모양으로 구분할 수 없어서.
 ENV_REFERENCE = re.compile(r"\$(?:[A-Z_][A-Z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})")
@@ -93,6 +89,20 @@ QUOTED_VALUE = {
     '"': r'(?:\\.|[^"\\\r\n])+',
     r'\\"': r'(?:\\\\\\"|\\\\\\\\|\\[^"\\\r\n]|[^"\\\r\n])+',
 }
+# 쿠키 헤더 값은 줄 끝(또는 값을 감싼 따옴표)까지 통째로 가린다. sid="a b" 처럼 `=` 바로 뒤에 오는
+# 따옴표 문자열은 값의 일부로 읽는다 — 이스케이프된 JSON 안에서는 \" , 한 번 더 감싸면 \\\" 로 나온다.
+# `=` 뒤가 아닌 따옴표는 값을 감싼 따옴표로 보고 멈춘다(["Cookie: sid=a", "x"]).
+COOKIE_QUOTED = "|".join(
+    rf"{quote}(?:{value})?{quote}"
+    for quote, value in {
+        **QUOTED_VALUE,
+        r'\\\\\\"': r'(?:\\\\\\\\|\\[^"\\\r\n]|[^"\\\r\n])+',
+    }.items()
+)
+COOKIE = re.compile(
+    rf"(?im)\b((?:set-)?cookie{OPTIONAL_QUOTE}\s*[:=]\s*{OPTIONAL_QUOTE})"
+    rf"(?:=(?:{COOKIE_QUOTED})|[^\n\r\"'\\]|\\(?![\"']))+"
+)
 # 따옴표로 감싼 값은 닫는 따옴표까지 통째로 가린다. 공백·쉼표·세미콜론이 있어도 남기지 않는다.
 KEY_VALUE_QUOTED = [
     # 'PASSWORD=alpha bravo' — 키=값 전체를 한 따옴표로 감쌈 (--env 'KEY=값' 을 shlex.join한 모양)
@@ -133,6 +143,11 @@ GENERIC_USERS = {"root", "user", "admin", "runner", "ubuntu", "imrule"}
 REDACTED = "<redacted>"
 
 
+def already_redacted(value: str) -> bool:
+    """이미 가린 값인지 본다. `<p4ss` 같은 비밀번호를 놓치지 않도록 가림 표시와 정확히 같을 때만."""
+    return value.strip("\"'\\") == REDACTED
+
+
 class Redactor:
     """공개 전에 비밀값·홈 경로·사용자 이름·프로젝트 이름을 가린다."""
 
@@ -164,8 +179,8 @@ class Redactor:
 
     def _authorization(self, match: re.Match) -> str:
         credential = AUTH_SCHEME.sub("", match.group(2))
-        # `${VAR}`·`$VAR` 참조는 비밀값이 아니라 변수 이름이므로 남긴다. `<`는 이미 가린 값.
-        if credential.startswith("<") or ENV_REFERENCE.fullmatch(credential):
+        # `${VAR}`·`$VAR` 참조는 비밀값이 아니라 변수 이름이므로 남긴다. 이미 가린 값은 다시 세지 않는다.
+        if already_redacted(credential) or ENV_REFERENCE.fullmatch(credential):
             return match.group(0)
         self.counts["secret"] += 1
         return f"{match.group(1)}{REDACTED}"
@@ -176,7 +191,7 @@ class Redactor:
         # Authorization·쿠키는 전용 패턴이 인증 방식(Bearer 등)까지 보고 이미 처리했다.
         if key.endswith("authorization") or key.endswith("cookie"):
             return match.group(0)
-        if (value.startswith("<") or ENV_REFERENCE.fullmatch(value)
+        if (already_redacted(value) or ENV_REFERENCE.fullmatch(value)
                 or value.lower() in {"true", "false", "null", "none"}
                 or (value.isdigit() and len(value) < 8)):
             return match.group(0)
@@ -185,8 +200,16 @@ class Redactor:
         whole, start = match.group(0), match.start()
         return f"{whole[:match.start('value') - start]}{REDACTED}{whole[match.end('value') - start:]}"
 
+    def _prefixed(self, match: re.Match) -> str:
+        # 접두어(group 1) 뒤 전체가 값이다 — 쿠키 헤더·URL 쿼리.
+        if already_redacted(match.group(0)[len(match.group(1)):]):
+            return match.group(0)
+        self.counts["secret"] += 1
+        return f"{match.group(1)}{REDACTED}"
+
     def _url_userinfo(self, match: re.Match) -> str:
-        if match.group("name") and match.group("name").lower() in URL_PLAIN_USERS:
+        name = match.group("name")
+        if name and (name.lower() in URL_PLAIN_USERS or already_redacted(name)):
             return match.group(0)
         self.counts["secret"] += 1
         return f"{match.group('scheme')}{REDACTED}@"
@@ -197,9 +220,9 @@ class Redactor:
         for pattern in TOKENS:
             text = self._sub("secret", pattern, REDACTED, text)
         text = AUTHORIZATION.sub(self._authorization, text)
-        text = self._sub("secret", COOKIE, rf"\1{REDACTED}", text)
+        text = COOKIE.sub(self._prefixed, text)
         text = URL_USERINFO.sub(self._url_userinfo, text)
-        text = self._sub("secret", URL_QUERY, rf"\1{REDACTED}", text)
+        text = URL_QUERY.sub(self._prefixed, text)
         # 따옴표 모양을 먼저 가린다. 뒤의 KEY_VALUE는 이미 가린 <redacted>를 건너뛴다.
         for pattern in (*KEY_VALUE_QUOTED, KEY_VALUE):
             text = pattern.sub(self._key_value, text)
