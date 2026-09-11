@@ -272,6 +272,15 @@ impl<'a> SkillsSetupUseCase<'a> {
             )));
         }
         if current != BuiltinSkillState::NotInstalled {
+            // A grouping directory linked elsewhere (`.imrule/skills/docker ->
+            // ~/somewhere`) would make this delete files outside the install dir.
+            if !self.fs_port.resolves_within(&skill_dir, install_dir) {
+                return Err(ImruleError::skills(format!(
+                    "refusing to replace {}: it resolves outside {}",
+                    skill_dir.display(),
+                    install_dir.display()
+                )));
+            }
             self.fs_port.remove_dir_all(&skill_dir)?;
         }
         for (relative, content) in &skill.files {

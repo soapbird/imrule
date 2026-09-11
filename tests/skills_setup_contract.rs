@@ -674,6 +674,14 @@ fn a_built_in_path_reached_through_a_symlink_is_not_emptied() {
         BuiltinSkillSetupStatus::SkippedModified
     );
     assert_eq!(fs::read_to_string(&kept).unwrap(), "outside the project\n");
+
+    // Even with consent to overwrite, the linked directory is not emptied.
+    assert!(
+        use_case
+            .install(&plan, &["lang/alpha".to_string()], true, false)
+            .is_err()
+    );
+    assert_eq!(fs::read_to_string(&kept).unwrap(), "outside the project\n");
 }
 
 #[test]
