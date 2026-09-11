@@ -105,7 +105,8 @@ jobs:
     permissions:
       contents: write
     env:
-      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      # Only whether the token exists; the secret itself goes to the tap checkout step alone.
+      HAS_HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -141,15 +142,15 @@ jobs:
           files: dist/*
 
       - name: Checkout Homebrew tap
-        if: env.HOMEBREW_TAP_TOKEN != ''
+        if: env.HAS_HOMEBREW_TAP_TOKEN == 'true'
         # Credentials stay persisted here: "Publish Homebrew tap" runs `git push`.
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           repository: ${{ github.repository_owner }}/${{ env.HOMEBREW_TAP_REPO }}
           path: homebrew-tap
-          token: ${{ env.HOMEBREW_TAP_TOKEN }}
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
       - name: Generate Homebrew formula
-        if: env.HOMEBREW_TAP_TOKEN != ''
+        if: env.HAS_HOMEBREW_TAP_TOKEN == 'true'
         env:
           VERSION: ${{ github.ref_name }}
         run: |
@@ -197,7 +198,7 @@ jobs:
           EOF
 
       - name: Publish Homebrew tap
-        if: env.HOMEBREW_TAP_TOKEN != ''
+        if: env.HAS_HOMEBREW_TAP_TOKEN == 'true'
         working-directory: homebrew-tap
         env:
           VERSION: ${{ github.ref_name }}
