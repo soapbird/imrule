@@ -1,6 +1,6 @@
 //! Skills domain types and pure helpers.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::domain::agent::AgentDefinition;
@@ -36,23 +36,30 @@ pub enum RemoteSkillSource {
 /// - `https://gitlab.com/org/repo`
 /// - `git@github.com:org/repo.git`
 /// - `./local/path` or `/abs/path`
-pub fn parse_skill_source(source: &str) -> Result<RemoteSkillSource, ImruleError> {
+///
+/// `current_dir` and `path_exists` are injected so this stays pure: a bare
+/// relative path is ambiguous with the `org/repo` shorthand, so the caller's
+/// filesystem decides, and relative paths resolve against the caller's
+/// working directory.
+pub fn parse_skill_source(
+    source: &str,
+    current_dir: &Path,
+    path_exists: impl Fn(&Path) -> bool,
+) -> Result<RemoteSkillSource, ImruleError> {
     let trimmed = source.trim();
 
-    // Local path: starts with . or / or has a path separator on non-URL
+    // Local path: starts with . or / or exists on disk as a non-URL
     if trimmed.starts_with("./")
         || trimmed.starts_with('/')
         || trimmed.starts_with("../")
-        || (Path::new(trimmed).exists() && !trimmed.contains("://"))
+        || (path_exists(Path::new(trimmed)) && !trimmed.contains("://"))
     {
         let path = PathBuf::from(trimmed);
         return Ok(RemoteSkillSource::Local {
             path: if path.is_absolute() {
                 path
             } else {
-                std::env::current_dir()
-                    .unwrap_or_else(|_| PathBuf::from("."))
-                    .join(path)
+                current_dir.join(path)
             },
         });
     }
@@ -145,33 +152,28 @@ pub fn format_validation_warnings(warnings: &[String]) -> String {
 
 /// Gets native skill target paths generated for selected agents.
 pub fn get_skills_gitignore_paths(project_root: &Path, agents: &[AgentDefinition]) -> Vec<PathBuf> {
-    let selected: BTreeSet<_> = agents
-        .iter()
-        .filter(|agent| agent.capabilities.native_skills)
-        .map(|agent| agent.identifier)
-        .collect();
-    let target_specs: &[(&str, &[&str])] = &[
-        (CLAUDE_SKILLS_PATH, &["claude", "copilot", "kilocode"]),
-        (CODEX_SKILLS_PATH, &["codex"]),
-        (OPENCODE_SKILLS_PATH, &["opencode"]),
-        (PI_SKILLS_PATH, &["pi"]),
-        (GOOSE_SKILLS_PATH, &["goose", "amp"]),
-        (VIBE_SKILLS_PATH, &["mistral"]),
-        (ROO_SKILLS_PATH, &["roo"]),
-        (GEMINI_SKILLS_PATH, &["gemini-cli"]),
-        (KIMI_SKILLS_PATH, &["kimi-cli", "kimi-code", "kimi"]),
-        (JUNIE_SKILLS_PATH, &["junie"]),
-        (CURSOR_SKILLS_PATH, &["cursor"]),
-        (WINDSURF_SKILLS_PATH, &["windsurf"]),
-        (FACTORY_SKILLS_PATH, &["factory"]),
-        (ANTIGRAVITY_SKILLS_PATH, &["antigravity"]),
-        (GJC_SKILLS_PATH, &["gjc"]),
-    ];
-    target_specs
-        .iter()
-        .filter(|(_, ids)| ids.iter().any(|id| selected.contains(id)))
-        .map(|(path, _)| project_root.join(path))
-        .collect()
+    crate::domain::agent::selected_target_dirs(
+        project_root,
+        agents,
+        |capabilities| capabilities.native_skills,
+        &[
+            (CLAUDE_SKILLS_PATH, &["claude", "copilot", "kilocode"]),
+            (CODEX_SKILLS_PATH, &["codex"]),
+            (OPENCODE_SKILLS_PATH, &["opencode"]),
+            (PI_SKILLS_PATH, &["pi"]),
+            (GOOSE_SKILLS_PATH, &["goose", "amp"]),
+            (VIBE_SKILLS_PATH, &["mistral"]),
+            (ROO_SKILLS_PATH, &["roo"]),
+            (GEMINI_SKILLS_PATH, &["gemini-cli"]),
+            (KIMI_SKILLS_PATH, &["kimi-cli", "kimi-code", "kimi"]),
+            (JUNIE_SKILLS_PATH, &["junie"]),
+            (CURSOR_SKILLS_PATH, &["cursor"]),
+            (WINDSURF_SKILLS_PATH, &["windsurf"]),
+            (FACTORY_SKILLS_PATH, &["factory"]),
+            (ANTIGRAVITY_SKILLS_PATH, &["antigravity"]),
+            (GJC_SKILLS_PATH, &["gjc"]),
+        ],
+    )
 }
 
 /// The string recorded for a source in `[skills.sources]`. Local paths are
@@ -205,6 +207,21 @@ pub enum SkillUpdateStatus {
     MissingInSource,
     /// The source could not be fetched or read.
     Failed,
+}
+
+impl SkillUpdateStatus {
+    /// Human-facing label for the update report, `would …` under `dry_run`.
+    pub fn label(self, dry_run: bool) -> &'static str {
+        match (self, dry_run) {
+            (Self::Updated, false) => "updated",
+            (Self::Updated, true) => "would update",
+            (Self::Reinstalled, false) => "reinstalled",
+            (Self::Reinstalled, true) => "would reinstall",
+            (Self::Unchanged, _) => "unchanged",
+            (Self::MissingInSource, _) => "missing in source",
+            (Self::Failed, _) => "failed",
+        }
+    }
 }
 
 /// The outcome of updating one skill.

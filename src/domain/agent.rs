@@ -1,5 +1,6 @@
 //! Agent metadata, registry, and shared write behavior for Rust migration.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::domain::constants::DEFAULT_RULES_FILENAME;
@@ -30,6 +31,28 @@ impl AgentCapabilities {
             native_subagents,
         }
     }
+}
+
+/// Projects the output directories a run generates for the selected agents:
+/// keeps every spec whose id list intersects the agents that carry
+/// `capability`. Skills and subagents share this mechanism with their own
+/// target tables.
+pub fn selected_target_dirs(
+    project_root: &Path,
+    agents: &[AgentDefinition],
+    capability: fn(&AgentCapabilities) -> bool,
+    target_specs: &[(&str, &[&str])],
+) -> Vec<PathBuf> {
+    let selected: BTreeSet<&str> = agents
+        .iter()
+        .filter(|agent| capability(&agent.capabilities))
+        .map(|agent| agent.identifier)
+        .collect();
+    target_specs
+        .iter()
+        .filter(|(_, ids)| ids.iter().any(|id| selected.contains(id)))
+        .map(|(path, _)| project_root.join(path))
+        .collect()
 }
 
 /// A single or multi-file output path declaration.

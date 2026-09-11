@@ -9,7 +9,8 @@ use crate::domain::config::{AgentConfig, LoadedConfig};
 use crate::domain::error::ImruleError;
 use crate::domain::manifest::ApplyManifest;
 use crate::domain::mcp::McpRemoteVersionCache;
-use crate::domain::skills::RemoteSkillSource;
+use crate::domain::skills::{RemoteSkillSource, SkillsDiscovery};
+use crate::domain::subagent::SubagentsDiscovery;
 
 /// Loads and parses ImRule configuration.
 pub trait ConfigPort: Send + Sync {
@@ -63,6 +64,13 @@ pub trait FileSystemPort: Send + Sync {
     /// Check whether a path exists as a file.
     fn file_exists(&self, path: &Path) -> bool;
 
+    /// Check whether a path exists as a directory.
+    fn dir_exists(&self, path: &Path) -> bool;
+
+    /// The process working directory, falling back to `.` — the base relative
+    /// skill sources resolve against.
+    fn current_dir(&self) -> PathBuf;
+
     /// Searches upwards for `.imrule`, optionally falling back to global config.
     fn find_imrule_dir(&self, start_path: &Path, check_global: bool) -> Option<PathBuf>;
 
@@ -75,6 +83,24 @@ pub trait FileSystemPort: Send + Sync {
 
     /// Finds all `.imrule` directories below `start_path`, deepest first.
     fn find_all_imrule_dirs(&self, start_path: &Path) -> Vec<PathBuf>;
+
+    /// Discovers the project's skills (`.imrule/skills`, falling back to
+    /// `.ruler/skills`), each named as `apply` publishes it.
+    fn discover_skills(&self, project_root: &Path) -> Result<SkillsDiscovery, ImruleError>;
+
+    /// Walks a fetched skill source at any depth, keeping each skill's own
+    /// directory name.
+    fn walk_skills_tree(&self, root: &Path) -> Result<SkillsDiscovery, ImruleError>;
+
+    /// Recursively copies a directory into `to`, creating it as needed.
+    fn copy_dir(&self, from: &Path, to: &Path) -> Result<(), ImruleError>;
+
+    /// Whether two directory trees hold byte-identical files.
+    fn dirs_match(&self, left: &Path, right: &Path) -> Result<bool, ImruleError>;
+
+    /// Discovers subagent definitions (`.imrule/agents`, falling back to
+    /// `.ruler/agents`).
+    fn discover_subagents(&self, project_root: &Path) -> Result<SubagentsDiscovery, ImruleError>;
 }
 
 /// Updates ignore files with generated paths.

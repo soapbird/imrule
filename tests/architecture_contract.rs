@@ -9,6 +9,88 @@ fn cli_depends_on_application_use_cases_not_core_engines() {
     assert!(!main.contains("std::fs"));
 }
 
+/// Inward-only dependencies: domain knows no other layer, application reaches
+/// I/O only through the traits in `application/ports.rs`. The check reads
+/// `crate::<layer>` paths, which is how every cross-layer reference is written.
+#[test]
+fn layers_depend_only_inward() {
+    let forbidden: &[(&str, &[&str])] = &[
+        (
+            "src/domain",
+            &[
+                "crate::application",
+                "crate::infrastructure",
+                "crate::interface",
+            ],
+        ),
+        (
+            "src/application",
+            &["crate::infrastructure", "crate::interface"],
+        ),
+        ("src/infrastructure", &["crate::interface"]),
+    ];
+    for (dir, layers) in forbidden {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let source = fs::read_to_string(&path).unwrap();
+            for layer in *layers {
+                assert!(
+                    !source.contains(layer),
+                    "{} references {layer}; depend inward, adding a port in application/ports.rs if I/O is needed",
+                    path.display()
+                );
+            }
+        }
+    }
+}
+
+/// The application layer reaches the filesystem only through its ports: direct
+/// `std::fs` calls or path probes (`exists`, `is_dir`, `is_file`) would bypass them.
+#[test]
+fn application_layer_probes_filesystem_only_through_ports() {
+    for entry in fs::read_dir("src/application").unwrap() {
+        let path = entry.unwrap().path();
+        let source = fs::read_to_string(&path).unwrap();
+        assert!(
+            !source.contains("std::fs"),
+            "{} uses std::fs directly; go through a FileSystemPort method",
+            path.display()
+        );
+        assert!(
+            !source.contains(".exists()")
+                && !source.contains(".is_dir()")
+                && !source.contains(".is_file()"),
+            "{} probes the filesystem directly; use FileSystemPort::file_exists/dir_exists",
+            path.display()
+        );
+    }
+}
+
+/// The domain layer stays pure: filesystem probes and working-directory reads
+/// belong behind a port, injected by the caller. (Reading environment
+/// variables for the config home in `constants.rs` is the established
+/// exception.)
+#[test]
+fn domain_layer_stays_pure() {
+    for entry in fs::read_dir("src/domain").unwrap() {
+        let path = entry.unwrap().path();
+        let source = fs::read_to_string(&path).unwrap();
+        for probe in [
+            "std::fs",
+            ".exists()",
+            ".is_dir()",
+            ".is_file()",
+            "env::current_dir",
+        ] {
+            assert!(
+                !source.contains(probe),
+                "{} uses {probe}; domain must stay pure — move the probe behind a port",
+                path.display()
+            );
+        }
+    }
+}
+
 #[test]
 fn package_contains_application_layer_without_typescript_surface() {
     let cargo = fs::read_to_string("Cargo.toml").unwrap();

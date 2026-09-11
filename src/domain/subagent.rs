@@ -32,6 +32,27 @@ pub struct SubagentsDiscovery {
     pub warnings: Vec<String>,
 }
 
+/// Native subagent directories written for the selected agents.
+pub fn subagents_gitignore_paths(
+    project_root: &std::path::Path,
+    agents: &[crate::domain::agent::AgentDefinition],
+) -> Vec<std::path::PathBuf> {
+    use crate::domain::constants::{
+        CLAUDE_SUBAGENTS_PATH, CODEX_SUBAGENTS_PATH, COPILOT_SUBAGENTS_PATH, CURSOR_SUBAGENTS_PATH,
+    };
+    crate::domain::agent::selected_target_dirs(
+        project_root,
+        agents,
+        |capabilities| capabilities.native_subagents,
+        &[
+            (CLAUDE_SUBAGENTS_PATH, &["claude"]),
+            (CURSOR_SUBAGENTS_PATH, &["cursor"]),
+            (CODEX_SUBAGENTS_PATH, &["codex"]),
+            (COPILOT_SUBAGENTS_PATH, &["copilot"]),
+        ],
+    )
+}
+
 /// Parses leading YAML frontmatter.
 pub fn parse_frontmatter(content: &str) -> Result<Option<ParsedFrontmatter>, String> {
     let Some(rest) = content.strip_prefix("---") else {

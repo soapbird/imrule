@@ -25,7 +25,6 @@ use crate::domain::mcp::{
 };
 use crate::domain::rules::concatenate_rules;
 use crate::domain::skills::get_skills_gitignore_paths;
-use crate::infrastructure::skills::{copy_skills_directory, discover_skills};
 
 /// Runtime options for `imrule apply`.
 #[derive(Debug, Clone)]
@@ -401,7 +400,7 @@ impl<'a> ApplyUseCase<'a> {
             if !self.fs_port.file_exists(&path) {
                 continue;
             }
-            if path.is_dir() {
+            if self.fs_port.dir_exists(&path) {
                 self.fs_port.remove_dir_all(&path)?;
             } else if self
                 .fs_port
@@ -535,8 +534,7 @@ impl<'a> ApplyUseCase<'a> {
         options: &ApplyOptions,
         selected_agents: &[AgentDefinition],
     ) -> Result<Vec<PathBuf>, ImruleError> {
-        let discovery = crate::infrastructure::subagents::discover_subagents(&options.project_root)
-            .map_err(|e| ImruleError::subagent(e.to_string()))?;
+        let discovery = self.fs_port.discover_subagents(&options.project_root)?;
         if discovery.subagents.is_empty() {
             return Ok(Vec::new());
         }
@@ -617,13 +615,12 @@ impl<'a> ApplyUseCase<'a> {
             written.extend(sub_results?.into_iter().flatten());
         }
 
-        let gitignore_paths = crate::infrastructure::subagents::get_subagents_gitignore_paths(
+        // Discovery found subagents above, so the source directory exists and
+        // every selected target is really written.
+        let gitignore_paths = crate::domain::subagent::subagents_gitignore_paths(
             &options.project_root,
             selected_agents,
-        )
-        .map_err(|e| {
-            ImruleError::subagent(format!("failed to get subagent gitignore paths: {e}"))
-        })?;
+        );
         for path in gitignore_paths {
             if !written.contains(&path) {
                 written.push(path);
@@ -639,82 +636,26 @@ impl<'a> ApplyUseCase<'a> {
         selected_agents: &[AgentDefinition],
         dry_run: bool,
     ) -> Result<Vec<PathBuf>, ImruleError> {
-        let imrule_skills_dir = project_root.join(crate::domain::constants::IMRULE_SKILLS_PATH);
-        let legacy_skills_dir = project_root.join(crate::domain::constants::LEGACY_SKILLS_PATH);
-        if !imrule_skills_dir.exists() && !legacy_skills_dir.exists() {
-            return Ok(Vec::new());
-        }
-
-        let discovery =
-            discover_skills(project_root).map_err(|e| ImruleError::skills(e.to_string()))?;
+        let discovery = self.fs_port.discover_skills(project_root)?;
         if discovery.skills.is_empty() {
             return Ok(Vec::new());
         }
 
-        let agent_skill_paths: &[(&str, &str)] = &[
-            ("claude", crate::domain::constants::CLAUDE_SKILLS_PATH),
-            ("copilot", crate::domain::constants::CLAUDE_SKILLS_PATH),
-            ("kilocode", crate::domain::constants::CLAUDE_SKILLS_PATH),
-            ("codex", crate::domain::constants::CODEX_SKILLS_PATH),
-            ("opencode", crate::domain::constants::OPENCODE_SKILLS_PATH),
-            ("pi", crate::domain::constants::PI_SKILLS_PATH),
-            ("goose", crate::domain::constants::GOOSE_SKILLS_PATH),
-            ("amp", crate::domain::constants::GOOSE_SKILLS_PATH),
-            ("mistral", crate::domain::constants::VIBE_SKILLS_PATH),
-            ("roo", crate::domain::constants::ROO_SKILLS_PATH),
-            ("gemini-cli", crate::domain::constants::GEMINI_SKILLS_PATH),
-            ("kimi-cli", crate::domain::constants::KIMI_SKILLS_PATH),
-            ("kimi-code", crate::domain::constants::KIMI_SKILLS_PATH),
-            ("kimi", crate::domain::constants::KIMI_SKILLS_PATH),
-            ("junie", crate::domain::constants::JUNIE_SKILLS_PATH),
-            ("cursor", crate::domain::constants::CURSOR_SKILLS_PATH),
-            ("windsurf", crate::domain::constants::WINDSURF_SKILLS_PATH),
-            ("factory", crate::domain::constants::FACTORY_SKILLS_PATH),
-            (
-                "antigravity",
-                crate::domain::constants::ANTIGRAVITY_SKILLS_PATH,
-            ),
-            ("gjc", crate::domain::constants::GJC_SKILLS_PATH),
-        ];
-
         let mut written = Vec::new();
-        let mut seen_targets = std::collections::BTreeSet::new();
 
-        for agent in selected_agents {
-            if !agent.capabilities.native_skills {
-                continue;
+        for target_dir in get_skills_gitignore_paths(project_root, selected_agents) {
+            if !dry_run {
+                let copy_results: Result<Vec<_>, ImruleError> = discovery
+                    .skills
+                    .par_iter()
+                    .map(|skill| {
+                        let dest = target_dir.join(&skill.name);
+                        self.fs_port.copy_dir(&skill.path, &dest)?;
+                        Ok(dest)
+                    })
+                    .collect();
+                copy_results?;
             }
-            let Some(&target_rel) = agent_skill_paths
-                .iter()
-                .find(|(id, _)| id == &agent.identifier)
-                .map(|(_, path)| path)
-            else {
-                continue;
-            };
-
-            let target_dir = project_root.join(target_rel);
-            let target_key = target_dir.to_string_lossy().to_string();
-            if seen_targets.contains(&target_key) {
-                continue;
-            }
-            seen_targets.insert(target_key.clone());
-
-            if dry_run {
-                written.push(target_dir);
-                continue;
-            }
-
-            let copy_results: Result<Vec<_>, ImruleError> = discovery
-                .skills
-                .par_iter()
-                .map(|skill| {
-                    let dest = target_dir.join(&skill.name);
-                    copy_skills_directory(&skill.path, &dest)
-                        .map_err(|e| ImruleError::skills(e.to_string()))?;
-                    Ok(dest)
-                })
-                .collect();
-            copy_results?;
             written.push(target_dir);
         }
 
@@ -731,22 +672,14 @@ impl<'a> ApplyUseCase<'a> {
                 written.push(config_path);
             } else {
                 let existing = self.fs_port.read_text(&config_path).ok();
-                let merged = crate::infrastructure::gjc_config::enable_gjc_skill_discovery(
-                    existing.as_deref(),
-                )?;
+                let merged =
+                    crate::domain::gjc_config::enable_gjc_skill_discovery(existing.as_deref())?;
                 self.fs_port
                     .write_text(&config_path, &merged)
                     .map_err(|e| {
                         ImruleError::skills(format!("failed to write .gjc/config.yml: {e}"))
                     })?;
                 written.push(config_path);
-            }
-        }
-
-        let gitignore_skill_paths = get_skills_gitignore_paths(project_root, selected_agents);
-        for path in gitignore_skill_paths {
-            if !written.contains(&path) {
-                written.push(path);
             }
         }
 

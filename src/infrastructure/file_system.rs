@@ -9,6 +9,8 @@ use crate::domain::constants::{
     xdg_config_home,
 };
 use crate::domain::error::ImruleError;
+use crate::domain::skills::SkillsDiscovery;
+use crate::domain::subagent::SubagentsDiscovery;
 const SUBAGENTS_DIR_NAME: &str = "agents";
 
 pub struct FsFileSystem;
@@ -26,6 +28,33 @@ impl Default for FsFileSystem {
 }
 
 impl FileSystemPort for FsFileSystem {
+    fn discover_skills(&self, project_root: &Path) -> Result<SkillsDiscovery, ImruleError> {
+        crate::infrastructure::skills::discover_skills(project_root)
+            .map_err(|e| ImruleError::skills(e.to_string()))
+    }
+
+    fn walk_skills_tree(&self, root: &Path) -> Result<SkillsDiscovery, ImruleError> {
+        crate::infrastructure::skills::walk_skills_tree(root)
+            .map_err(|e| ImruleError::skills(format!("failed to walk skills tree: {e}")))
+    }
+
+    fn copy_dir(&self, from: &Path, to: &Path) -> Result<(), ImruleError> {
+        crate::infrastructure::skills::copy_skills_directory(from, to).map_err(|e| {
+            ImruleError::filesystem(format!("{} -> {}: {e}", from.display(), to.display()))
+        })
+    }
+
+    fn dirs_match(&self, left: &Path, right: &Path) -> Result<bool, ImruleError> {
+        crate::infrastructure::skills::skill_trees_match(left, right).map_err(|e| {
+            ImruleError::filesystem(format!("{} <> {}: {e}", left.display(), right.display()))
+        })
+    }
+
+    fn discover_subagents(&self, project_root: &Path) -> Result<SubagentsDiscovery, ImruleError> {
+        crate::infrastructure::subagents::discover_subagents(project_root)
+            .map_err(|e| ImruleError::subagent(e.to_string()))
+    }
+
     fn read_text(&self, path: &Path) -> Result<String, ImruleError> {
         fs::read_to_string(path)
             .map_err(|e| ImruleError::filesystem(format!("{}: {e}", path.display())))
@@ -85,6 +114,14 @@ impl FileSystemPort for FsFileSystem {
 
     fn file_exists(&self, path: &Path) -> bool {
         path.exists()
+    }
+
+    fn dir_exists(&self, path: &Path) -> bool {
+        path.is_dir()
+    }
+
+    fn current_dir(&self) -> PathBuf {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     }
 
     fn find_imrule_dir(&self, start_path: &Path, check_global: bool) -> Option<PathBuf> {

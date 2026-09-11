@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 
 use crate::application::ports::{ConfigPort, ConfigWritePort, FileSystemPort, SkillFetcherPort};
 use crate::domain::config::SkillInfo;
+use crate::domain::constants::SKILL_MD_FILENAME;
 use crate::domain::error::ImruleError;
 use crate::domain::skills::{parse_skill_source, skill_source_key};
-use crate::infrastructure::skills::{copy_skills_directory, walk_skills_tree};
 
 /// Runtime options for `imrule skills add`.
 #[derive(Debug, Clone)]
@@ -52,10 +52,13 @@ impl<'a> SkillsAddUseCase<'a> {
     }
 
     pub fn execute(&self, options: SkillsAddOptions) -> Result<SkillsAddResult, ImruleError> {
-        let source = parse_skill_source(&options.source)?;
+        let current_dir = self.fs_port.current_dir();
+        let source = parse_skill_source(&options.source, &current_dir, |path| {
+            self.fs_port.file_exists(path)
+        })?;
 
         let fetched_path = self.fetcher.fetch_to_temp(&source)?;
-        if !fetched_path.exists() {
+        if !self.fs_port.file_exists(&fetched_path) {
             return Err(ImruleError::skills(format!(
                 "fetched source path does not exist: {}",
                 fetched_path.display()
@@ -64,7 +67,7 @@ impl<'a> SkillsAddUseCase<'a> {
 
         // Discover skill directories that contain SKILL.md in the fetched source.
         // The source repo may have skills at root level, in skills/, or in agent-specific dirs.
-        let discovery = discover_remote_skills(&fetched_path)?;
+        let discovery = discover_remote_skills(self.fs_port, &fetched_path)?;
 
         // Determine target directory.
         let skills_base = resolve_skills_base(self.fs_port, &options.project_root, options.global);
@@ -98,16 +101,12 @@ impl<'a> SkillsAddUseCase<'a> {
             ));
         }
 
-        self.fs_port
-            .ensure_dir_exists(&skills_base)
-            .map_err(|e| ImruleError::filesystem(format!("failed to create skills dir: {e}")))?;
+        self.fs_port.ensure_dir_exists(&skills_base)?;
 
         let mut installed = Vec::new();
         for skill in &selected {
             let dest = skills_base.join(&skill.name);
-            copy_skills_directory(&skill.path, &dest).map_err(|e| {
-                ImruleError::skills(format!("failed to copy skill '{}': {e}", skill.name))
-            })?;
+            self.fs_port.copy_dir(&skill.path, &dest)?;
             installed.push(skill.name.clone());
         }
 
@@ -175,12 +174,14 @@ pub fn effective_config_root(project_root: &Path, global: bool) -> PathBuf {
 
 /// Discovers skills from a fetched remote/local source directory.
 /// Searches for SKILL.md files in common locations compatible with vercel-labs/skills format.
-pub fn discover_remote_skills(root: &Path) -> Result<Vec<SkillInfo>, ImruleError> {
+pub fn discover_remote_skills(
+    fs_port: &dyn FileSystemPort,
+    root: &Path,
+) -> Result<Vec<SkillInfo>, ImruleError> {
     let mut all_skills = Vec::new();
 
     // Direct walk of the root — finds skills at any depth.
-    let discovery = walk_skills_tree(root)
-        .map_err(|e| ImruleError::skills(format!("failed to walk skills tree: {e}")))?;
+    let discovery = fs_port.walk_skills_tree(root)?;
 
     // Filter to only valid skills (those with SKILL.md).
     for skill in discovery.skills {
@@ -192,7 +193,7 @@ pub fn discover_remote_skills(root: &Path) -> Result<Vec<SkillInfo>, ImruleError
     let mut all_skills = dedupe_by_name(root, all_skills);
 
     // If nothing found, check if root itself is a skill.
-    if all_skills.is_empty() && root.join("SKILL.md").is_file() {
+    if all_skills.is_empty() && fs_port.file_exists(&root.join(SKILL_MD_FILENAME)) {
         let name = root
             .file_name()
             .map(|n| n.to_string_lossy().to_string())

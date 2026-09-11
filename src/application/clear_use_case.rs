@@ -8,13 +8,12 @@ use crate::application::apply_use_case::{instruction_output_path, resolve_select
 use crate::application::ports::{ConfigPort, FileSystemPort, GitignorePort, ManifestPort, McpPort};
 use crate::domain::agent::{AgentDefinition, all_agents};
 use crate::domain::config::LoadedConfig;
-use crate::domain::constants::{
-    CLAUDE_SUBAGENTS_PATH, CODEX_SUBAGENTS_PATH, COPILOT_SUBAGENTS_PATH, CURSOR_SUBAGENTS_PATH,
-    GENERATED_BY_IMRULE_MARKER, IMRULE_CACHE_PATH, LEGACY_DIR_NAME,
-};
+use crate::domain::constants::{GENERATED_BY_IMRULE_MARKER, IMRULE_CACHE_PATH, LEGACY_DIR_NAME};
 use crate::domain::error::ImruleError;
 use crate::domain::manifest::ApplyManifest;
 use crate::domain::mcp::is_native_mcp_content_empty;
+use crate::domain::skills::get_skills_gitignore_paths;
+use crate::domain::subagent::subagents_gitignore_paths;
 
 /// Runtime options for `imrule clear`.
 #[derive(Debug, Clone)]
@@ -186,29 +185,7 @@ impl<'a> ClearUseCase<'a> {
         selected_agents: &[AgentDefinition],
         removed: &mut Vec<PathBuf>,
     ) -> Result<(), ImruleError> {
-        let subagent_targets: &[(&str, &str)] = &[
-            ("claude", CLAUDE_SUBAGENTS_PATH),
-            ("cursor", CURSOR_SUBAGENTS_PATH),
-            ("codex", CODEX_SUBAGENTS_PATH),
-            ("copilot", COPILOT_SUBAGENTS_PATH),
-        ];
-
-        let selected_ids: std::collections::BTreeSet<&str> = selected_agents
-            .iter()
-            .filter(|a| a.capabilities.native_subagents)
-            .map(|a| a.identifier)
-            .collect();
-
-        let mut seen = std::collections::BTreeSet::new();
-        for (id, rel_path) in subagent_targets {
-            if !selected_ids.contains(id) {
-                continue;
-            }
-            let dir = options.project_root.join(rel_path);
-            let key = dir.to_string_lossy().to_string();
-            if !seen.insert(key) {
-                continue;
-            }
+        for dir in subagents_gitignore_paths(&options.project_root, selected_agents) {
             if self.fs_port.file_exists(&dir) {
                 if !options.dry_run {
                     self.fs_port.remove_dir_all(&dir)?;
@@ -228,7 +205,7 @@ impl<'a> ClearUseCase<'a> {
         selected_agents: &[AgentDefinition],
         removed: &mut Vec<PathBuf>,
     ) -> Result<(), ImruleError> {
-        for skills_root in self.collect_skills_dirs(&options.project_root, selected_agents) {
+        for skills_root in get_skills_gitignore_paths(&options.project_root, selected_agents) {
             if self.fs_port.file_exists(&skills_root) {
                 if !options.dry_run {
                     self.fs_port.remove_dir_all(&skills_root)?;
@@ -276,7 +253,7 @@ impl<'a> ClearUseCase<'a> {
         }
 
         let existing = self.fs_port.read_text(&config_path)?;
-        match crate::infrastructure::gjc_config::strip_gjc_skill_discovery(&existing)? {
+        match crate::domain::gjc_config::strip_gjc_skill_discovery(&existing)? {
             Some(remaining) => {
                 self.fs_port
                     .write_text(&config_path, &remaining)
@@ -404,55 +381,6 @@ impl<'a> ClearUseCase<'a> {
             }
         }
         Ok(())
-    }
-
-    fn collect_skills_dirs(&self, project_root: &Path, agents: &[AgentDefinition]) -> Vec<PathBuf> {
-        let agent_skill_paths: &[(&str, &str)] = &[
-            ("claude", crate::domain::constants::CLAUDE_SKILLS_PATH),
-            ("copilot", crate::domain::constants::CLAUDE_SKILLS_PATH),
-            ("kilocode", crate::domain::constants::CLAUDE_SKILLS_PATH),
-            ("codex", crate::domain::constants::CODEX_SKILLS_PATH),
-            ("opencode", crate::domain::constants::OPENCODE_SKILLS_PATH),
-            ("pi", crate::domain::constants::PI_SKILLS_PATH),
-            ("goose", crate::domain::constants::GOOSE_SKILLS_PATH),
-            ("amp", crate::domain::constants::GOOSE_SKILLS_PATH),
-            ("mistral", crate::domain::constants::VIBE_SKILLS_PATH),
-            ("roo", crate::domain::constants::ROO_SKILLS_PATH),
-            ("gemini-cli", crate::domain::constants::GEMINI_SKILLS_PATH),
-            ("kimi-cli", crate::domain::constants::KIMI_SKILLS_PATH),
-            ("kimi-code", crate::domain::constants::KIMI_SKILLS_PATH),
-            ("kimi", crate::domain::constants::KIMI_SKILLS_PATH),
-            ("junie", crate::domain::constants::JUNIE_SKILLS_PATH),
-            ("cursor", crate::domain::constants::CURSOR_SKILLS_PATH),
-            ("windsurf", crate::domain::constants::WINDSURF_SKILLS_PATH),
-            ("factory", crate::domain::constants::FACTORY_SKILLS_PATH),
-            (
-                "antigravity",
-                crate::domain::constants::ANTIGRAVITY_SKILLS_PATH,
-            ),
-            ("gjc", crate::domain::constants::GJC_SKILLS_PATH),
-        ];
-
-        let mut dirs = Vec::new();
-        let mut seen = std::collections::BTreeSet::new();
-
-        for agent in agents {
-            if !agent.capabilities.native_skills {
-                continue;
-            }
-            if let Some(&target_rel) = agent_skill_paths
-                .iter()
-                .find(|(id, _)| *id == agent.identifier)
-                .map(|(_, path)| path)
-            {
-                let dir = project_root.join(target_rel);
-                let key = dir.to_string_lossy().to_string();
-                if seen.insert(key) {
-                    dirs.push(dir);
-                }
-            }
-        }
-        dirs
     }
 
     /// Collects every MCP server name that `apply` could have written into native

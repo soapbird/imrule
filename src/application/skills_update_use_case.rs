@@ -16,7 +16,6 @@ use crate::domain::error::ImruleError;
 use crate::domain::skills::{
     SkillUpdateOutcome, SkillUpdateStatus, group_skill_sources, parse_skill_source,
 };
-use crate::infrastructure::skills::{copy_skills_directory, skill_trees_match};
 
 /// Runtime options for `imrule skills update`.
 #[derive(Debug, Clone)]
@@ -126,15 +125,17 @@ impl<'a> SkillsUpdateUseCase<'a> {
     }
 
     fn fetch_group(&self, source: &str) -> Result<Vec<SkillInfo>, ImruleError> {
-        let parsed = parse_skill_source(source)?;
+        let current_dir = self.fs_port.current_dir();
+        let parsed =
+            parse_skill_source(source, &current_dir, |path| self.fs_port.file_exists(path))?;
         let fetched_path = self.fetcher.fetch_to_temp(&parsed)?;
-        if !fetched_path.exists() {
+        if !self.fs_port.file_exists(&fetched_path) {
             return Err(ImruleError::skills(format!(
                 "fetched source path does not exist: {}",
                 fetched_path.display()
             )));
         }
-        discover_remote_skills(&fetched_path)
+        discover_remote_skills(self.fs_port, &fetched_path)
     }
 
     fn refresh_skill(
@@ -149,17 +150,14 @@ impl<'a> SkillsUpdateUseCase<'a> {
         };
 
         let dest = skills_base.join(name);
-        if !dest.exists() {
+        if !self.fs_port.file_exists(&dest) {
             if !options.dry_run {
-                copy_skills_directory(&fetched.path, &dest).map_err(|e| {
-                    ImruleError::skills(format!("failed to install skill '{name}': {e}"))
-                })?;
+                self.fs_port.copy_dir(&fetched.path, &dest)?;
             }
             return Ok(SkillUpdateStatus::Reinstalled);
         }
 
-        let identical = skill_trees_match(&fetched.path, &dest)
-            .map_err(|e| ImruleError::skills(format!("failed to compare skill '{name}': {e}")))?;
+        let identical = self.fs_port.dirs_match(&fetched.path, &dest)?;
         if identical {
             return Ok(SkillUpdateStatus::Unchanged);
         }
@@ -167,9 +165,7 @@ impl<'a> SkillsUpdateUseCase<'a> {
         if !options.dry_run {
             // Replace rather than overlay, so files dropped upstream disappear.
             self.fs_port.remove_dir_all(&dest)?;
-            copy_skills_directory(&fetched.path, &dest).map_err(|e| {
-                ImruleError::skills(format!("failed to update skill '{name}': {e}"))
-            })?;
+            self.fs_port.copy_dir(&fetched.path, &dest)?;
         }
         Ok(SkillUpdateStatus::Updated)
     }

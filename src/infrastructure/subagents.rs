@@ -2,9 +2,8 @@
 
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use crate::domain::agent::AgentDefinition;
 use crate::domain::config::SubagentInfo;
 use crate::domain::constants::*;
 use crate::domain::subagent::{SubagentsDiscovery, parse_frontmatter, validate_frontmatter};
@@ -80,32 +79,4 @@ fn discover_subagents_from_dir(dir: &Path) -> io::Result<SubagentsDiscovery> {
         }
     }
     Ok(result)
-}
-
-/// Gets native subagent target paths generated for selected agents.
-pub fn get_subagents_gitignore_paths(
-    project_root: &Path,
-    agents: &[AgentDefinition],
-) -> io::Result<Vec<PathBuf>> {
-    if !project_root.join(IMRULE_SUBAGENTS_PATH).exists()
-        && !project_root.join(LEGACY_SUBAGENTS_PATH).exists()
-    {
-        return Ok(Vec::new());
-    }
-    let selected: std::collections::BTreeSet<_> = agents
-        .iter()
-        .filter(|agent| agent.capabilities.native_subagents)
-        .map(|agent| agent.identifier)
-        .collect();
-    let target_specs: &[(&str, &[&str])] = &[
-        (CLAUDE_SUBAGENTS_PATH, &["claude"]),
-        (CURSOR_SUBAGENTS_PATH, &["cursor"]),
-        (CODEX_SUBAGENTS_PATH, &["codex"]),
-        (COPILOT_SUBAGENTS_PATH, &["copilot"]),
-    ];
-    Ok(target_specs
-        .iter()
-        .filter(|(_, ids)| ids.iter().any(|id| selected.contains(id)))
-        .map(|(path, _)| project_root.join(path))
-        .collect())
 }

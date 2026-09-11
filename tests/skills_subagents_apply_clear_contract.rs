@@ -9,14 +9,12 @@ use imrule::domain::skills::{
 };
 use imrule::domain::subagent::{
     build_claude_file, build_codex_file, build_copilot_file, build_cursor_file,
-    map_tools_for_copilot, parse_frontmatter, validate_frontmatter,
+    map_tools_for_copilot, parse_frontmatter, subagents_gitignore_paths, validate_frontmatter,
 };
 use imrule::infrastructure::config_loader::TomlConfigLoader;
 use imrule::infrastructure::file_system::FsFileSystem;
 use imrule::infrastructure::skills::{copy_skills_directory, discover_skills};
-use imrule::infrastructure::subagents::{
-    discover_subagents, get_subagents_gitignore_paths, load_subagent_file,
-};
+use imrule::infrastructure::subagents::{discover_subagents, load_subagent_file};
 use serde_json::json;
 use tempfile::tempdir;
 
@@ -184,7 +182,7 @@ fn discovers_subagents_and_computes_gitignore_targets() {
         .copied()
         .collect();
     assert_eq!(
-        get_subagents_gitignore_paths(root, &selected).unwrap(),
+        subagents_gitignore_paths(root, &selected),
         vec![
             root.join(".claude/agents"),
             root.join(".cursor/agents"),
@@ -231,9 +229,15 @@ fn apply_path_collection_and_file_system_operations_match_contract() {
     assert!(!root.join("RULES.md.bak").exists());
 }
 
+/// Parses with a fixed working directory and no local paths on disk, so each
+/// test decides purely by the source string's shape.
+fn parse_source(source: &str) -> Result<RemoteSkillSource, imrule::domain::error::ImruleError> {
+    parse_skill_source(source, std::path::Path::new("/"), |_| false)
+}
+
 #[test]
 fn parses_github_shorthand_source() {
-    let source = parse_skill_source("vercel-labs/agent-skills").unwrap();
+    let source = parse_source("vercel-labs/agent-skills").unwrap();
     assert_eq!(
         source,
         RemoteSkillSource::Github {
@@ -246,7 +250,7 @@ fn parses_github_shorthand_source() {
 
 #[test]
 fn parses_github_url_source() {
-    let source = parse_skill_source("https://github.com/vercel-labs/agent-skills").unwrap();
+    let source = parse_source("https://github.com/vercel-labs/agent-skills").unwrap();
     assert_eq!(
         source,
         RemoteSkillSource::Github {
@@ -260,7 +264,7 @@ fn parses_github_url_source() {
 #[test]
 fn parses_github_url_with_subpath_source() {
     let source =
-        parse_skill_source("https://github.com/vercel-labs/agent-skills/tree/main/skills/design")
+        parse_source("https://github.com/vercel-labs/agent-skills/tree/main/skills/design")
             .unwrap();
     assert_eq!(
         source,
@@ -274,7 +278,7 @@ fn parses_github_url_with_subpath_source() {
 
 #[test]
 fn parses_gitlab_url_source() {
-    let source = parse_skill_source("https://gitlab.com/org/repo").unwrap();
+    let source = parse_source("https://gitlab.com/org/repo").unwrap();
     assert_eq!(
         source,
         RemoteSkillSource::Gitlab {
@@ -285,7 +289,7 @@ fn parses_gitlab_url_source() {
 
 #[test]
 fn parses_git_ssh_source() {
-    let source = parse_skill_source("git@github.com:vercel-labs/agent-skills.git").unwrap();
+    let source = parse_source("git@github.com:vercel-labs/agent-skills.git").unwrap();
     assert_eq!(
         source,
         RemoteSkillSource::GitSsh {
@@ -299,7 +303,7 @@ fn parses_local_path_source() {
     let tmp = tempdir().unwrap();
     let local_path = tmp.path().join("my-skills");
     fs::create_dir_all(&local_path).unwrap();
-    let source = parse_skill_source(local_path.to_str().unwrap()).unwrap();
+    let source = parse_source(local_path.to_str().unwrap()).unwrap();
     match source {
         RemoteSkillSource::Local { path } => {
             assert_eq!(path, local_path);
@@ -310,7 +314,7 @@ fn parses_local_path_source() {
 
 #[test]
 fn parses_relative_path_source() {
-    let source = parse_skill_source("./my-skills").unwrap();
+    let source = parse_source("./my-skills").unwrap();
     match source {
         RemoteSkillSource::Local { path } => {
             assert!(path.is_absolute());
@@ -322,7 +326,26 @@ fn parses_relative_path_source() {
 
 #[test]
 fn rejects_invalid_source() {
-    assert!(parse_skill_source("invalid-no-slash").is_err());
+    assert!(parse_source("invalid-no-slash").is_err());
+}
+
+#[test]
+fn a_bare_relative_source_is_local_only_when_it_exists() {
+    let existing = parse_skill_source("looks/repo-like", std::path::Path::new("/"), |path| {
+        path == std::path::Path::new("looks/repo-like")
+    })
+    .unwrap();
+    match existing {
+        RemoteSkillSource::Local { path } => {
+            assert_eq!(path, std::path::Path::new("/looks/repo-like"));
+        }
+        _ => panic!("expected Local variant"),
+    }
+    // The same shape parses as a GitHub shorthand when nothing exists there.
+    assert!(matches!(
+        parse_skill_source("looks/repo-like", std::path::Path::new("/"), |_| false).unwrap(),
+        RemoteSkillSource::Github { .. }
+    ));
 }
 
 #[test]
@@ -573,7 +596,7 @@ fn discover_subagents_prefers_imrule_over_ruler() {
 
 #[test]
 fn gjc_skill_config_enables_discovery_from_scratch() {
-    let yaml = imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(None).unwrap();
+    let yaml = imrule::domain::gjc_config::enable_gjc_skill_discovery(None).unwrap();
     let parsed: serde_json::Value = serde_norway::from_str(&yaml).unwrap();
     assert_eq!(parsed["skills"]["enabled"], serde_json::Value::Bool(true));
     assert_eq!(
@@ -585,8 +608,7 @@ fn gjc_skill_config_enables_discovery_from_scratch() {
 #[test]
 fn gjc_skill_config_merges_preserving_existing_keys() {
     let existing = "theme:\n  dark: red-claw\n  light: blue-crab\n";
-    let yaml =
-        imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(Some(existing)).unwrap();
+    let yaml = imrule::domain::gjc_config::enable_gjc_skill_discovery(Some(existing)).unwrap();
     let parsed: serde_json::Value = serde_norway::from_str(&yaml).unwrap();
     assert_eq!(parsed["skills"]["enabled"], serde_json::Value::Bool(true));
     assert_eq!(
@@ -605,9 +627,8 @@ fn gjc_skill_config_merges_preserving_existing_keys() {
 
 #[test]
 fn gjc_skill_config_enable_is_idempotent() {
-    let once = imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(None).unwrap();
-    let twice =
-        imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(Some(&once)).unwrap();
+    let once = imrule::domain::gjc_config::enable_gjc_skill_discovery(None).unwrap();
+    let twice = imrule::domain::gjc_config::enable_gjc_skill_discovery(Some(&once)).unwrap();
     let parsed: serde_json::Value = serde_norway::from_str(&twice).unwrap();
     assert_eq!(parsed["skills"]["enabled"], serde_json::Value::Bool(true));
     assert_eq!(
@@ -618,18 +639,17 @@ fn gjc_skill_config_enable_is_idempotent() {
 
 #[test]
 fn gjc_skill_config_strip_returns_none_when_only_managed_keys() {
-    let yaml = imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(None).unwrap();
-    let result = imrule::infrastructure::gjc_config::strip_gjc_skill_discovery(&yaml).unwrap();
+    let yaml = imrule::domain::gjc_config::enable_gjc_skill_discovery(None).unwrap();
+    let result = imrule::domain::gjc_config::strip_gjc_skill_discovery(&yaml).unwrap();
     assert!(result.is_none());
 }
 
 #[test]
 fn gjc_skill_config_strip_preserves_unmanaged_keys() {
-    let yaml = imrule::infrastructure::gjc_config::enable_gjc_skill_discovery(Some(
-        "goal:\n  enabled: false\n",
-    ))
-    .unwrap();
-    let remaining = imrule::infrastructure::gjc_config::strip_gjc_skill_discovery(&yaml)
+    let yaml =
+        imrule::domain::gjc_config::enable_gjc_skill_discovery(Some("goal:\n  enabled: false\n"))
+            .unwrap();
+    let remaining = imrule::domain::gjc_config::strip_gjc_skill_discovery(&yaml)
         .unwrap()
         .unwrap();
     let parsed: serde_json::Value = serde_norway::from_str(&remaining).unwrap();
