@@ -113,9 +113,10 @@ pub trait FileSystemPort: Send + Sync {
     /// when either cannot be resolved.
     fn resolves_within(&self, path: &Path, root: &Path) -> bool;
 
-    /// Like [`resolves_within`](Self::resolves_within), but also follows a link
-    /// at `path` itself: for a file that is read and written back, where
-    /// writing would go through the link.
+    /// Whether writing to `path` lands inside `root` on disk: `path` itself, or
+    /// its deepest existing ancestor when it does not exist yet, resolves with
+    /// every link followed (a link at `path` too) to `root` or below. For
+    /// files that are written, or read and written back.
     fn target_resolves_within(&self, path: &Path, root: &Path) -> bool;
 
     /// Whether two existing paths name the same file or directory, as a

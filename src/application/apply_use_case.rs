@@ -27,6 +27,7 @@ use crate::domain::mcp::{
 };
 use crate::domain::rules::concatenate_rules;
 use crate::domain::skills::{SkillsDiscovery, all_skills_roots, get_skills_gitignore_paths};
+use crate::domain::subagent::all_subagent_dirs;
 
 /// Runtime options for `imrule apply`.
 #[derive(Debug, Clone)]
@@ -231,13 +232,11 @@ impl<'a> ApplyUseCase<'a> {
                     if full_run {
                         let kept_roots =
                             self.prune_stale_outputs(&options.project_root, &previous, &manifest)?;
-                        for kept in kept_roots {
-                            let path = options.project_root.join(&kept);
-                            if !written_paths.contains(&path) {
-                                written_paths.push(path);
-                            }
-                            manifest.paths.push(kept);
-                        }
+                        // A root kept for files the user placed by hand stays
+                        // recorded, so a later run prunes it once it is empty,
+                        // but it is not ignored or untracked: those files are
+                        // the user's.
+                        manifest.paths.extend(kept_roots);
                         manifest.paths.sort();
                         manifest.paths.dedup();
                     } else {
@@ -362,19 +361,31 @@ impl<'a> ApplyUseCase<'a> {
         let written: Result<Vec<_>, ImruleError> = unique
             .par_iter()
             .map(|(agent, filtered, path)| {
+                // A config linked outside the project is never written, so that
+                // nothing lands where a later run could not safely strip it.
+                if !self
+                    .fs_port
+                    .target_resolves_within(path, &options.project_root)
+                {
+                    tracing::warn!(
+                        path = %path.display(),
+                        "native MCP config resolves outside the project; not written"
+                    );
+                    return Ok(None);
+                }
                 let target = (path.clone(), agent.mcp_server_key.to_string());
                 if options.dry_run {
-                    return Ok(target);
+                    return Ok(Some(target));
                 }
                 let existing = self.mcp_port.read_native_mcp(path)?;
                 let merged = merge_mcp(&existing, filtered, strategy, agent.mcp_server_key);
                 self.mcp_port.write_native_mcp(path, &merged)?;
-                Ok(target)
+                Ok(Some(target))
             })
             .collect();
 
         Ok(McpApplyOutcome {
-            targets: written?,
+            targets: written?.into_iter().flatten().collect(),
             servers: imrule_mcp
                 .get("mcpServers")
                 .and_then(serde_json::Value::as_object)
@@ -456,24 +467,35 @@ impl<'a> ApplyUseCase<'a> {
             tracing::info!(path = %path.display(), "removed stale skill copy");
         }
 
-        let skills_roots = all_skills_roots();
+        let subagent_dirs = all_subagent_dirs();
+        let agent_dirs: Vec<String> = all_skills_roots()
+            .into_iter()
+            .chain(subagent_dirs.iter().cloned())
+            .collect();
+        let in_subagent_dir = |entry: &str| {
+            entry
+                .rsplit_once('/')
+                .is_some_and(|(parent, _)| subagent_dirs.iter().any(|dir| dir == parent))
+        };
         let mut kept_roots = Vec::new();
-        for stale in previous.stale_paths(current) {
+        // Deepest entries first, so a directory's recorded files are gone before
+        // the directory itself is considered.
+        for stale in previous.stale_paths(current).into_iter().rev() {
             let path = project_root.join(&stale);
-            if !self.fs_port.file_exists(&path) {
+            // An output recorded outside the project stays recorded but is never
+            // deleted: nothing about it proves it is this project's.
+            if !self.fs_port.file_exists(&path)
+                || !is_project_relative(&stale)
+                || !self.fs_port.resolves_within(&path, project_root)
+            {
                 continue;
             }
             if self.fs_port.dir_exists(&path) {
-                if !is_project_relative(&stale)
-                    || !self.fs_port.resolves_within(&path, project_root)
-                {
-                    continue;
-                }
-                // A skills root also holds skills the user put there by hand.
-                // imrule's own copies were pruned one by one above, so the root
-                // itself goes only once nothing else is left in it. One that
-                // survives stays recorded, and so stays out of git.
-                if skills_roots.contains(&stale) {
+                // An agent skills or subagents directory also holds files the
+                // user put there by hand. imrule's own entries were pruned one
+                // by one first, so the directory goes only once nothing else is
+                // left in it; one that survives stays recorded.
+                if agent_dirs.contains(&stale) {
                     if !self.fs_port.remove_dir_if_empty(&path)? {
                         kept_roots.push(stale);
                         continue;
@@ -481,16 +503,14 @@ impl<'a> ApplyUseCase<'a> {
                 } else {
                     self.fs_port.remove_dir_all(&path)?;
                 }
-            } else if is_project_relative(&stale)
-                && self.fs_port.resolves_within(&path, project_root)
-                && self
+            } else if in_subagent_dir(&stale)
+                || self
                     .fs_port
                     .read_text(&path)
                     .is_ok_and(|content| content.starts_with(GENERATED_BY_IMRULE_MARKER))
             {
-                // An output recorded outside the project stays recorded but is
-                // never deleted: the marker alone does not prove it is this
-                // project's.
+                // Subagent files carry no marker, but only files apply wrote
+                // are ever recorded.
                 self.fs_port.remove_file(&path)?;
             } else {
                 continue;

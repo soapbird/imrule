@@ -53,6 +53,18 @@ pub fn subagents_gitignore_paths(
     )
 }
 
+/// Every agent subagents directory, project-relative with forward slashes,
+/// whichever agents are selected.
+pub fn all_subagent_dirs() -> Vec<String> {
+    subagents_gitignore_paths(
+        std::path::Path::new(""),
+        &crate::domain::agent::all_agents(),
+    )
+    .iter()
+    .map(|dir| crate::domain::constants::normalize_path_separators(&dir.to_string_lossy()))
+    .collect()
+}
+
 /// Parses leading YAML frontmatter.
 pub fn parse_frontmatter(content: &str) -> Result<Option<ParsedFrontmatter>, String> {
     let Some(rest) = content.strip_prefix("---") else {

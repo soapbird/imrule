@@ -86,6 +86,20 @@ impl<'a> SkillsUpdateUseCase<'a> {
 
         let groups = group_skill_sources(&recorded, options.skill_names.as_deref())?;
         let skills_base = resolve_skills_base(self.fs_port, &options.project_root, options.global);
+        // Refreshing replaces each skill directory. A project's skills directory
+        // reached through a link that leaves the project owning it would make
+        // that delete files elsewhere, so nothing is refreshed there.
+        if !options.global {
+            if let Some(owner) = skills_base.parent().and_then(std::path::Path::parent) {
+                if !self.fs_port.target_resolves_within(&skills_base, owner) {
+                    return Err(ImruleError::skills(format!(
+                        "refusing to update skills in {}: it resolves outside {}",
+                        skills_base.display(),
+                        owner.display()
+                    )));
+                }
+            }
+        }
 
         let mut result = SkillsUpdateResult {
             install_dir: skills_base.clone(),

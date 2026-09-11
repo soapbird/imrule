@@ -444,7 +444,7 @@ fn a_symlink_cannot_carry_an_mcp_rewrite_or_a_marked_file_outside_the_project() 
 }
 
 #[test]
-fn a_skills_root_kept_for_hand_placed_skills_stays_ignored() {
+fn a_skills_root_kept_for_hand_placed_skills_stays_recorded_but_is_not_ignored() {
     // A 0.4.2 manifest records the root but not the copies it made, so after
     // the last skill is removed the root survives with those copies inside.
     let temporary = project("\"claude\"", "");
@@ -461,13 +461,120 @@ fn a_skills_root_kept_for_hand_placed_skills_stays_ignored() {
     apply(root, &[]);
 
     assert!(root.join(".claude/skills/cli/SKILL.md").exists());
+    // Recorded, so a later run still prunes it once it is empty; not ignored or
+    // untracked, since what is left in it may be the user's.
+    let recorded: Value =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).unwrap()).unwrap();
     assert!(
-        ignore_block(root)
+        recorded["paths"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(".claude/skills")),
+        "{recorded}"
+    );
+    assert!(
+        !ignore_block(root)
             .iter()
             .any(|line| line.contains(".claude/skills")),
-        "the surviving root fell out of .gitignore: {:?}",
+        "{:?}",
         ignore_block(root)
     );
+}
+
+fn write_subagent(root: &std::path::Path, name: &str) {
+    let path = root.join(".imrule/agents").join(format!("{name}.md"));
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        format!("---\nname: {name}\ndescription: {name} bot\n---\n\nDo stuff.\n"),
+    )
+    .unwrap();
+}
+
+#[test]
+fn dropping_every_subagent_keeps_the_agents_written_by_hand() {
+    let temporary = project("\"claude\"", "");
+    let root = temporary.path();
+    write_subagent(root, "coder");
+    fs::create_dir_all(root.join(".claude/agents")).unwrap();
+    fs::write(root.join(".claude/agents/mine.md"), "my own agent\n").unwrap();
+    apply(root, &[]);
+    assert!(root.join(".claude/agents/coder.md").exists());
+
+    fs::remove_dir_all(root.join(".imrule/agents")).unwrap();
+    apply(root, &[]);
+
+    assert!(
+        !root.join(".claude/agents/coder.md").exists(),
+        "the generated subagent lingered"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".claude/agents/mine.md")).unwrap(),
+        "my own agent\n"
+    );
+}
+
+#[test]
+fn clear_removes_what_apply_made_and_keeps_what_the_user_placed() {
+    let temporary = project("\"claude\"", "");
+    let root = temporary.path();
+    write_skill(root, "cli");
+    write_subagent(root, "coder");
+    apply(root, &[]);
+    fs::create_dir_all(root.join(".claude/skills/mine")).unwrap();
+    fs::write(root.join(".claude/skills/mine/SKILL.md"), "mine").unwrap();
+    fs::write(root.join(".claude/agents/mine.md"), "my own agent\n").unwrap();
+
+    clear(root);
+
+    assert!(!root.join(".claude/skills/cli").exists());
+    assert!(!root.join(".claude/agents/coder.md").exists());
+    assert!(root.join(".claude/skills/mine/SKILL.md").exists());
+    assert!(root.join(".claude/agents/mine.md").exists());
+
+    // With nothing of the user's left inside, the directories go too.
+    fs::remove_dir_all(root.join(".claude/skills/mine")).unwrap();
+    fs::remove_file(root.join(".claude/agents/mine.md")).unwrap();
+    apply(root, &[]);
+    clear(root);
+    assert!(!root.join(".claude/skills").exists());
+    assert!(!root.join(".claude/agents").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn clear_never_follows_a_linked_agent_directory_outside_the_project() {
+    let (_workspace, root, outside) = project_beside_outside();
+    for kept in ["skills/theirs/SKILL.md", "agents/theirs.md"] {
+        fs::create_dir_all(outside.join(kept).parent().unwrap()).unwrap();
+        fs::write(outside.join(kept), "keep").unwrap();
+    }
+    std::os::unix::fs::symlink(&outside, root.join(".claude")).unwrap();
+
+    clear(&root);
+
+    assert!(outside.join("skills/theirs/SKILL.md").exists());
+    assert!(outside.join("agents/theirs.md").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn an_mcp_config_linked_outside_the_project_is_never_written() {
+    let (_workspace, root, outside) = project_beside_outside();
+    fs::write(
+        root.join(".imrule/imrule.toml"),
+        format!("default_agents = [\"claude\"]\n\n{LINEAR_AND_NOTION}"),
+    )
+    .unwrap();
+    let shared = outside.join("shared-mcp.json");
+    fs::write(&shared, OUTSIDE_MCP).unwrap();
+    std::os::unix::fs::symlink(&shared, root.join(".mcp.json")).unwrap();
+
+    // Nothing is written that a later run could not safely strip again.
+    apply(&root, &[]);
+    assert_eq!(fs::read_to_string(&shared).unwrap(), OUTSIDE_MCP);
+    clear(&root);
+    assert_eq!(fs::read_to_string(&shared).unwrap(), OUTSIDE_MCP);
 }
 
 #[test]

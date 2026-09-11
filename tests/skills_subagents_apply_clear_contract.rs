@@ -897,6 +897,51 @@ fn update_refetches_registered_sources_and_reports_per_skill_status() {
     assert!(installed.exists(), "the installed copy is left in place");
 }
 
+#[cfg(unix)]
+#[test]
+fn update_refuses_a_project_skills_directory_linked_outside_the_project() {
+    use imrule::application::skills_update_use_case::{SkillsUpdateOptions, SkillsUpdateUseCase};
+
+    let (_tmp, root, source_dir) = skills_fixture();
+    let elsewhere = tempdir().unwrap();
+    let fs_port = FsFileSystem::new();
+    let fetcher = imrule::infrastructure::skill_fetcher::GitSkillFetcher::new().unwrap();
+    let loader = TomlConfigLoader::new().with_xdg_home(root.join("xdg"));
+    imrule::application::skills_add_use_case::SkillsAddUseCase::new(
+        &fetcher, &fs_port, &loader, &loader,
+    )
+    .execute(imrule::application::skills_add_use_case::SkillsAddOptions {
+        project_root: root.clone(),
+        source: source_dir.to_string_lossy().to_string(),
+        skill_names: None,
+        list_only: false,
+        global: false,
+    })
+    .unwrap();
+
+    // The project's skills directory now points at someone else's files.
+    let outside = elsewhere.path().to_path_buf();
+    fs::create_dir_all(outside.join("my-skill")).unwrap();
+    fs::write(outside.join("my-skill/taxes.txt"), "keep").unwrap();
+    fs::remove_dir_all(root.join(".imrule/skills")).unwrap();
+    std::os::unix::fs::symlink(&outside, root.join(".imrule/skills")).unwrap();
+    fs::write(source_dir.join("my-skill/SKILL.md"), "v2").unwrap();
+
+    let result =
+        SkillsUpdateUseCase::new(&fetcher, &fs_port, &loader).execute(SkillsUpdateOptions {
+            project_root: root.clone(),
+            skill_names: None,
+            global: false,
+            dry_run: false,
+        });
+
+    assert!(result.is_err());
+    assert_eq!(
+        fs::read_to_string(outside.join("my-skill/taxes.txt")).unwrap(),
+        "keep"
+    );
+}
+
 #[test]
 fn update_reports_an_unreachable_source_without_aborting_the_run() {
     use imrule::application::skills_update_use_case::{SkillsUpdateOptions, SkillsUpdateUseCase};

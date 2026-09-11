@@ -91,9 +91,19 @@ impl FileSystemPort for FsFileSystem {
     }
 
     fn target_resolves_within(&self, path: &Path, root: &Path) -> bool {
-        match (fs::canonicalize(path), fs::canonicalize(root)) {
-            (Ok(path), Ok(root)) => path.starts_with(root),
-            _ => false,
+        let Ok(root) = fs::canonicalize(root) else {
+            return false;
+        };
+        // The deepest part of `path` that exists decides where a write lands.
+        let mut probe = path;
+        loop {
+            if fs::symlink_metadata(probe).is_ok() {
+                return fs::canonicalize(probe).is_ok_and(|resolved| resolved.starts_with(&root));
+            }
+            match probe.parent() {
+                Some(parent) if !parent.as_os_str().is_empty() => probe = parent,
+                _ => return false,
+            }
         }
     }
 
