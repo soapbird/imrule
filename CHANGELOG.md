@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.1.0] - 2026-09-13
+
+### Fixed
+
+- **`vscode-setup` passed port guards whose failure reason never reached the screen**: VSCODE-J03 asks for a `preLaunchTask` guard when a debug configuration shares a port with `make run`, but a guard with `presentation.reveal: "silent"` and no problem matcher passed every check while VS Code, on failure, showed only "terminated with exit code 1" and hid the message the guard wrote. The new VSCODE-058 (warn, autofixable) flags such `preLaunchTask` targets — falling back to the file-level `presentation` when the task sets none — and suggests `"reveal": "always"`. VSCODE-J03 now requires the guard's reason to be visible, and `templates/tasks.port-guard.json.tmpl` ships a standard guard for server debug configurations. The skill's revision is now 2, so `imrule skills setup` refreshes unmodified copies. ([#16](https://github.com/soapbird/imrule/issues/16))
+
 ## [0.5.0.0] - 2026-09-11
 
 ### Added
