@@ -6,7 +6,7 @@
 2. 규칙 표 — Python(020~025)
 3. 규칙 표 — Rust(030~032)
 4. 규칙 표 — extensions(040~046)
-5. 규칙 표 — launch(050~057)
+5. 규칙 표 — launch(050~058)
 6. 규칙 표 — tasks(060~064)
 7. 판단 항목(J01~J07)
 
@@ -77,6 +77,7 @@ git 저장소의 하위 디렉터리(예: 모노레포 멤버)에서 실행했�
 | VSCODE-055 | warn | Rust 바이너리가 있으면 CodeLLDB(`"type": "lldb"`) + `cargo.args`에 `build --bin=<이름>` 구성이 있다 | CodeLLDB 매뉴얼의 Cargo 지원 형식 |
 | VSCODE-056 | error | 구성이 가리키는 대상이 있다: debugpy `module`(프로젝트 모듈이면 파일 존재, 패키지면 `__main__.py`), uvicorn 앱 모듈, `program` 경로, `cwd`, `--bin`·`filter.name`(Cargo bin), `--package`(Cargo 패키지) | 옮기거나 이름을 바꾼 뒤 남은 구성은 F5에서야 깨진다 |
 | VSCODE-057 | warn | `preLaunchTask`가 `tasks.json`의 `label`로 있다(`npm:` 같은 자동 감지 작업 제외) | 없는 작업이면 디버그 시작이 막힌다 |
+| VSCODE-058 | warn, auto | `preLaunchTask`로 지목된 작업이 `presentation.reveal`을 `"silent"`·`"never"`로 두면서(작업에 없으면 파일 최상위 `presentation`) `problemMatcher`가 비어 있지 않다 | 가드가 실패해도 터미널이 앞으로 나오지 않고 "Show Errors"도 가리킬 곳이 없어, 사용자에게 "exit code 1"만 남는다. `"reveal": "always"`로 둔다 |
 
 ## 6. tasks.json
 
@@ -96,7 +97,7 @@ git 저장소의 하위 디렉터리(예: 모노레포 멤버)에서 실행했�
 |---|---|---|
 | VSCODE-J01 | 구성·작업 이름이 역할을 드러내고 일관적이다 | launch는 `<pkg>: CLI`, `<pkg>: API`, `pytest: 현재 파일`, `Debug tests`, `<bin>`, `<bin>: unit tests`처럼. tasks `label`은 make 타깃 이름과 같다 |
 | VSCODE-J02 | `env`에는 개발용 플래그만 있다 | 인증 우회(`*_DISABLE_*_AUTH`) 같은 값은 이름에서 드러나고, 운영 값·개인 값이 없다 |
-| VSCODE-J03 | 디버그 구성이 `make run`과 충돌하지 않는다 | 같은 포트를 쓰면 `preLaunchTask` 가드나 안내가 있다 |
+| VSCODE-J03 | 디버그 구성이 `make run`과 충돌하지 않는다 | 같은 포트를 쓰면 `preLaunchTask` 가드나 안내가 있다. 가드는 실패 이유(어떤 포트를 누가 쓰는지, 무엇을 종료할지)를 stderr로 쓰고, 그 출력이 보이게 `presentation.reveal`을 `silent`·`never`로 두지 않는다(VSCODE-058). 표준 가드는 `templates/tasks.port-guard.json.tmpl` |
 | VSCODE-J04 | Cursor에서 타입 검사기가 이중으로 돌지 않는다 | 타입 검사 설정은 `[tool.basedpyright]`에 있고, `cursorpyright.analysis.*`·`python.analysis.*`로 따로 조정하지 않는다 |
 | VSCODE-J05 | 모노레포 경로가 실제 구조와 맞다 | 하위 pyproject·Cargo 멤버일 때 인터프리터, `cwd`, `ruff.configuration`, `rust-analyzer.linkedProjects`가 실제 디렉터리를 가리킨다 |
 | VSCODE-J06 | 개인 취향 설정이 섞이지 않았다 | `workbench.colorTheme`, 폰트, `workbench.editor.limit.*` 같은 설정은 사용자 설정으로 옮긴다 |
