@@ -39,6 +39,14 @@
 
 settings·extensions·tasks는 CLI와 서버가 같다. 차이는 launch 구성뿐이다.
 
+### 포트 가드 (서버, `make run`과 같은 포트일 때)
+
+디버그 구성이 `make run`과 같은 포트를 쓰면(VSCODE-J03) `tasks.port-guard.json.tmpl`의 작업 하나를 `tasks.json` `tasks` 끝에 더하고, 그 디버그 구성에 `"preLaunchTask": "ensure-port-free"`를 단다. 포트가 여럿이면(API + Vite 등) `label`을 `ensure-<역할>-port-free`로 나눠 하나씩 둔다.
+
+- 가드는 실패 이유를 stderr로 쓰고 포트를 잡은 프로세스를 함께 보여준다.
+- `presentation.reveal`은 `"always"`로 둔다. `silent`·`never`면 VS Code는 "terminated with exit code 1" 모달만 띄우고 안내 문구는 보이지 않는다(VSCODE-058).
+- `lsof`를 쓰므로 macOS·Linux 기준이다.
+
 ### 자리표시자
 
 | 자리표시자 | 뜻 | 찾는 곳 |

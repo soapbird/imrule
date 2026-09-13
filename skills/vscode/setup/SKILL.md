@@ -4,7 +4,7 @@ description: "프로젝트 .vscode/(settings.json·extensions.json·launch.json�
 compatibility: "uv 또는 Python 3.11+ 필요 (.gitignore 판정에 git 사용)"
 metadata:
   imrule-builtin: "true"
-  imrule-skill-version: "1"
+  imrule-skill-version: "2"
 ---
 
 # VS Code 설정 (vscode-setup)
@@ -44,13 +44,13 @@ metadata:
 
 - 스크립트는 프로젝트 종류를 `pyproject.toml`(`[project.scripts]`, typer·fastapi 등 의존성)과 `Cargo.toml`(clap·axum, 바이너리 타깃)로 감지한다. 루트와 두 단계 아래(`server/`, `packages/*`, `crates/*`)까지 보고 `sdk/`, `examples/`, `tests/` 등은 제외한다. 감지가 실제와 다르면 판단으로 뒤집고 근거를 적는다.
 - VSCODE-056은 `module`·uvicorn 앱 경로·`--bin`·`--package`·`cwd`를 실제 파일과 대조한다. 외부 모듈(uvicorn, pytest 등 의존성·표준 라이브러리)은 대조하지 않는다.
-- VSCODE-061은 `uv`·`cargo`·`pnpm`·`pytest` 같은 도구를 직접 부르는 작업만 잡는다. 포트 확인 같은 셸 가드 스크립트는 통과한다.
+- VSCODE-061은 `uv`·`cargo`·`pnpm`·`pytest` 같은 도구를 직접 부르는 작업만 잡는다. 포트 확인 같은 셸 가드 스크립트는 통과한다. 가드가 실패했을 때 이유가 보이는지는 VSCODE-058이 본다.
 - VSCODE-007은 `git check-ignore --no-index`로 판정한다. git 저장소가 아니면 루트 `.gitignore`를 단순 해석한다.
 
 ## setup 절차
 
 1. 프로젝트 종류를 정한다: Python(CLI / 서버), Rust(CLI / 서버), 둘 이상이면 조합. Dockerfile·`.github/workflows`·Makefile 유무도 확인한다.
-2. `references/structure.md` 2절 표에서 종류별 템플릿을 고르고 자리표시자(`{{pkg}}`, `{{app}}`, `{{bin}}`, `{{crate}}`, `{{port}}`, `{{pydir}}`)를 채운다. 조합이면 3절 병합 규칙을 따른다.
+2. `references/structure.md` 2절 표에서 종류별 템플릿을 고르고 자리표시자(`{{pkg}}`, `{{app}}`, `{{bin}}`, `{{crate}}`, `{{port}}`, `{{pydir}}`)를 채운다. 조합이면 3절 병합 규칙을 따른다. 서버 디버그 구성이 `make run`과 같은 포트를 쓰면 `tasks.port-guard.json.tmpl` 작업을 더하고 그 구성에 `preLaunchTask`로 건다(VSCODE-J03).
 3. 만들거나 바꿀 파일 목록과 diff를 먼저 보여준다.
 4. **파일이 없으면** 템플릿을 그대로 쓴다(2칸 들여쓰기, 마지막 줄바꿈).
 5. **파일이 있으면** 최소 병합한다(`references/structure.md` 4절).
@@ -63,7 +63,7 @@ metadata:
 
 ## fix 절차
 
-1. check를 돌려 `autofixable` 항목부터 모은다(VSCODE-006, 011~013, 021~023, 030~032, 040, 041, 043, 044, 050, 051, 054, 060, 064).
+1. check를 돌려 `autofixable` 항목부터 모은다(VSCODE-006, 011~013, 021~023, 030~032, 040, 041, 043, 044, 050, 051, 054, 058, 060, 064).
 2. 적용할 diff를 먼저 보여주고 동의를 받는다.
 3. 키 이름 바꾸기(VSCODE-032 `rust-analyzer.checkOnSave.command` → `rust-analyzer.check.command`, VSCODE-051 `"type": "python"` → `"debugpy"`)는 그 줄만 바꾼다.
 4. 폐기·충돌 설정(VSCODE-024)과 중복 도구 설정(VSCODE-025)은 지우기 전에 같은 값이 `pyproject.toml`·`Cargo.toml`에 있는지 확인하고, 없으면 그쪽으로 옮기는 변경을 함께 제안한다(`python.analysis.extraPaths` → `[tool.basedpyright] extraPaths` 등).

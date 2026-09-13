@@ -129,6 +129,7 @@ TITLES = {
     "VSCODE-055": "Rust 바이너리 디버그 구성 (CodeLLDB)",
     "VSCODE-056": "구성이 가리키는 모듈·앱·바이너리·경로가 존재",
     "VSCODE-057": "preLaunchTask가 tasks.json에 존재",
+    "VSCODE-058": "preLaunchTask 실패 이유가 사용자에게 보임",
     "VSCODE-060": "tasks.json version 2.0.0",
     "VSCODE-061": "작업은 Makefile 타깃을 호출",
     "VSCODE-062": "호출하는 make 타깃이 Makefile에 존재",
@@ -585,6 +586,24 @@ def has_rustc_matcher(task: dict) -> bool:
     return False
 
 
+def hides_failure(task: dict, defaults: dict) -> bool:
+    """True when a failing task leaves only its exit code on screen.
+
+    `reveal: silent`/`never` keeps the terminal hidden, and without a problem
+    matcher "Show Errors" has nothing to point at. The task's own
+    `presentation` overrides the file-level default; VS Code's default is
+    `always`.
+    """
+    presentation = task.get("presentation")
+    reveal = presentation.get("reveal") if isinstance(presentation, dict) else None
+    if reveal is None and isinstance(defaults, dict):
+        reveal = defaults.get("reveal")
+    if reveal not in ("silent", "never"):
+        return False
+    matcher = task.get("problemMatcher")
+    return not matcher or (isinstance(matcher, list) and not any(matcher))
+
+
 def ignored_vscode_files(root: Path) -> tuple[list[str], str]:
     try:
         probe = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
@@ -933,12 +952,14 @@ def main() -> int:
 
     # --- launch.json ---
     launch_ids = ["VSCODE-050", "VSCODE-051", "VSCODE-052", "VSCODE-053", "VSCODE-054", "VSCODE-055",
-                  "VSCODE-056", "VSCODE-057"]
-    task_labels: set[str] = set()
+                  "VSCODE-056", "VSCODE-057", "VSCODE-058"]
+    tasks_by_label: dict[str, dict] = {}
     tasks_obj = tasks_file.obj
     if tasks_obj:
-        task_labels = {task.get("label") for task in tasks_obj.get("tasks") or []
-                       if isinstance(task, dict) and isinstance(task.get("label"), str)}
+        for task in tasks_obj.get("tasks") or []:
+            if isinstance(task, dict) and isinstance(task.get("label"), str):
+                tasks_by_label.setdefault(task["label"], task)
+    task_labels = set(tasks_by_label)
     if launch_file.obj is None:
         skip(launch_ids, "launch.json 없음" if not launch_file.exists else "launch.json 파싱 실패")
     else:
@@ -1060,6 +1081,18 @@ def main() -> int:
             report.check("VSCODE-057", t["VSCODE-057"], not missing_tasks, severity="warn",
                          evidence=("없는 작업: " + clip(missing_tasks)) if missing_tasks else "모두 존재",
                          fix="tasks.json에 같은 label의 작업 추가 또는 preLaunchTask 수정")
+
+        guard_labels = [label for label in dict.fromkeys(pre_tasks) if label in tasks_by_label]
+        if not guard_labels:
+            report.skip("VSCODE-058", t["VSCODE-058"],
+                        "preLaunchTask 없음" if not pre_tasks else "tasks.json에 정의된 preLaunchTask 없음")
+        else:
+            hidden = [label for label in guard_labels
+                      if hides_failure(tasks_by_label[label], (tasks_obj or {}).get("presentation"))]
+            report.check("VSCODE-058", t["VSCODE-058"], not hidden, severity="warn",
+                         evidence=("reveal silent/never + problemMatcher 없음: " + clip(hidden)) if hidden else (
+                             f"작업 {len(guard_labels)}개 확인"),
+                         fix='작업의 presentation에 "reveal": "always" 추가', autofixable=True)
 
     # --- tasks.json ---
     task_ids = ["VSCODE-060", "VSCODE-061", "VSCODE-062", "VSCODE-063", "VSCODE-064"]

@@ -1,0 +1,7 @@
+{
+  "label": "ensure-port-free",
+  "type": "shell",
+  "command": "if lsof -nP -iTCP:{{port}} -sTCP:LISTEN -t >/dev/null; then echo '오류: 포트 {{port}}이(가) 이미 사용 중입니다. make run 또는 다른 디버그 세션을 먼저 종료하십시오.' >&2; lsof -nP -iTCP:{{port}} -sTCP:LISTEN >&2; exit 1; fi",
+  "problemMatcher": [],
+  "presentation": { "reveal": "always", "panel": "shared" }
+}
