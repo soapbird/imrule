@@ -27,7 +27,7 @@
 | SRV-013 | 에러 응답이 Problem Details(`application/problem+json`)다. gRPC 전용은 해당 없음 | warn | RFC 9457. imreader·imservarr가 이미 사용 |
 | SRV-014 | DB를 쓰면 `migrations/`(또는 `alembic.ini`)로 스키마를 버전 관리한다 | warn | 재현 가능한 스키마 |
 | SRV-015 | 마이그레이션 실행 경로가 명시돼 있다 (`make migrate`, 시작 시 실행) | warn | 배포 절차 누락 방지 |
-| SRV-016 | Makefile에 `run` 타깃이 있다 (Makefile이 없으면 해당 없음 → `make-setup`) | warn | 모든 서버의 로컬 실행 명령 통일 |
+| SRV-016 | Makefile에 `run` 타깃이 있다 (Makefile이 없으면 해당 없음 → `setup-make`) | warn | 모든 서버의 로컬 실행 명령 통일 |
 | SRV-017 | 호스트·포트를 설정으로 바꿀 수 있다 | warn | 12-factor VII(Port binding) |
 | SRV-018 | 코드의 기본 바인딩이 `0.0.0.0`이 아니다 (컨테이너에서만 설정으로 연다). 문자열 `"0.0.0.0"`은 모든 언어, `Ipv4Addr::UNSPECIFIED`·`[0, 0, 0, 0]`은 Rust 파일에서만 본다 | warn | 로컬 실행 시 외부 노출 방지. imindexer·imfin의 loopback 기본값 |
 

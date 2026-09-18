@@ -1,10 +1,10 @@
 ---
 name: server
-description: "언어와 무관한 서버 규칙(12-factor 기반: 환경 변수 설정과 .env.template, /healthz·/readyz, SIGTERM 우아한 종료, JSON 로그·요청 ID, Problem Details 에러, DB 마이그레이션)으로 서버 프로젝트를 세팅하거나 검사한다. '서버 규칙 검사', '헬스체크 추가', '12-factor 점검', 'check server conventions' 같은 요청에 사용. 언어별 구현은 python-server·rust-server, Dockerfile은 docker-setup, CLI는 cli 스킬."
+description: "언어와 무관한 서버 규칙(12-factor 기반: 환경 변수 설정과 .env.template, /healthz·/readyz, SIGTERM 우아한 종료, JSON 로그·요청 ID, Problem Details 에러, DB 마이그레이션)으로 서버 프로젝트를 세팅하거나 검사한다. '서버 규칙 검사', '헬스체크 추가', '12-factor 점검', 'check server conventions' 같은 요청에 사용. 언어별 구현은 server-python·server-rust, Dockerfile은 setup-docker, CLI는 cli 스킬."
 compatibility: "uv 또는 Python 3.11+ 필요"
 metadata:
   imrule-builtin: "true"
-  imrule-skill-version: "1"
+  imrule-skill-version: "2"
 ---
 
 # 서버 공통 규칙
@@ -12,7 +12,7 @@ metadata:
 HTTP·gRPC 서버처럼 오래 떠 있는 프로세스가 언어와 상관없이 같은 방식으로 설정되고, 같은 경로로 상태를 알리고, 같은 방식으로 종료되게 한다. 이 스킬은 **무엇을** 지켜야 하는지(원칙)를 다루고, **어떻게** 구현하는지는 언어 스킬이 다룬다.
 
 - 전제 스킬: 없음
-- 함께 쓰는 스킬: `python-server`, `rust-server`(언어별 구현), `docker-setup`(컨테이너), `make-setup`(`run`·`migrate` 타깃)
+- 함께 쓰는 스킬: `server-python`, `server-rust`(언어별 구현), `setup-docker`(컨테이너), `setup-make`(`run`·`migrate` 타깃)
 
 ## 언제 쓰나
 
@@ -24,8 +24,8 @@ HTTP·gRPC 서버처럼 오래 떠 있는 프로세스가 언어와 상관없이
 쓰지 않는 경우:
 - CLI 도구 → `cli`
 - 라이브러리(프로세스로 실행되지 않음)
-- 언어별 세부(FastAPI lifespan, axum 레이어 등) → `python-server`, `rust-server`
-- Dockerfile·compose 세부 → `docker-setup`
+- 언어별 세부(FastAPI lifespan, axum 레이어 등) → `server-python`, `server-rust`
+- Dockerfile·compose 세부 → `setup-docker`
 
 ## 모드
 
@@ -41,7 +41,7 @@ HTTP·gRPC 서버처럼 오래 떠 있는 프로세스가 언어와 상관없이
 2. `uv run scripts/check.py <루트> --format json` 실행 (uv가 없으면 `python3 scripts/check.py <루트> --format json`). 스크립트를 **읽지 말고 실행**한다.
 3. [references/convention.md](references/convention.md)의 "판단 항목"(`SRV-J01`~`SRV-J07`)을 코드를 보고 PASS/WARN/FAIL로 판정한다. 근거는 파일:줄로 적는다.
 4. 스크립트 결과가 오탐으로 보이면(예: 순수 워커라 HTTP 엔드포인트가 없음) 결과를 뒤집지 말고 보고서에 "N/A — 사유"를 덧붙인다.
-5. 언어 스킬(`python-server`/`rust-server`)이 설치돼 있으면 그 check도 이어서 실행하라고 안내한다.
+5. 언어 스킬(`server-python`/`server-rust`)이 설치돼 있으면 그 check도 이어서 실행하라고 안내한다.
 6. 아래 보고 형식으로 합쳐 보고한다.
 
 ## setup 절차

@@ -9,7 +9,7 @@ ImRule은 프로젝트 지침, MCP 서버 설정, 스킬, 서브에이전트 정
 - **30개 이상 에이전트 지원** — Copilot, Claude Code, Codex, Cursor, Windsurf, Cline, Aider, Gemini CLI, Gajae Code(gjc) 등
 - **MCP 서버 설정** — `mcp.json`, `[mcp_servers]` TOML 테이블, 또는 `imrule mcp add`로 선언한 서버를 각 에이전트 형식에 맞게 병합
 - **스킬 전파** — `.imrule/skills/`를 에이전트별 스킬 디렉터리로 동기화
-- **내장 스킬** — `imrule skills setup`이 프로젝트를 감지해 CLI·서버·Makefile·CI·Docker·VS Code 세팅과 컨벤션 검사 스킬을 설치
+- **내장 스킬** — `imrule skills setup`이 프로젝트를 감지해 CLI·서버·Makefile·CI·Docker·VS Code 세팅과 컨벤션 검사 스킬을 설치하고, `imrule-update` 스킬이 imrule과 설치된 스킬을 함께 갱신
 - **서브에이전트 전파** — `.imrule/agents/` 정의를 에이전트 네이티브 형식으로 변환
 - **Gitignore 관리** — 생성 파일 경로를 `.gitignore`에 자동 반영
 - **전체 정리** — `imrule clear`로 ImRule이 생성한 자산을 한 번에 제거(직접 넣은 스킬·서브에이전트는 보존)
@@ -209,34 +209,38 @@ imrule mcp auth --config custom.toml       # 사용자 지정 설정 파일 사�
 
 #### `imrule skills setup`
 
-ImRule에 내장된 스킬(프로젝트 세팅·구조·컨벤션 검사)을 `.imrule/skills/`에 설치합니다. 인자 없이 실행하면 프로젝트를 감지해 맞는 스킬을 미리 선택해 둔 목록이 열리고, 검색하면서 여러 개를 고를 수 있습니다. 설치 후 `imrule apply`를 자동 실행해 에이전트 디렉터리까지 동기화합니다.
+ImRule에 내장된 스킬(프로젝트 세팅·구조·컨벤션 검사)을 `.imrule/skills/`에 설치합니다. 스킬은 종류별 접두사(`cli`, `server`, `setup`, `optimize`, `imrule`)로 묶여 있습니다. 인자 없이 실행하면 프로젝트를 감지해 맞는 스킬과 이미 설치된 스킬을 미리 선택해 둔 목록이 그룹별로 열리고, 검색하면서 여러 개를 고를 수 있습니다. 설치 후 `imrule apply`를 자동 실행해 에이전트 디렉터리까지 동기화합니다.
 
 ```bash
 imrule skills setup                       # 감지 결과가 미리 선택된 목록에서 검색·다중 선택
 imrule skills setup --list                # 내장 스킬과 감지 결과만 출력
 imrule skills setup --list --json         # 같은 목록을 JSON 한 문서로 출력(리비전·감지 여부·설치 상태 포함)
 imrule skills setup --yes                 # 감지된 스킬을 묻지 않고 설치
-imrule skills setup rust/cli make-setup   # 경로나 이름으로 지정
+imrule skills setup cli-rust setup-make   # 이름으로 지정
 imrule skills setup --all                 # 전부 설치
+imrule skills setup --update              # 이미 설치된 스킬만 새 리비전·새 이름으로 갱신
 imrule skills setup --dry-run             # 무엇이 바뀌는지만 확인
 imrule skills setup --force               # 로컬에서 고친 내장 스킬도 덮어쓰기
 ```
 
-목록에서는 입력하면 검색, `Space`로 선택·해제, `Ctrl+A`로 보이는 항목 전체 선택·해제, `↑`/`↓`로 이동, `Enter`로 설치, `Esc`로 취소합니다. 로컬에서 고친 스킬, 직접 만든 스킬, 내장본에 없는 파일을 추가한 스킬은 `Space`로 그 항목만 따로 선택했을 때만 덮어씁니다. `Ctrl+A`나 미리 선택된 상태로는 덮어쓰지 않습니다. 터미널이 없는 환경(CI 등)에서는 목록을 띄울 수 없으므로 스킬 이름, `--yes`, `--all` 중 하나를 지정해야 합니다(없으면 종료 코드 2).
+목록에서는 입력하면 검색, `Space`로 선택·해제, `Ctrl+A`로 보이는 항목 전체 선택·해제, `↑`/`↓`로 이동, `Enter`로 설치, `Esc`로 취소합니다. 로컬에서 고친 스킬, 직접 만든 스킬, 내장본에 없는 파일을 추가한 스킬은 `Space`로 그 항목만 따로 선택했을 때만 덮어씁니다. `Ctrl+A`나 미리 선택된 상태로는 덮어쓰지 않습니다. 터미널이 없는 환경(CI 등)에서는 목록을 띄울 수 없으므로 스킬 이름, `--yes`, `--update`, `--all` 중 하나를 지정해야 합니다(없으면 종료 코드 2).
 
 | 스킬 | 다루는 것 |
 |---|---|
 | `cli` | 언어와 무관한 CLI 규칙(clig.dev): 도움말·버전, stdout/stderr 구분, `--json`, 종료 코드, 설정 우선순위 |
+| `cli-python`, `cli-rust` | uv·src 레이아웃·ruff·basedpyright·pytest·Typer / edition·`[lints]`·얇은 `main`·clap, 기능별 모듈 또는 헥사고날 구조 |
 | `server` | 언어와 무관한 서버 규칙(12-factor): 환경 변수 설정, `/healthz`·`/readyz`, 우아한 종료, 에러 응답 |
-| `make/setup` | Makefile 표준 타깃(`help`·`fmt`·`lint`·`test`·`check` 등)과 헤더 |
-| `python/cli`, `python/server` | uv·src 레이아웃·ruff·basedpyright·pytest, Typer / FastAPI |
-| `rust/cli`, `rust/server` | edition·`[lints]`·얇은 `main`, clap / axum, 기능별 모듈 또는 헥사고날 구조 |
-| `release/versioning` | VERSION(4자리)·Cargo·pyproject·CHANGELOG·태그 일치 |
-| `ci/github-actions` | 최소 권한·SHA 고정·concurrency·`make check` 호출 |
-| `docker/setup` | 멀티스테이지·non-root·exec 형식 CMD·HEALTHCHECK·`.dockerignore` |
-| `docker/optimize` | 이미지 크기·콜드/웜 빌드·캐시·공급망(SBOM/provenance)·런타임 보안을 전후 측정하며 개선, 레이어 순서·비밀값·compose 보안 옵션 정적 검사 |
-| `vscode/setup` | 프로젝트에 맞는 `.vscode/`(`settings.json`·`extensions.json`·`launch.json`·`tasks.json`) 생성과 검사, Cursor 호환 |
+| `server-python`, `server-rust` | FastAPI·SQLAlchemy async·Alembic / axum·tower-http·우아한 종료 |
+| `setup-make` | Makefile 표준 타깃(`help`·`fmt`·`lint`·`test`·`check` 등)과 헤더 |
+| `setup-release` | VERSION(4자리)·Cargo·pyproject·CHANGELOG·태그 일치 |
+| `setup-github-actions` | 최소 권한·SHA 고정·concurrency·`make check` 호출 |
+| `setup-docker` | 멀티스테이지·non-root·exec 형식 CMD·HEALTHCHECK·`.dockerignore` |
+| `setup-vscode` | 프로젝트에 맞는 `.vscode/`(`settings.json`·`extensions.json`·`launch.json`·`tasks.json`) 생성과 검사, Cursor 호환 |
+| `optimize-docker` | 이미지 크기·콜드/웜 빌드·캐시·공급망(SBOM/provenance)·런타임 보안을 전후 측정하며 개선, 레이어 순서·비밀값·compose 보안 옵션 정적 검사 |
 | `imrule-issue` | imrule 명령·스킬이 제대로 동작하지 않거나 새 기능이 필요할 때, 진단을 모으고 비공개 정보를 가린 뒤 승인을 받아 [soapbird/imrule](https://github.com/soapbird/imrule/issues) 이슈 생성 |
+| `imrule-update` | imrule 바이너리를 설치 방식(Homebrew·cargo·install.sh·소스)에 맞게 새 릴리스로 올리고, 설치된 내장 스킬을 새 리비전·새 이름으로 갱신한 뒤 에이전트까지 동기화 |
+
+이전 버전에서 `python/cli`, `make/setup`처럼 언어·도구별 경로로 설치한 내장 스킬은 `imrule skills setup --update`(또는 해당 스킬을 다시 설치)가 새 이름(`cli-python`, `setup-make`)으로 옮기고 옛 폴더를 지웁니다. 옛 경로·이름(`rust/cli`, `rust-cli`)으로 지정해도 새 스킬로 해석합니다. 로컬에서 고친 옛 설치본은 `--force`로만 옮깁니다.
 
 각 스킬은 `check`(기본, 보고만)·`setup`·`fix`(요청할 때만) 모드를 갖고, 동봉된 `scripts/check.py`로 정답이 정해진 항목을 검사한 뒤 PASS/WARN/FAIL 표로 보고합니다. 검사 스크립트를 실행하려면 `uv`(또는 Python 3.11 이상)가 필요합니다.
 
@@ -245,7 +249,7 @@ imrule skills setup --force               # 로컬에서 고친 내장 스킬도
 | 상태 | 의미 |
 |---|---|
 | `installed` | 새로 설치했습니다. |
-| `updated` | 이전 리비전으로 설치된 스킬을 교체했습니다(새 리비전에서 빠진 파일도 지웁니다). |
+| `updated` | 이전 리비전으로 설치된 스킬을 교체했습니다(새 리비전에서 빠진 파일도 지웁니다). 옛 경로에서 옮겼으면 `moved from <옛 경로>`가 붙습니다. |
 | `unchanged` | 내장본과 설치본이 같습니다. |
 | `modified locally, skipped` | 로컬에서 고친 스킬이라 건드리지 않았습니다. `--force`로 덮어쓰거나, 목록에서 직접 선택하면 덮어씁니다. |
 

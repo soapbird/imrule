@@ -23,7 +23,7 @@
 - 라벨은 저장소에 있는 것만 하나 쓴다. 새 라벨을 만들지 않는다.
 - 제목: `[<영역>] <현상이나 요청 한 줄>` — 60자 안팎, 현상을 쓰고 추측한 원인은 쓰지 않는다.
   - 좋음: `[apply] --agents codex만 줬는데 .mcp.json이 지워짐`
-  - 좋음: `[skill:rust-cli] RSCLI-022가 tests/ 안의 infrastructure import를 위반으로 잡음`
+  - 좋음: `[skill:cli-rust] RSCLI-022가 tests/ 안의 infrastructure import를 위반으로 잡음`
   - 나쁨: `apply 버그`, `imrule이 이상함`, `manifest 로직을 고쳐야 함`
 
 ## 2. 영역 이름
@@ -36,7 +36,7 @@
 | `mcp` | `mcp add`·`mcp remove`·`mcp auth`, `[mcp_servers]`, `.imrule/mcp.json` |
 | `skills add` / `skills update` / `skills setup` / `skills list` | 각 하위 명령 |
 | `agent:<id>` | 특정 에이전트의 출력 경로·형식 — id는 `imrule apply --help` 목록: agentsmd, aider, amazonqcli, amp, antigravity, augmentcode, claude, cline, codex, copilot, crush, cursor, factory(droid), firebase, firebender, gemini-cli, gjc, goose, jetbrains-ai, jules, junie, kilocode, kimi, kimi-cli, kimi-code, kiro, mistral, opencode, openhands, pi, qwen, roo, trae, warp, windsurf, zed |
-| `skill:<name>` | 내장 스킬 — cli, server, make-setup, python-cli, python-server, rust-cli, rust-server, release-versioning, ci-github-actions, docker-setup, vscode-setup, imrule-issue |
+| `skill:<name>` | 내장 스킬 — cli, cli-python, cli-rust, server, server-python, server-rust, setup-make, setup-release, setup-github-actions, setup-docker, setup-vscode, optimize-docker, imrule-issue, imrule-update |
 | `install` | install.sh, Homebrew, cargo install, 사전 빌드 바이너리 |
 | `docs` | README 등 문서 전반 |
 | `new` | 어느 영역에도 없는 새 기능 |

@@ -4,7 +4,7 @@ description: "imrule CLI(apply·clear·init·mcp·skills add/update/setup/list)�
 compatibility: "gh CLI 권장(없으면 새 이슈 링크로 대체), uv 또는 Python 3.11+ 필요"
 metadata:
   imrule-builtin: "true"
-  imrule-skill-version: "2"
+  imrule-skill-version: "3"
 ---
 
 # imrule 이슈 제보 (imrule-issue)
@@ -24,7 +24,7 @@ imrule을 쓰다가 명령·내장 스킬·검사기가 기대와 다르게 동�
   - 새 명령·옵션·내장 스킬·규칙·에이전트 지원을 요청할 때
   - README·`--help` 설명이 틀리거나 부족할 때, 사용법 질문
 - 쓰지 않는 경우
-  - 프로젝트가 규칙을 어긴 것 자체 → 해당 규칙 스킬(`rust-cli`, `make-setup` 등)의 check/fix
+  - 프로젝트가 규칙을 어긴 것 자체 → 해당 규칙 스킬(`cli-rust`, `setup-make` 등)의 check/fix
   - imrule이 아닌 서드파티 스킬(gstack 등)이나 에이전트(Claude Code, Codex 등) 자체의 문제 → 그 프로젝트의 저장소
   - **보안 취약점** → 공개 이슈 금지. imrule 저장소의 `SECURITY.md` 비공개 제보 절차를 안내하고 멈춘다.
 
@@ -40,7 +40,7 @@ imrule을 쓰다가 명령·내장 스킬·검사기가 기대와 다르게 동�
 
 ### 1. 분류
 
-- 사용자 설명에서 **종류**(CLI 버그 · 스킬 버그/검사기 오탐·미탐 · 기능 요청 · 문서 · 질문)와 **영역**(`apply`, `skills setup`, `agent:claude`, `skill:rust-cli` …)을 정한다. `references/structure.md` 3절 판별표를 쓴다.
+- 사용자 설명에서 **종류**(CLI 버그 · 스킬 버그/검사기 오탐·미탐 · 기능 요청 · 문서 · 질문)와 **영역**(`apply`, `skills setup`, `agent:claude`, `skill:cli-rust` …)을 정한다. `references/structure.md` 3절 판별표를 쓴다.
 - 재현에 필요한 정보가 없으면 먼저 묻는다: **실행한 명령 그대로**, 기대한 결과, 실제 결과(출력·종료 코드).
 
 ### 2. 준비 상태 확인
@@ -122,7 +122,7 @@ gh issue list -R soapbird/imrule --state all --search "<키워드>" --json numbe
 - 중복 검색: "skills setup detected", "setup --list docker" → 관련 이슈 없음
 - 가린 정보: 자동 4건(홈 경로 3, 사용자 이름 1) + 직접 1건(사내 레지스트리 주소 → `<host>`)
 
-**제목**: [skills setup] Python 서버 프로젝트에서 docker-setup이 추천되지 않음
+**제목**: [skills setup] Python 서버 프로젝트에서 setup-docker가 추천되지 않음
 
 **본문**:
 
@@ -136,7 +136,7 @@ gh issue list -R soapbird/imrule --state all --search "<키워드>" --json numbe
 ```markdown
 ## imrule 이슈 제출 완료
 
-- <이슈 URL> — [skills setup] Python 서버 프로젝트에서 docker-setup이 추천되지 않음
+- <이슈 URL> — [skills setup] Python 서버 프로젝트에서 setup-docker가 추천되지 않음
 - 라벨: `bug` · 임시 본문 파일 삭제함
 ```
 

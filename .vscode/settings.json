@@ -3,7 +3,14 @@
   "files.insertFinalNewline": true,
   "files.trimTrailingWhitespace": true,
   "files.exclude": {
-    "**/target": true
+    "**/target": true,
+    ".gjc": true,
+    ".codegraph": true,
+    ".gbrain-source": true,
+    "lcov.info": true,
+    "cobertura.xml": true,
+    "AGENTS.md": true,
+    "CLAUDE.md": true
   },
   "search.exclude": {
     "**/target": true

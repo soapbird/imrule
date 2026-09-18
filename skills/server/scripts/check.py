@@ -796,7 +796,7 @@ def main() -> int:
     # --- local run & binding
     makefile = find_up(root, "Makefile")
     if makefile is None:
-        report.skip("SRV-016", "Makefile run 타깃", "Makefile 없음 (make-setup 스킬 참고)")
+        report.skip("SRV-016", "Makefile run 타깃", "Makefile 없음 (setup-make 스킬 참고)")
     else:
         targets = make_targets(makefile)
         similar = sorted(t for t in targets if re.match(r"^(run[-_].+|serve|start.*|dev|api|server)$", t))

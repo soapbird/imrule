@@ -20,6 +20,49 @@ pub const BUILTIN_SKILL_VERSION_KEY: &str = "imrule-skill-version";
 /// `SKILL.md` without it was not installed by `setup`, so it belongs to the user.
 pub const BUILTIN_SKILL_MARKER_KEY: &str = "imrule-builtin";
 
+/// Built-in skills that moved when the catalog was regrouped by kind:
+/// `(old path, current path)`. An old path still resolves as a name, and
+/// `setup` moves a copy ImRule installed there to the current path.
+pub const RENAMED_BUILTIN_SKILLS: &[(&str, &str)] = &[
+    ("python/cli", "cli-python"),
+    ("rust/cli", "cli-rust"),
+    ("python/server", "server-python"),
+    ("rust/server", "server-rust"),
+    ("make/setup", "setup-make"),
+    ("vscode/setup", "setup-vscode"),
+    ("docker/setup", "setup-docker"),
+    ("ci/github-actions", "setup-github-actions"),
+    ("release/versioning", "setup-release"),
+    ("docker/optimize", "optimize-docker"),
+];
+
+/// The paths a built-in skill was installed under before it was renamed.
+pub fn previous_builtin_paths(path: &str) -> impl Iterator<Item = &'static str> + '_ {
+    RENAMED_BUILTIN_SKILLS
+        .iter()
+        .filter(move |(_, current)| *current == path)
+        .map(|(old, _)| *old)
+}
+
+/// Groups built-in skills are listed under, in display order. A skill's group
+/// is its published name up to the first hyphen (`cli-python` → `cli`).
+const BUILTIN_SKILL_GROUPS: &[&str] = &["cli", "server", "setup", "optimize", "imrule"];
+
+/// The group a built-in skill is listed under.
+pub fn builtin_skill_group(name: &str) -> &str {
+    name.split('-').next().unwrap_or(name)
+}
+
+/// Sort key that lists skills group by group, then by name within a group.
+fn catalog_order(name: &str) -> (usize, &str, &str) {
+    let group = builtin_skill_group(name);
+    let rank = BUILTIN_SKILL_GROUPS
+        .iter()
+        .position(|known| *known == group)
+        .unwrap_or(BUILTIN_SKILL_GROUPS.len());
+    (rank, group, name)
+}
+
 /// One built-in skill.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuiltinSkill {
@@ -73,13 +116,15 @@ pub fn build_builtin_catalog(files: &[(&'static str, &'static str)]) -> Vec<Buil
         }
     }
 
-    skills
+    let mut skills: Vec<BuiltinSkill> = skills
         .into_values()
         .map(|mut skill| {
             skill.files.sort_by(|a, b| a.0.cmp(&b.0));
             skill
         })
-        .collect()
+        .collect();
+    skills.sort_by(|a, b| catalog_order(&a.name).cmp(&catalog_order(&b.name)));
+    skills
 }
 
 /// Reads `description` and the revision out of a `SKILL.md`.
@@ -120,15 +165,20 @@ pub fn installed_skill_revision(skill_md: &str) -> u32 {
     }
 }
 
-/// Finds a built-in skill by path (`rust/cli`) or published name (`rust-cli`).
+/// Finds a built-in skill by path or published name (`cli-rust`), or by the
+/// path or name it had before it was renamed (`rust/cli`, `rust-cli`).
 pub fn find_builtin_skill<'a>(
     catalog: &'a [BuiltinSkill],
     query: &str,
 ) -> Option<&'a BuiltinSkill> {
     let query = query.trim().trim_matches('/');
+    let current = RENAMED_BUILTIN_SKILLS
+        .iter()
+        .find(|(old, _)| *old == query || old.replace('/', "-") == query)
+        .map_or(query, |(_, current)| *current);
     catalog
         .iter()
-        .find(|skill| skill.path == query || skill.name == query)
+        .find(|skill| skill.path == current || skill.name == current)
 }
 
 /// Resolves requested names to catalog paths, rejecting any it does not know.
@@ -274,30 +324,32 @@ pub fn recommend_builtin_skills(signals: &ProjectSignals) -> BTreeSet<&'static s
     let server = detection.server();
     let rules = [
         ("cli", detection.cli()),
+        ("cli-python", detection.python_cli),
+        ("cli-rust", detection.rust_cli),
         ("server", server),
+        ("server-python", detection.python_server),
+        ("server-rust", detection.rust_server),
         (
-            "make/setup",
+            "setup-make",
             signals.makefile || signals.cargo || signals.pyproject,
         ),
-        ("python/cli", detection.python_cli),
-        ("python/server", detection.python_server),
-        ("rust/cli", detection.rust_cli),
-        ("rust/server", detection.rust_server),
         (
-            "release/versioning",
+            "setup-release",
             signals.version_file || signals.changelog || signals.cargo || signals.pyproject,
         ),
-        ("ci/github-actions", signals.github_workflows),
-        ("docker/setup", signals.docker || server),
-        // Optimizing needs an image to measure; a server without one starts
-        // from docker/setup.
-        ("docker/optimize", signals.docker),
+        ("setup-github-actions", signals.github_workflows),
+        ("setup-docker", signals.docker || server),
         (
-            "vscode/setup",
+            "setup-vscode",
             signals.vscode || signals.cargo || signals.pyproject,
         ),
-        // Reporting imrule's own problems applies to every project using it.
+        // Optimizing needs an image to measure; a server without one starts
+        // from setup-docker.
+        ("optimize-docker", signals.docker),
+        // Reporting imrule's problems and keeping imrule and its skills
+        // current apply to every project using it.
         ("imrule-issue", true),
+        ("imrule-update", true),
     ];
     rules
         .into_iter()
@@ -326,6 +378,12 @@ fn is_builtin_marked(meta: &serde_json::Value) -> bool {
         Some(serde_json::Value::Bool(marked)) => *marked,
         _ => false,
     }
+}
+
+/// Whether an installed `SKILL.md` carries the built-in marker: `setup` put
+/// it there, so it is not the user's own skill.
+pub fn is_builtin_skill_md(skill_md: &str) -> bool {
+    matches!(parse_frontmatter(skill_md), Ok(Some(parsed)) if is_builtin_marked(&parsed.meta))
 }
 
 /// How an installed copy of a built-in skill compares to the embedded one.

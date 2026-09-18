@@ -6,8 +6,9 @@ use crate::application::ports::FileSystemPort;
 use crate::application::skills_add_use_case::resolve_skills_base;
 use crate::domain::builtin_skills::{
     BuiltinSkill, BuiltinSkillSetupStatus, BuiltinSkillState, ProjectSignals, detection_labels,
-    recommend_builtin_skills, resolve_builtin_skills,
+    is_builtin_skill_md, previous_builtin_paths, recommend_builtin_skills, resolve_builtin_skills,
 };
+use crate::domain::constants::SKILL_MD_FILENAME;
 use crate::domain::constants::{LEGACY_DIR_NAME, SKILLS_DIR, normalize_path_separators};
 use crate::domain::error::ImruleError;
 
@@ -24,6 +25,27 @@ pub struct SkillsSetupEntry<'a> {
     pub skill: &'a BuiltinSkill,
     /// Detection says the skill fits this project.
     pub recommended: bool,
+    pub state: BuiltinSkillState,
+    /// A copy ImRule installed under the path the skill had before it was
+    /// renamed (`python/cli` for `cli-python`), still on disk.
+    pub previous: Option<PreviousInstall>,
+}
+
+impl SkillsSetupEntry<'_> {
+    /// Whether some copy of the skill is installed, under its current path or
+    /// a previous one.
+    pub fn installed(&self) -> bool {
+        self.state != BuiltinSkillState::NotInstalled || self.previous.is_some()
+    }
+}
+
+/// A built-in skill's copy under a path it no longer has.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviousInstall {
+    /// The old path below the install directory (`python/cli`).
+    pub path: String,
+    /// How that copy compares to the current embedded skill: `Outdated` when
+    /// it may be moved without asking, `Modified` when only with consent.
     pub state: BuiltinSkillState,
 }
 
@@ -46,6 +68,16 @@ impl SkillsSetupPlan<'_> {
             .collect()
     }
 
+    /// Paths of the skills installed under their current or a previous path,
+    /// in catalog order: what `setup --update` refreshes.
+    pub fn installed_paths(&self) -> Vec<String> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.installed())
+            .map(|entry| entry.skill.path.clone())
+            .collect()
+    }
+
     /// Paths of every skill, in catalog order.
     pub fn all_paths(&self) -> Vec<String> {
         self.entries
@@ -61,6 +93,8 @@ pub struct SkillsSetupOutcome {
     pub path: String,
     pub name: String,
     pub status: BuiltinSkillSetupStatus,
+    /// The previous path a copy was moved from, when one was.
+    pub moved_from: Option<String>,
 }
 
 /// Result of an install run.
@@ -144,6 +178,7 @@ impl<'a> SkillsSetupUseCase<'a> {
                 skill,
                 recommended: recommended.contains(skill.path.as_str()),
                 state: self.state_of(&install_dir, skill),
+                previous: self.previous_install(&install_dir, skill),
             })
             .collect();
         SkillsSetupPlan {
@@ -192,27 +227,81 @@ impl<'a> SkillsSetupUseCase<'a> {
             };
             let skill = entry.skill;
             let consent = consented.contains(path);
-            let status = match entry.state {
+            let mut status = match entry.state {
                 BuiltinSkillState::NotInstalled => BuiltinSkillSetupStatus::Installed,
                 BuiltinSkillState::UpToDate => BuiltinSkillSetupStatus::Unchanged,
                 BuiltinSkillState::Outdated => BuiltinSkillSetupStatus::Updated,
                 BuiltinSkillState::Modified if consent => BuiltinSkillSetupStatus::Updated,
                 BuiltinSkillState::Modified => BuiltinSkillSetupStatus::SkippedModified,
             };
+            // A copy under the skill's old path moves to the new one: without
+            // asking when ImRule's own older copy, otherwise only with consent.
+            // Left in place, both would be published to agents side by side.
+            let movable = entry
+                .previous
+                .as_ref()
+                .filter(|previous| previous.state == BuiltinSkillState::Outdated || consent);
+            match (&entry.previous, movable, entry.state) {
+                (Some(_), None, BuiltinSkillState::NotInstalled) => {
+                    status = BuiltinSkillSetupStatus::SkippedModified;
+                }
+                (Some(_), Some(_), BuiltinSkillState::NotInstalled) => {
+                    status = BuiltinSkillSetupStatus::Updated;
+                }
+                (Some(_), Some(_), _) if status == BuiltinSkillSetupStatus::Unchanged => {
+                    status = BuiltinSkillSetupStatus::Updated;
+                }
+                _ => {}
+            }
+            let moved_from = movable
+                .filter(|_| status.writes())
+                .map(|previous| previous.path.clone());
             if status.writes() && !dry_run {
-                self.write_skill(&plan.install_dir, skill, entry.state, consent)?;
+                if entry.state != BuiltinSkillState::UpToDate {
+                    self.write_skill(&plan.install_dir, skill, entry.state, consent)?;
+                }
+                if let Some(previous) = movable {
+                    self.remove_previous(&plan.install_dir, skill, previous)?;
+                }
             }
             outcomes.push(SkillsSetupOutcome {
                 path: skill.path.clone(),
                 name: skill.name.clone(),
                 status,
+                moved_from,
             });
         }
         Ok(SkillsSetupResult { outcomes })
     }
 
     fn state_of(&self, install_dir: &Path, skill: &BuiltinSkill) -> BuiltinSkillState {
-        let skill_dir = install_dir.join(&skill.path);
+        self.state_at(&install_dir.join(&skill.path), skill)
+    }
+
+    /// The first copy ImRule installed under one of the skill's previous
+    /// paths. A directory there without the built-in marker is the user's own
+    /// skill that happens to share an old name, and is none of setup's business.
+    fn previous_install(
+        &self,
+        install_dir: &Path,
+        skill: &BuiltinSkill,
+    ) -> Option<PreviousInstall> {
+        previous_builtin_paths(&skill.path).find_map(|path| {
+            let dir = install_dir.join(path);
+            let skill_md = self.fs_port.read_text(&dir.join(SKILL_MD_FILENAME)).ok()?;
+            if !self.fs_port.dir_exists(&dir) || !is_builtin_skill_md(&skill_md) {
+                return None;
+            }
+            Some(PreviousInstall {
+                path: path.to_string(),
+                state: self.state_at(&dir, skill),
+            })
+        })
+    }
+
+    /// How the copy in `skill_dir` compares to the embedded skill.
+    fn state_at(&self, skill_dir: &Path, skill: &BuiltinSkill) -> BuiltinSkillState {
+        let skill_dir = skill_dir.to_path_buf();
         let installed_files: Vec<String> = if self.fs_port.dir_exists(&skill_dir) {
             match self.fs_port.list_files(&skill_dir) {
                 Ok(files) => files
@@ -231,6 +320,42 @@ impl<'a> SkillsSetupUseCase<'a> {
         BuiltinSkillState::compare(skill, Some(&installed_files), |relative| {
             self.fs_port.read_text(&skill_dir.join(relative)).ok()
         })
+    }
+
+    /// Removes a skill's copy under its previous path once the current path
+    /// holds it, then the grouping directories that emptied (`python/`).
+    /// Re-checks the copy first, as [`write_skill`](Self::write_skill) does.
+    fn remove_previous(
+        &self,
+        install_dir: &Path,
+        skill: &BuiltinSkill,
+        planned: &PreviousInstall,
+    ) -> Result<(), ImruleError> {
+        let dir = install_dir.join(&planned.path);
+        let current = self.previous_install(install_dir, skill);
+        if current.as_ref() != Some(planned) {
+            return Err(ImruleError::skills(format!(
+                "{} changed while setting up; it was left in place, \
+                 run `imrule skills setup` again",
+                dir.display()
+            )));
+        }
+        if !self.fs_port.resolves_within(&dir, install_dir) {
+            return Err(ImruleError::skills(format!(
+                "refusing to remove {}: it resolves outside {}",
+                dir.display(),
+                install_dir.display()
+            )));
+        }
+        self.fs_port.remove_dir_all(&dir)?;
+        let mut parent = dir.parent();
+        while let Some(group) = parent.filter(|group| *group != install_dir) {
+            if !self.fs_port.remove_dir_if_empty(group)? {
+                break;
+            }
+            parent = group.parent();
+        }
+        Ok(())
     }
 
     /// Replaces the skill directory with the embedded files, so a file dropped

@@ -1,15 +1,15 @@
 ---
 name: cli
-description: "언어와 무관한 CLI 규칙(clig.dev 기반: --help/--version, stdout·stderr 구분, --json, 종료 코드 0/1/2/130, NO_COLOR, 설정 우선순위, 환경 변수 접두사)으로 명령행 도구를 설계하거나 규칙 준수 여부를 검사한다. 'CLI 규칙 검사', 'CLI UX 점검', '종료 코드 정리', 'check cli conventions' 같은 요청에 사용. Python 구현은 python-cli, Rust 구현은 rust-cli 스킬."
+description: "언어와 무관한 CLI 규칙(clig.dev 기반: --help/--version, stdout·stderr 구분, --json, 종료 코드 0/1/2/130, NO_COLOR, 설정 우선순위, 환경 변수 접두사)으로 명령행 도구를 설계하거나 규칙 준수 여부를 검사한다. 'CLI 규칙 검사', 'CLI UX 점검', '종료 코드 정리', 'check cli conventions' 같은 요청에 사용. Python 구현은 cli-python, Rust 구현은 cli-rust 스킬."
 compatibility: "uv 또는 Python 3.11+ 필요"
 metadata:
   imrule-builtin: "true"
-  imrule-skill-version: "1"
+  imrule-skill-version: "2"
 ---
 
 # CLI 공통 규칙
 
-명령행 도구가 사람과 스크립트 모두에게 예측 가능하게 동작하도록, 언어와 상관없이 지켜야 할 겉모습(도움말, 출력 채널, 종료 코드, 설정, 환경 변수)을 세팅하고 검사한다. 이 스킬은 **무엇을 지켜야 하는지**를 다루고, 언어별 구현은 `python-cli`·`rust-cli` 스킬이 이 스킬을 전제로 다룬다. Makefile 타깃은 `make-setup` 스킬 담당이다.
+명령행 도구가 사람과 스크립트 모두에게 예측 가능하게 동작하도록, 언어와 상관없이 지켜야 할 겉모습(도움말, 출력 채널, 종료 코드, 설정, 환경 변수)을 세팅하고 검사한다. 이 스킬은 **무엇을 지켜야 하는지**를 다루고, 언어별 구현은 `cli-python`·`cli-rust` 스킬이 이 스킬을 전제로 다룬다. Makefile 타깃은 `setup-make` 스킬 담당이다.
 
 ## 언제 쓰나
 
@@ -18,9 +18,9 @@ metadata:
   - 기존 CLI가 `--help`/`--version`/종료 코드/`--json` 규칙을 지키는지 점검할 때
   - "CLI 컨벤션 검사", "CLI UX 리뷰", "exit code 정리" 요청
 - 쓰지 않는 경우
-  - 프로젝트 레이아웃·pyproject·Cargo 설정 → `python-cli` / `rust-cli`
+  - 프로젝트 레이아웃·pyproject·Cargo 설정 → `cli-python` / `cli-rust`
   - HTTP 서버 → `server`
-  - Makefile → `make-setup`
+  - Makefile → `setup-make`
 
 ## 모드
 
@@ -45,7 +45,7 @@ metadata:
 3. 출력 채널 규칙을 코드 구조로 고정한다: 결과 출력은 한 모듈(`output`)에서만, 로그·에러는 stderr.
 4. 설정 파일 위치(`~/.config/<app>/`)와 환경 변수 이름(`<PROJECT>_*`)을 정한다.
 5. README에 "사용법"과 "종료 코드" 섹션을 추가한다 (템플릿은 structure.md §5).
-6. 만들 파일·바꿀 파일 목록을 먼저 보여주고, 확인을 받은 뒤 진행한다. 구현은 언어 스킬(`python-cli`/`rust-cli`)의 템플릿을 쓴다.
+6. 만들 파일·바꿀 파일 목록을 먼저 보여주고, 확인을 받은 뒤 진행한다. 구현은 언어 스킬(`cli-python`/`cli-rust`)의 템플릿을 쓴다.
 
 ## fix 절차
 
