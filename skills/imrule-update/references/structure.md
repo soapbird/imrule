@@ -9,15 +9,15 @@
 | 실제 경로 | 설치 방식 | 비고 |
 |---|---|---|
 | `…/Cellar/imrule/<버전>/bin/imrule` | Homebrew | `brew tap soapbird/tap` 필요 |
-| `~/.cargo/bin/imrule` (`CARGO_HOME/bin`) | cargo | `cargo install imrule` |
-| 그 밖의 경로 (`~/.local/bin`, `/usr/local/bin` 등) | 바이너리 복사 | install.sh, 사전 빌드 바이너리, 소스의 `make install`이 모두 여기에 든다 |
+| `~/.cargo/bin/imrule` (`CARGO_HOME/bin`) | `cargo-git` 또는 `cargo-path` | `CARGO_HOME/.crates2.json`에 적힌 출처(git 저장소 또는 체크아웃 경로)로 나눈다. imrule은 crates.io에 없다 |
+| 그 밖의 경로 (`~/.local/bin`, `/usr/local/bin` 등) | `unknown` | install.sh, 사전 빌드 바이너리, 소스의 `make install`이 모두 여기에 든다 |
 
-바이너리 복사는 겉으로 구별되지 않는다. 사용자가 imrule 저장소를 체크아웃해 `make install`로 설치했다고 하면 소스 방식으로 올린다. 모르면 install.sh 방식이 기본이다.
+`unknown`은 겉으로 구별되지 않으므로 항상 사용자에게 묻는다. install.sh나 릴리스 바이너리였다면 바이너리 복사 방식으로, 체크아웃에서 `make install`했다면 그 체크아웃 경로를 받아 소스 방식으로 올린다. 추측해서 install.sh로 덮어쓰지 않는다.
 
 아직 설치되지 않았으면 README의 설치 절을 안내한다.
 
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/soapbird/imrule/main/install.sh | sh
+curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/soapbird/imrule/main/install.sh | bash
 ```
 
 ## 2. 올리기 명령
@@ -25,11 +25,12 @@ curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/soapbird/
 | 설치 방식 | 명령 | 확인 |
 |---|---|---|
 | Homebrew | `brew update && brew upgrade imrule` | `brew info imrule` |
-| cargo | `cargo install imrule --locked` | `cargo install --list \| grep imrule` |
-| 바이너리 복사 | `curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/soapbird/imrule/main/install.sh \| sh -s -- --dir <바이너리 디렉터리>` | `imrule --version` |
+| cargo (`cargo-git`) | `cargo install --git https://github.com/soapbird/imrule --tag <새 릴리스 태그> --locked` | `cargo install --list \| grep imrule` |
+| cargo (`cargo-path`) | `git -C <체크아웃> pull --ff-only && cargo install --path <체크아웃> --locked` | `imrule --version` |
+| 바이너리 복사 | `curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/soapbird/imrule/main/install.sh \| bash -s -- --dir <바이너리 디렉터리>` | `imrule --version` |
 | 소스 | `git -C <체크아웃> pull --ff-only && make -C <체크아웃> install` | `imrule --version` |
 
-- 특정 버전으로 올리거나 되돌릴 때: install.sh는 `--version vX.Y.Z.W`, cargo는 `--version X.Y.Z`(앞 3자리), Homebrew는 tap의 formula 버전만 받는다.
+- 특정 버전으로 올리거나 되돌릴 때: install.sh는 `--version vX.Y.Z.W`, cargo는 `--tag vX.Y.Z.W`, Homebrew는 tap의 formula 버전만 받는다.
 - `<바이너리 디렉터리>`는 지금 쓰이는 imrule이 있는 디렉터리다. 다른 곳에 설치하면 PATH 순서에 따라 옛 바이너리가 계속 쓰인다.
 - 쓰기 권한이 없는 디렉터리면 명령을 보여 주고 사용자가 `sudo`로 실행하게 한다.
 - 소스 체크아웃에 로컬 변경이 있거나 `develop` 같은 작업 브랜치에 있으면 멈추고 묻는다.

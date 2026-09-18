@@ -40,7 +40,7 @@ imrule 바이너리를 새 릴리스로 올리고, `imrule skills setup`으로 �
 
 - UPD-001이 FAIL이면 imrule이 PATH에 없다. 설치부터 안내한다(`references/structure.md` 1절).
 - UPD-010의 evidence에 현재 버전과 최신 릴리스가 있다. 같으면 2단계를 건너뛴다.
-- UPD-002가 설치 방식을 알려준다. `unknown`이면 사용자에게 어떻게 설치했는지 묻는다.
+- UPD-002가 설치 방식(`homebrew`·`cargo-git`·`cargo-path`·`unknown`)과 출처를 알려준다. `unknown`은 install.sh·릴리스 바이너리·체크아웃의 `make install`처럼 복사만 된 바이너리라 겉으로 구별되지 않는다. 명령을 고르기 전에 사용자에게 어떻게 설치했는지 묻는다. 체크아웃에서 설치했다면 그 경로도 묻는다.
 - UPD-005·UPD-006·UPD-007이 갱신할 스킬, 옛 이름으로 남은 스킬, 로컬에서 고친 스킬을 알려준다.
 
 ### 2. 바이너리 올리기 (update 모드)
@@ -59,8 +59,9 @@ imrule을 0.5.1.0 → 0.6.0.0으로 올릴까요?
 | 설치 방식 | 명령 |
 |---|---|
 | Homebrew | `brew update && brew upgrade imrule` |
-| cargo | `cargo install imrule --locked` |
-| install.sh·사전 빌드 바이너리 | `curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/soapbird/imrule/main/install.sh \| sh -s -- --dir <현재 바이너리 디렉터리>` |
+| cargo (`cargo-git`) | `cargo install --git https://github.com/soapbird/imrule --tag <새 릴리스 태그> --locked` |
+| cargo (`cargo-path`) | UPD-002의 체크아웃에서 `git pull --ff-only && cargo install --path . --locked` |
+| install.sh·사전 빌드 바이너리 | `curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/soapbird/imrule/main/install.sh \| bash -s -- --dir <현재 바이너리 디렉터리>` |
 | 소스(`make install`) | 체크아웃에서 `git pull --ff-only && make install` |
 
 - 설치 디렉터리에 쓰기 권한이 없으면(`/usr/local/bin` 등) `sudo`가 필요하다고 알리고 사용자가 직접 실행하게 한다. `sudo`를 대신 실행하지 않는다.

@@ -171,14 +171,36 @@ def every_imrule_on_path() -> list[str]:
     return found
 
 
-def install_method(binary: str) -> str:
+def install_method(binary: str) -> tuple[str, str]:
+    """(method, where it came from). `unknown` when the path cannot tell."""
     real = Path(binary).resolve()
     if "Cellar" in real.parts and "imrule" in real.parts:
-        return "homebrew"
+        return "homebrew", ""
     cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
     if real.parent == (cargo_home / "bin").resolve():
-        return "cargo"
-    return "binary"
+        return cargo_source(cargo_home)
+    # install.sh, a downloaded release binary and a checkout's `make install`
+    # all leave a plain copy; only the user knows which it was.
+    return "unknown", ""
+
+
+def cargo_source(cargo_home: Path) -> tuple[str, str]:
+    """Reads where `cargo install` took imrule from: a git URL or a checkout."""
+    try:
+        installs = json.loads((cargo_home / ".crates2.json").read_text(encoding="utf-8"))["installs"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return "unknown", ""
+    for key in installs:
+        name, _, rest = key.partition(" ")
+        if name != "imrule" or "(" not in rest:
+            continue
+        source = rest.split("(", 1)[1].rstrip(")")
+        if source.startswith("git+"):
+            return "cargo-git", source[len("git+"):].split("#", 1)[0]
+        if source.startswith("path+file://"):
+            return "cargo-path", source[len("path+file://"):]
+        return "unknown", source
+    return "unknown", ""
 
 
 def is_builtin_marked(skill_md: Path) -> bool:
@@ -197,7 +219,7 @@ def check_binary(report: Report) -> tuple[str | None, tuple[int, ...] | None]:
     if imrule is None:
         report.check("UPD-001", "imrule 실행 가능·버전 확인", False,
                      evidence="PATH에 imrule 없음",
-                     fix="README 설치 절(install.sh·brew·cargo)로 설치")
+                     fix="README 설치 절(install.sh·brew·cargo --git)로 설치")
         report.skip("UPD-002", "설치 방식 판별", "imrule 없음")
         return None, None
 
@@ -207,9 +229,11 @@ def check_binary(report: Report) -> tuple[str | None, tuple[int, ...] | None]:
                  evidence=f"{first_line(out) or first_line(err) or '출력 없음'} ({tilde(imrule)})",
                  fix="`imrule --version` 출력을 확인하고 다시 설치")
 
-    method = install_method(imrule)
+    method, source = install_method(imrule)
     all_found = every_imrule_on_path()
     evidence = f"{method} — {tilde(str(Path(imrule).resolve()))}"
+    if source:
+        evidence += f" (from {tilde(source)})"
     if len(all_found) > 1:
         evidence += "; PATH에 여러 개: " + ", ".join(tilde(path) for path in all_found)
     report.check("UPD-002", "설치 방식 판별", True, severity="info", evidence=evidence)

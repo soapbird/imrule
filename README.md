@@ -22,13 +22,13 @@ ImRule은 프로젝트 지침, MCP 서버 설정, 스킬, 서브에이전트 정
 ### 설치 스크립트
 
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/soapbird/imrule/main/install.sh | sh
+curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/soapbird/imrule/main/install.sh | bash
 ```
 
 원하는 디렉터리에 설치하려면 다음처럼 실행합니다.
 
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/soapbird/imrule/main/install.sh | sh -s -- --dir /usr/local/bin
+curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/soapbird/imrule/main/install.sh | bash -s -- --dir /usr/local/bin
 ```
 
 ### 사전 빌드 바이너리
@@ -63,8 +63,11 @@ sudo make install-system  # 또는 /usr/local/bin/imrule로 복사
 
 ### Cargo로 설치
 
+imrule은 crates.io에 게시하지 않습니다. 저장소에서 바로 설치합니다.
+
 ```bash
-cargo install imrule
+cargo install --git https://github.com/soapbird/imrule --locked                 # main = 최신 릴리스
+cargo install --git https://github.com/soapbird/imrule --tag v0.5.2.0 --locked  # 특정 릴리스
 ```
 
 ### 설치 경로 지정
