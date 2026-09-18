@@ -2718,8 +2718,24 @@ fn the_shipped_table_covers_every_old_path_below_the_current_revisions() {
             .iter()
             .find(|skill| skill.path == current)
             .unwrap_or_else(|| panic!("{} maps to no built-in skill", release.path));
-        // A release's revision at or above the embedded one means a skill
-        // changed without its revision being bumped.
+        // Regenerated after tagging, the table also holds the embedded
+        // revision, which must then be exactly the embedded files. Anything
+        // else at or above it means a skill changed without a revision bump.
+        if release.revision == skill.revision && release.path == skill.path {
+            let embedded: Vec<(&str, u64)> = skill
+                .files
+                .iter()
+                .map(|(relative, content)| (relative.as_str(), content_digest(content)))
+                .collect();
+            assert_eq!(
+                release.files,
+                embedded.as_slice(),
+                "{} revision {} changed without a revision bump",
+                skill.path,
+                skill.revision
+            );
+            continue;
+        }
         assert!(
             release.revision < skill.revision,
             "{} revision {} is not below {} revision {}",

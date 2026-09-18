@@ -130,7 +130,10 @@ def take_online_flag() -> bool:
 def run(command: list[str], timeout: float = LOCAL_TIMEOUT) -> tuple[int | None, str, str]:
     env = {**os.environ, "NO_COLOR": "1", "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1"}
     try:
+        # imrule prints UTF-8 (Korean descriptions) whatever the locale says;
+        # Windows' default code page would fail to decode it.
         completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout,
+                                   encoding="utf-8", errors="replace",
                                    env=env, stdin=subprocess.DEVNULL)
     except FileNotFoundError:
         return None, "", f"{command[0]} not found"
