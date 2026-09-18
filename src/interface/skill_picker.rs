@@ -21,7 +21,7 @@ pub struct PickerItem {
     /// are shown beneath a single heading. Empty for no heading.
     pub group: String,
     pub title: String,
-    /// Dim text after the title (`rust/cli · detected · installed`).
+    /// Dim text after the title (`detected · installed`).
     pub meta: Vec<String>,
     pub description: String,
     pub selected: bool,

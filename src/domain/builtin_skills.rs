@@ -63,6 +63,45 @@ fn catalog_order(name: &str) -> (usize, &str, &str) {
     (rank, group, name)
 }
 
+/// A built-in skill revision a release installed: under which path, and the
+/// [`content_digest`] of each file relative to the skill directory. The table
+/// of them (`shipped_skills.rs`) is generated from the release tags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShippedRevision {
+    pub path: &'static str,
+    pub revision: u32,
+    pub files: &'static [(&'static str, u64)],
+}
+
+impl ShippedRevision {
+    /// Whether a copy holds exactly this revision's files, byte for byte.
+    fn matches(
+        &self,
+        installed_files: &[String],
+        installed: &impl Fn(&str) -> Option<String>,
+    ) -> bool {
+        let listed: BTreeSet<&str> = installed_files
+            .iter()
+            .map(String::as_str)
+            .filter(|file| !is_incidental_file(file))
+            .collect();
+        listed.len() == self.files.len()
+            && self.files.iter().all(|(relative, digest)| {
+                listed.contains(relative)
+                    && installed(relative)
+                        .is_some_and(|content| content_digest(&content) == *digest)
+            })
+    }
+}
+
+/// 64-bit FNV-1a digest of a file's contents, as `scripts/shipped-skills.py`
+/// computes it. It tells a shipped copy from an edited one, not an attacker's.
+pub fn content_digest(content: &str) -> u64 {
+    content.bytes().fold(0xcbf2_9ce4_8422_2325, |digest, byte| {
+        (digest ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
 /// One built-in skill.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuiltinSkill {
@@ -393,9 +432,8 @@ pub enum BuiltinSkillState {
     NotInstalled,
     /// Every embedded file matches what is installed, and nothing else is there.
     UpToDate,
-    /// Installed by ImRule from an older revision (marker set, revision at
-    /// least 1 and below the embedded one) with no files beyond the embedded
-    /// ones; safe to refresh.
+    /// Exactly what a release installed at this path from an older revision,
+    /// untouched since; safe to refresh.
     Outdated,
     /// Anything else that differs: edited or added to locally, a directory or
     /// `SKILL.md` the user owns, or a copy from a newer ImRule. Only
@@ -406,11 +444,16 @@ pub enum BuiltinSkillState {
 impl BuiltinSkillState {
     /// Decides the state of an installed copy.
     ///
-    /// `installed_files` lists every file below the skill's install directory,
-    /// relative to it with forward slashes, or is `None` when nothing exists
-    /// at that path. `installed` reads one of those files by relative path.
+    /// `copy_path` is where the copy sits below the install directory (the
+    /// skill's path, or a path it had before a rename), and `shipped` the
+    /// revisions releases installed. `installed_files` lists every file below
+    /// the copy, relative to it with forward slashes, or is `None` when nothing
+    /// exists at that path. `installed` reads one of those files by relative
+    /// path.
     pub fn compare(
         skill: &BuiltinSkill,
+        copy_path: &str,
+        shipped: &[ShippedRevision],
         installed_files: Option<&[String]>,
         installed: impl Fn(&str) -> Option<String>,
     ) -> Self {
@@ -422,31 +465,37 @@ impl BuiltinSkillState {
         let Some(installed_skill_md) = installed(SKILL_MD_FILENAME) else {
             return Self::Modified;
         };
-        // A file the embedded skill does not ship was added by the user, and
-        // replacing the directory would delete it. Only operating-system litter
-        // (`.DS_Store`) and a checker's `__pycache__` are left out.
+        // Operating-system litter (`.DS_Store`) and a checker's `__pycache__`
+        // are ignored; any other file the embedded skill lacks rules it out.
         let embedded: BTreeSet<&str> = skill.files.iter().map(|(path, _)| path.as_str()).collect();
-        if installed_files
+        let extra = installed_files
             .iter()
             .filter(|file| !is_incidental_file(file))
-            .any(|file| !embedded.contains(file.as_str()))
-        {
-            return Self::Modified;
-        }
+            .any(|file| !embedded.contains(file.as_str()));
         let identical = skill
             .files
             .iter()
             .all(|(relative, content)| installed(relative).as_deref() == Some(*content));
-        if identical {
+        if !extra && identical {
             return Self::UpToDate;
         }
         let Ok(Some(parsed)) = parse_frontmatter(&installed_skill_md) else {
             return Self::Modified;
         };
         let revision = revision_of(&parsed.meta);
-        // An embedded file missing from an older copy may be one the newer
-        // revision added, so only extra files rule a refresh out.
-        if is_builtin_marked(&parsed.meta) && revision >= 1 && revision < skill.revision {
+        // An older revision's own contents are not embedded, so only the
+        // shipped digests show it untouched. A copy edited, added to or
+        // trimmed since, or from a revision no release shipped here, is the
+        // user's to give up.
+        let untouched = is_builtin_marked(&parsed.meta)
+            && revision >= 1
+            && revision < skill.revision
+            && shipped.iter().any(|release| {
+                release.path == copy_path
+                    && release.revision == revision
+                    && release.matches(installed_files, &installed)
+            });
+        if untouched {
             Self::Outdated
         } else {
             Self::Modified

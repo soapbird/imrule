@@ -70,7 +70,7 @@ metadata:
 ---
 ```
 
-- `metadata.imrule-skill-version`: 스킬 파일을 하나라도 바꾸면 **1 올립니다.** `imrule skills setup`은 설치본에 `imrule-builtin: "true"`가 있고 값이 1 이상이면서 더 낮고, 내장본에 없는 파일(`.DS_Store` 같은 OS 파일·`__pycache__` 제외, `.env` 같은 다른 숨김 파일은 사용자 파일로 봄)이 없을 때만 "업데이트 가능"으로 보고 덮어씁니다. 값이 같은데 내용이 다르거나, 표식·값이 없거나, 사용자가 추가한 파일이 있으면 사용자가 고친 것으로 보고 `--force`(또는 목록에서 그 스킬만 따로 선택) 없이는 건드리지 않습니다. `imrule-builtin`을 지우지 마세요.
+- `metadata.imrule-skill-version`: 스킬 파일을 하나라도 바꾸면 **1 올립니다.** `imrule skills setup`은 설치본이 더 낮은 리비전이고 그 리비전을 릴리스가 설치한 그대로일 때만(`src/domain/shipped_skills.rs`의 파일별 해시와 모두 같고, `.DS_Store` 같은 OS 파일·`__pycache__` 말고는 더하거나 뺀 파일이 없을 때만) "업데이트 가능"으로 보고 덮어씁니다. 한 줄이라도 고쳤거나, 파일을 더하거나 뺐거나, 표식·값이 없거나, 릴리스가 설치한 적 없는 리비전이면 사용자가 고친 것으로 보고 `--force`(또는 목록에서 그 스킬만 따로 선택) 없이는 건드리지 않습니다. `imrule-builtin`을 지우지 마세요. 스킬을 바꾼 릴리스를 태그한 뒤에는 `make shipped-skills`로 해시 표를 다시 만들어 커밋합니다. 빠뜨리면 그 릴리스로 설치한 사본은 다음 릴리스에서 "로컬에서 고침"으로 보입니다.
 - `description`: 400자 이하, 한국어. **무엇을 하는지 / 언제 쓰는지(한·영 트리거 문구) / 무엇은 다른 스킬인지**를 담습니다. 큰따옴표로 감쌉니다.
 - 규격 밖 필드(`allowed-tools` 등)는 넣지 않습니다. 파일 경로는 스킬 루트 기준 상대 경로로만 씁니다(`${CLAUDE_SKILL_DIR}` 금지).
 
@@ -387,7 +387,7 @@ soapbird 하위 프로젝트 조사와 2026년 자료 조사를 거쳐 정한 �
 ### 5.11 imrule 업데이트 (`imrule-update`)
 
 - 내장 스킬은 바이너리에 들어 있으므로 **바이너리를 먼저 올리고** 스킬을 갱신합니다. 바이너리만 올리고 끝내지 않습니다.
-- 설치 방식은 `command -v imrule`의 실제 경로로 판별합니다: `…/Cellar/imrule/…` Homebrew(`brew upgrade imrule`), `~/.cargo/bin` cargo(`cargo install imrule --locked`), 그 밖은 바이너리 복사(install.sh `--dir <그 디렉터리>`, 소스 체크아웃이면 `git pull --ff-only && make install`). 모르면 사용자에게 묻습니다.
+- 설치 방식은 `command -v imrule`의 실제 경로로 판별합니다: `…/Cellar/imrule/…` Homebrew(`brew upgrade imrule`), `~/.cargo/bin`은 `.crates2.json`의 출처로 git 설치(`cargo install --git … --tag <태그> --locked`)와 체크아웃 설치(`cargo install --path <체크아웃> --locked`)를 나눕니다. 그 밖의 경로는 install.sh·릴리스 바이너리·`make install`을 구별할 수 없어 `unknown`으로 보고 사용자에게 묻습니다.
 - 올리기 전에 설치 방식·명령·이어질 스킬 변경을 보여 주고 확인을 받습니다. `sudo`가 필요하면 사용자가 직접 실행합니다.
 - 스킬 갱신은 `imrule skills setup --update`(먼저 `--dry-run`)입니다. 설치된 내장 스킬만 대상으로 하고, 옛 리비전은 교체, 옛 경로(`python/cli`)의 설치본은 새 이름(`cli-python`)으로 옮기며, 바뀐 것이 있으면 `imrule apply`로 에이전트 디렉터리까지 맞춥니다.
 - 로컬에서 고친 스킬은 이름마다 승인받은 것만 `imrule skills setup <이름> --force`로 덮어씁니다. `imrule-builtin` 표지가 없는 스킬은 옛 경로와 이름이 같아도 건드리지 않습니다.

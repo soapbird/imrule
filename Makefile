@@ -10,7 +10,7 @@ TMP      := /tmp/imrule-e2e
 PREFIX   ?= $(HOME)/.local
 ARGS     ?=
 
-.PHONY: help setup fmt fmt-check lint test check build run clean install install-system uninstall coverage changelog deny test-e2e test-e2e-skills
+.PHONY: help setup fmt fmt-check lint test check build run clean install install-system uninstall coverage changelog shipped-skills deny test-e2e test-e2e-skills
 
 help: ## 타깃 목록
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -59,6 +59,9 @@ coverage: ## lcov 커버리지 리포트 생성 (cargo-llvm-cov)
 
 changelog: ## 미배포 변경을 CHANGELOG.md에 추가 (git-cliff)
 	git cliff --unreleased --prepend CHANGELOG.md
+
+shipped-skills: ## 릴리스 태그로 내장 스킬 배포 해시 표(src/domain/shipped_skills.rs) 재생성
+	python3 scripts/shipped-skills.py
 
 deny: ## 의존성 라이선스·보안 권고·출처 검사 (cargo-deny, deny.toml)
 	cargo deny check

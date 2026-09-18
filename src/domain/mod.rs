@@ -9,5 +9,6 @@ pub mod gjc_config;
 pub mod manifest;
 pub mod mcp;
 pub mod rules;
+pub mod shipped_skills;
 pub mod skills;
 pub mod subagent;

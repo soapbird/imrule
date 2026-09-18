@@ -1,0 +1,2 @@
+# Release fixtures are compared by digest; keep their bytes as tagged.
+tests/fixtures/** -text

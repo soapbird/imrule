@@ -680,9 +680,6 @@ fn effective_state(entry: &SkillsSetupEntry) -> BuiltinSkillState {
 /// previous path a copy is still installed under.
 fn setup_tags(entry: &SkillsSetupEntry) -> Vec<String> {
     let mut tags = Vec::new();
-    if entry.skill.path != entry.skill.name {
-        tags.push(entry.skill.path.clone());
-    }
     if entry.recommended {
         tags.push("detected".to_string());
     }
