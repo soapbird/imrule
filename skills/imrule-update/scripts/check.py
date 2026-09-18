@@ -89,6 +89,7 @@ import os
 import re
 import shutil
 import subprocess
+from urllib.parse import unquote
 
 SKILL = "imrule-update"
 REPO = "soapbird/imrule"
@@ -198,7 +199,11 @@ def cargo_source(cargo_home: Path) -> tuple[str, str]:
         if source.startswith("git+"):
             return "cargo-git", source[len("git+"):].split("#", 1)[0]
         if source.startswith("path+file://"):
-            return "cargo-path", source[len("path+file://"):]
+            path = unquote(source[len("path+file://"):])
+            # `file:///C:/src` on Windows.
+            if re.match(r"^/[A-Za-z]:/", path):
+                path = path[1:]
+            return "cargo-path", path
         return "unknown", source
     return "unknown", ""
 

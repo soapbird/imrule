@@ -2750,6 +2750,13 @@ fn a_release_fixture_matches_the_generated_digests() {
         for (relative, digest) in release.files {
             let content = fs::read_to_string(fixtures.join(path).join(relative)).unwrap();
             assert_eq!(content_digest(&content), *digest, "{path}/{relative}");
+            // A Windows release embedded its checkout's CRLF.
+            let crlf = content.replace('\n', "\r\n");
+            assert_eq!(
+                content_digest(&crlf),
+                *digest,
+                "{path}/{relative} with CRLF"
+            );
         }
     }
 }
@@ -2769,6 +2776,24 @@ fn setup_update_never_touches_a_users_skill_sharing_a_built_in_name() {
         assert!(stdout.contains("No built-in skills installed"), "{stdout}");
         assert_eq!(fs::read_to_string(mine.join("SKILL.md")).unwrap(), skill_md);
     }
+}
+
+#[test]
+fn setup_update_force_never_moves_an_old_copy_onto_a_users_skill() {
+    let (_tmp, project) = claude_project();
+    let old = install_shipped(&project, "python/cli");
+    let mine = project.join(".imrule/skills/cli-python");
+    fs::create_dir_all(&mine).unwrap();
+    let skill_md = "---\nname: cli-python\ndescription: mine\n---\n\nMy CLI rules.\n";
+    fs::write(mine.join("SKILL.md"), skill_md).unwrap();
+
+    let output = setup_cli(&project, &["--update", "--force"]);
+    assert!(output.status.success());
+    assert_eq!(fs::read_to_string(mine.join("SKILL.md")).unwrap(), skill_md);
+    assert!(
+        old.join("SKILL.md").is_file(),
+        "the old copy stays until the path is free"
+    );
 }
 
 #[test]
@@ -2883,6 +2908,13 @@ fn the_update_checker_asks_instead_of_guessing_how_imrule_was_installed() {
     assert_eq!(
         method(&from_cargo, Some("imrule 0.5.2 (path+file:///src/imrule)")),
         "cargo-path|/src/imrule"
+    );
+    assert_eq!(
+        method(
+            &from_cargo,
+            Some("imrule 0.5.2 (path+file:///C:/my%20code/imrule)")
+        ),
+        "cargo-path|C:/my code/imrule"
     );
     assert_eq!(method(&from_cargo, None), "unknown|", "no record, no guess");
     assert_eq!(

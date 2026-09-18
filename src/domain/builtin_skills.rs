@@ -94,12 +94,17 @@ impl ShippedRevision {
     }
 }
 
-/// 64-bit FNV-1a digest of a file's contents, as `scripts/shipped-skills.py`
-/// computes it. It tells a shipped copy from an edited one, not an attacker's.
+/// 64-bit FNV-1a digest of a file's contents with CRLF read as LF, as
+/// `scripts/shipped-skills.py` computes it: a Windows build embedded its
+/// checkout's CRLF. It tells a shipped copy from an edited one, not an
+/// attacker's.
 pub fn content_digest(content: &str) -> u64 {
-    content.bytes().fold(0xcbf2_9ce4_8422_2325, |digest, byte| {
-        (digest ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
+    content
+        .replace("\r\n", "\n")
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325, |digest, byte| {
+            (digest ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        })
 }
 
 /// One built-in skill.

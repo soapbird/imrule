@@ -39,8 +39,10 @@ def release_tags() -> list[str]:
 
 
 def fnv1a(data: bytes) -> int:
+    """Mirrors content_digest: CRLF counts as LF, since a Windows build
+    embedded its checkout's line endings."""
     digest = 0xCBF29CE484222325
-    for byte in data:
+    for byte in data.replace(b"\r\n", b"\n"):
         digest ^= byte
         digest = (digest * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
     return digest
@@ -76,7 +78,10 @@ def shipped_at(tag: str) -> dict[tuple[str, int], tuple[tuple[str, int], ...]]:
 
 def main() -> None:
     entries: dict[tuple[str, int, tuple[tuple[str, int], ...]], list[str]] = {}
-    for tag in release_tags():
+    tags = release_tags()
+    if not tags:
+        sys.exit("no release tags (v0.5.0.0 or later) found; run `git fetch --tags` first")
+    for tag in tags:
         for (path, revision), files in shipped_at(tag).items():
             entries.setdefault((path, revision, files), []).append(tag)
 

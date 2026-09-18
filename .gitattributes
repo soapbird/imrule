@@ -1,2 +1,4 @@
 # Release fixtures are compared by digest; keep their bytes as tagged.
 tests/fixtures/** -text
+# Built-in skills are embedded as they are checked out; keep LF on every OS.
+skills/** text eol=lf

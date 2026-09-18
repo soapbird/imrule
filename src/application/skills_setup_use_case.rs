@@ -42,7 +42,9 @@ impl SkillsSetupEntry<'_> {
     /// or a previous one. A same-named skill of the user's does not count, so
     /// `setup --update` (even with `--force`) never replaces it.
     pub fn installed(&self) -> bool {
-        self.builtin || self.previous.is_some()
+        // An old copy counts only while nothing else holds the current path:
+        // moving it would replace whatever does.
+        self.builtin || (self.previous.is_some() && self.state == BuiltinSkillState::NotInstalled)
     }
 }
 
