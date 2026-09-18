@@ -93,6 +93,9 @@ jobs:
     timeout-minutes: 15
     permissions:
       actions: read
+      # audit-check reports advisories as a check run; without this a warning
+      # (unsound, unmaintained) fails the job with "Resource not accessible".
+      checks: write
       contents: read
       security-events: write
     env:
