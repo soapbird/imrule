@@ -738,6 +738,7 @@ fn builtin_skills_json(plan: &SkillsSetupPlan) -> serde_json::Value {
                 "revision": entry.skill.revision,
                 "recommended": entry.recommended,
                 "state": entry.state.label(),
+                "builtin": entry.builtin,
                 "previous": entry.previous.as_ref().map(|previous| serde_json::json!({
                     "path": previous.path,
                     "state": previous.state.label(),

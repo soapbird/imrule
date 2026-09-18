@@ -245,6 +245,16 @@ def check_binary(report: Report) -> tuple[str | None, tuple[int, ...] | None]:
     return imrule, version
 
 
+def owned_by_imrule(skill: dict, imrule_dir: Path | None) -> bool:
+    """A `modified` copy without the built-in marker is the user's own skill
+    sharing the name: never one to replace with --force."""
+    if "builtin" in skill:
+        return bool(skill["builtin"])
+    # Older binaries do not report `builtin`; read the marker directly.
+    return imrule_dir is not None and is_builtin_marked(
+        imrule_dir / "skills" / str(skill.get("path", "")) / "SKILL.md")
+
+
 def check_skills(report: Report, imrule: str | None, imrule_dir: Path | None) -> None:
     if imrule is None:
         for check_id, title in SKILL_CHECKS:
@@ -270,7 +280,8 @@ def check_skills(report: Report, imrule: str | None, imrule_dir: Path | None) ->
         return
 
     outdated = [s["name"] for s in skills if s.get("state") == "outdated"]
-    modified = [s["name"] for s in skills if s.get("state") == "modified"]
+    modified = [s["name"] for s in skills
+                if s.get("state") == "modified" and owned_by_imrule(s, imrule_dir)]
     moved: list[str] = []
     for skill in skills:
         previous = skill.get("previous")

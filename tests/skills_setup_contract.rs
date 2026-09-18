@@ -2857,6 +2857,62 @@ fn checker_python() -> Option<&'static str> {
 }
 
 #[test]
+fn the_update_checker_never_offers_to_force_over_a_users_skill() {
+    let Some(python) = checker_python() else {
+        eprintln!("skipped: no Python 3.11+ to run imrule-update's check.py");
+        return;
+    };
+    let (_tmp, project) = claude_project();
+    let mine = project.join(".imrule/skills/server");
+    fs::create_dir_all(&mine).unwrap();
+    fs::write(
+        mine.join("SKILL.md"),
+        "---\nname: server\ndescription: mine\n---\n",
+    )
+    .unwrap();
+    let edited = project.join(".imrule/skills/cli");
+    assert!(setup_cli(&project, &["cli"]).status.success());
+    fs::write(edited.join("notes.md"), "mine\n").unwrap();
+
+    let listed: serde_json::Value =
+        serde_json::from_slice(&setup_cli(&project, &["--list", "--json"]).stdout).unwrap();
+    let flag = |name: &str| {
+        listed["skills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|skill| skill["name"] == name)
+            .unwrap()["builtin"]
+            .clone()
+    };
+    assert_eq!(flag("server"), serde_json::json!(false));
+    assert_eq!(flag("cli"), serde_json::json!(true));
+
+    let binary = assert_cmd::cargo::cargo_bin("imrule");
+    let path = std::env::join_paths(
+        std::iter::once(binary.parent().unwrap().to_path_buf()).chain(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        )),
+    )
+    .unwrap();
+    let output = std::process::Command::new(python)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .arg("skills/imrule-update/scripts/check.py")
+        .arg(&project)
+        .args(["--format", "json", "--only", "UPD-007"])
+        .env("PATH", &path)
+        .env("XDG_CONFIG_HOME", project.parent().unwrap().join("xdg"))
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let evidence = report["findings"][0]["evidence"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(evidence, "cli", "only ImRule's own edited copy is listed");
+}
+
+#[test]
 fn the_update_checker_asks_instead_of_guessing_how_imrule_was_installed() {
     let Some(python) = checker_python() else {
         eprintln!("skipped: no Python 3.11+ to run imrule-update's check.py");
