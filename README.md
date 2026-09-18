@@ -518,6 +518,7 @@ make build            # cargo build --release
 make test-e2e         # 릴리스 바이너리로 test-e2e/ fixture 기반 E2E 테스트
 make test-e2e-skills  # skills E2E 테스트(원격 GitHub 소스 포함)
 make deny             # cargo-deny로 라이선스·보안 권고·출처 검사
+make shipped-skills   # 릴리스 태그로 내장 스킬 배포 해시 표(src/domain/shipped_skills.rs) 재생성
 make install          # ~/.local/bin/imrule로 설치(PREFIX로 변경)
 make install-system   # /usr/local/bin/imrule로 설치(sudo 필요할 수 있음)
 make uninstall        # $(PREFIX)/bin/imrule 제거
