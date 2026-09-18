@@ -200,6 +200,26 @@ merge_strategy = "merge"
 }
 
 #[test]
+fn load_config_rejects_standalone_values_instead_of_using_defaults() {
+    let tmp = tempdir().unwrap();
+    let config_path = tmp.path().join("imrule.toml");
+    fs::write(&config_path, "42").unwrap();
+
+    let result = TomlConfigLoader::new().load_config(tmp.path(), Some(&config_path), None);
+
+    let error = result.unwrap_err();
+    assert!(matches!(
+        error,
+        imrule::domain::error::ImruleError::Config(_)
+    ));
+    assert!(
+        error
+            .to_string()
+            .contains(&config_path.display().to_string())
+    );
+}
+
+#[test]
 fn load_config_without_file_returns_empty_native_sections() {
     let tmp = tempdir().unwrap();
     let xdg_home = tempdir().unwrap();

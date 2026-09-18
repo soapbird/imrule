@@ -17,8 +17,11 @@ pub struct PickerItem {
     /// What `selected_ids` returns for this item — the caller's key, e.g. a
     /// skill's catalog path.
     pub id: String,
+    /// Heading the item is listed under (`cli`); consecutive items sharing one
+    /// are shown beneath a single heading. Empty for no heading.
+    pub group: String,
     pub title: String,
-    /// Dim text after the title (`rust/cli · detected · installed`).
+    /// Dim text after the title (`detected · installed`).
     pub meta: Vec<String>,
     pub description: String,
     pub selected: bool,
@@ -307,9 +310,18 @@ impl Picker {
         if visible.is_empty() {
             lines.push(vec![span("   No skills match your search.", Tone::Dim)]);
         }
+        let mut group: Option<&str> = None;
         for (position, &index) in visible.iter().enumerate().skip(self.offset).take(page) {
             let item = &self.items[index];
             let focused = position == self.cursor;
+            // The blank row above the first item of a group carries its
+            // heading, so headings cost no rows and paging stays exact.
+            if !item.group.is_empty() && group != Some(item.group.as_str()) {
+                if let Some(spacer) = lines.last_mut() {
+                    *spacer = vec![span(format!("  ── {}", item.group), Tone::Dim)];
+                }
+            }
+            group = Some(item.group.as_str());
             let mut title = vec![
                 span(if focused { " ❯ " } else { "   " }, Tone::Accent),
                 span(

@@ -53,7 +53,7 @@ impl ConfigPort for TomlConfigLoader {
         let config_file = resolve_config_file(project_root, config_path, &self.resolve_xdg_home());
         let raw = match fs::read_to_string(&config_file) {
             Ok(text) if text.trim().is_empty() => Value::Table(Default::default()),
-            Ok(text) => text.parse::<Value>().map_err(|e| {
+            Ok(text) => toml::from_str::<Value>(&text).map_err(|e| {
                 ImruleError::config(format!(
                     "could not parse config file at {}: {e}",
                     config_file.display()

@@ -13,7 +13,7 @@
 
 ## 1. 구성 요소와 언어별 위치
 
-| 요소 | 규칙 | Python (`python-server`) | Rust (`rust-server`) |
+| 요소 | 규칙 | Python (`server-python`) | Rust (`server-rust`) |
 |---|---|---|---|
 | 설정 | 환경 변수 + 접두사, 시작 시 검증 | `src/<pkg>/settings.py` | `src/config.rs` |
 | 헬스 | `GET /healthz`, `GET /readyz` | `src/<pkg>/health.py` | `src/routes/health.rs` |
@@ -23,7 +23,7 @@
 | 에러 | `application/problem+json` | `src/<pkg>/errors.py` | `src/error.rs` |
 | 마이그레이션 | 버전 파일 + 명시적 실행 | `migrations/` (Alembic) | `migrations/` (sqlx) |
 | 실행 | `make run`, `make migrate` | `uv run uvicorn ...` | `cargo run` |
-| 컨테이너 | non-root, exec CMD, HEALTHCHECK | `docker-setup` | `docker-setup` |
+| 컨테이너 | non-root, exec CMD, HEALTHCHECK | `setup-docker` | `setup-docker` |
 
 프로젝트 루트:
 
@@ -32,7 +32,7 @@
 ├── .env.template        # 커밋. 코드가 읽는 모든 환경 변수
 ├── .env                 # 커밋 금지 (gitignore)
 ├── .gitignore
-├── Makefile             # run, migrate (make-setup 표준 타깃 포함)
+├── Makefile             # run, migrate (setup-make 표준 타깃 포함)
 ├── migrations/          # DB가 있을 때
 └── (언어별 소스 트리)
 ```
@@ -88,7 +88,7 @@ MYAPP_UPSTREAM_TOKEN=
 5. DB 풀, HTTP 클라이언트, 텔레메트리 exporter flush·정리
 6. 종료 코드 0
 
-컨테이너에서는 exec 형식 `CMD`여야 신호가 프로세스에 바로 전달된다(`docker-setup`).
+컨테이너에서는 exec 형식 `CMD`여야 신호가 프로세스에 바로 전달된다(`setup-docker`).
 
 ## 5. 로그 형식
 

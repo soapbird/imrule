@@ -88,7 +88,7 @@ pub enum SkillsCommand {
 
 #[derive(Debug, Args)]
 pub struct SkillsSetupArgs {
-    /// Built-in skills to install, by path or name (e.g. `rust/cli`, `make-setup`).
+    /// Built-in skills to install, by name (e.g. `cli-rust`, `setup-make`).
     #[arg(value_name = "SKILL")]
     pub skills: Vec<String>,
     /// Install every built-in skill.
@@ -97,6 +97,10 @@ pub struct SkillsSetupArgs {
     /// Install the skills detected for this project without prompting.
     #[arg(long, short = 'y', default_value_t = false, conflicts_with_all = ["skills", "all"])]
     pub yes: bool,
+    /// Refresh only the built-in skills already installed, moving any found
+    /// under a previous name; installs nothing new.
+    #[arg(long, short = 'u', default_value_t = false, conflicts_with_all = ["skills", "all", "yes"])]
+    pub update: bool,
     /// List the built-in skills and what was detected, without installing.
     #[arg(long, short = 'l', default_value_t = false)]
     pub list: bool,

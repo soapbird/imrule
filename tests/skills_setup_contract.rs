@@ -13,9 +13,11 @@ use imrule::application::skills_setup_use_case::{
 };
 use imrule::domain::builtin_skills::{
     BuiltinSkill, BuiltinSkillSetupStatus, BuiltinSkillState, ProjectSignals,
-    build_builtin_catalog, detection_labels, installed_skill_revision, python_requirement_name,
-    recommend_builtin_skills, resolve_builtin_skills,
+    RENAMED_BUILTIN_SKILLS, ShippedRevision, build_builtin_catalog, builtin_skill_group,
+    content_digest, detection_labels, find_builtin_skill, installed_skill_revision,
+    python_requirement_name, recommend_builtin_skills, resolve_builtin_skills,
 };
+use imrule::domain::shipped_skills::SHIPPED_BUILTIN_REVISIONS;
 use imrule::domain::skills::flatten_skill_name;
 use imrule::domain::subagent::parse_frontmatter;
 use imrule::infrastructure::builtin_skills::{builtin_catalog, collect_project_signals};
@@ -175,13 +177,14 @@ fn detection_recommends_skills_that_fit_the_project() {
     assert_eq!(
         recommend_builtin_skills(&rust_cli),
         BTreeSet::from([
-            "ci/github-actions",
             "cli",
+            "cli-rust",
             "imrule-issue",
-            "make/setup",
-            "release/versioning",
-            "rust/cli",
-            "vscode/setup"
+            "imrule-update",
+            "setup-github-actions",
+            "setup-make",
+            "setup-release",
+            "setup-vscode"
         ])
     );
 
@@ -192,9 +195,9 @@ fn detection_recommends_skills_that_fit_the_project() {
         ..ProjectSignals::default()
     };
     let recommended = recommend_builtin_skills(&rust_server);
-    assert!(recommended.contains("rust/server") && recommended.contains("docker/setup"));
+    assert!(recommended.contains("server-rust") && recommended.contains("setup-docker"));
     assert!(
-        !recommended.contains("rust/cli"),
+        !recommended.contains("cli-rust"),
         "a server binary without a CLI crate is not a CLI"
     );
 
@@ -205,14 +208,14 @@ fn detection_recommends_skills_that_fit_the_project() {
         ..ProjectSignals::default()
     };
     let recommended = recommend_builtin_skills(&python_both);
-    for path in ["python/cli", "python/server", "cli", "server"] {
+    for path in ["cli-python", "server-python", "cli", "server"] {
         assert!(recommended.contains(path), "missing {path}");
     }
 
-    // The issue-reporting skill is about imrule itself, so it fits everywhere.
+    // The imrule workflow skills are about imrule itself, so they fit everywhere.
     assert_eq!(
         recommend_builtin_skills(&ProjectSignals::default()),
-        BTreeSet::from(["imrule-issue"])
+        BTreeSet::from(["imrule-issue", "imrule-update"])
     );
 }
 
@@ -389,8 +392,8 @@ fn detection_labels_name_each_detected_kind_in_a_stable_order() {
     };
     assert_eq!(detection_labels(&python_server), vec!["python", "server"]);
     let recommended = recommend_builtin_skills(&python_server);
-    assert!(recommended.contains("python/server") && recommended.contains("docker/setup"));
-    for absent in ["python/cli", "cli", "docker/optimize"] {
+    assert!(recommended.contains("server-python") && recommended.contains("setup-docker"));
+    for absent in ["cli-python", "cli", "optimize-docker"] {
         assert!(!recommended.contains(absent), "{absent} recommended");
     }
 
@@ -402,7 +405,7 @@ fn detection_labels_name_each_detected_kind_in_a_stable_order() {
         ..ProjectSignals::default()
     };
     let recommended = recommend_builtin_skills(&rust_both);
-    assert!(recommended.contains("rust/cli") && recommended.contains("rust/server"));
+    assert!(recommended.contains("cli-rust") && recommended.contains("server-rust"));
 
     // Dependencies or scripts without their manifest detect nothing.
     let orphaned = ProjectSignals {
@@ -434,7 +437,7 @@ fn installing_then_rerunning_reports_unchanged() {
     let root = tmp.path();
     let fs_port = FsFileSystem::new();
     let catalog = catalog_v1();
-    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog);
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog).with_shipped(fabricated_releases());
 
     let plan = use_case.plan(&options(root), &ProjectSignals::default());
     assert!(
@@ -494,10 +497,10 @@ fn state_in(plan: &SkillsSetupPlan, path: &str) -> BuiltinSkillState {
 }
 
 #[test]
-fn an_older_revision_is_refreshed_only_when_it_holds_no_extra_files() {
+fn an_older_revision_is_refreshed_only_when_it_is_what_a_release_shipped() {
     let fs_port = FsFileSystem::new();
     let new = catalog_v2();
-    let use_case = SkillsSetupUseCase::new(&fs_port, &new);
+    let use_case = SkillsSetupUseCase::new(&fs_port, &new).with_shipped(alpha_releases());
     let alpha = ["lang/alpha".to_string()];
 
     // Same files, older revision: refreshed without --force.
@@ -513,13 +516,24 @@ fn an_older_revision_is_refreshed_only_when_it_holds_no_extra_files() {
         "print('v2')\n"
     );
 
-    // Revision 1 shipped scripts/old.py, which revision 2 dropped. Setup cannot
-    // tell it from a file the user added, so replacing the directory — which
-    // deletes it — waits for --force.
+    // Revision 1 shipped scripts/old.py, which revision 2 dropped. The
+    // release's digests show it is ImRule's, so it goes with the refresh.
     let tmp = project();
     let root = tmp.path();
     install_alpha(root, &catalog_v1());
     let skill_dir = root.join(".imrule/skills/lang/alpha");
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    assert_eq!(state_in(&plan, "lang/alpha"), BuiltinSkillState::Outdated);
+    let result = use_case.install(&plan, &alpha, false, false).unwrap();
+    assert_eq!(result.outcomes[0].status, BuiltinSkillSetupStatus::Updated);
+    assert!(!skill_dir.join("scripts/old.py").exists());
+
+    // The same copy with one line edited is the user's: kept until --force.
+    let tmp = project();
+    let root = tmp.path();
+    install_alpha(root, &catalog_v1());
+    let skill_dir = root.join(".imrule/skills/lang/alpha");
+    fs::write(skill_dir.join("scripts/old.py"), "print('mine')\n").unwrap();
     let plan = use_case.plan(&options(root), &ProjectSignals::default());
     assert_eq!(state_in(&plan, "lang/alpha"), BuiltinSkillState::Modified);
     let result = use_case.install(&plan, &alpha, false, false).unwrap();
@@ -527,10 +541,9 @@ fn an_older_revision_is_refreshed_only_when_it_holds_no_extra_files() {
         result.outcomes[0].status,
         BuiltinSkillSetupStatus::SkippedModified
     );
-    assert!(skill_dir.join("scripts/old.py").is_file());
     assert_eq!(
-        fs::read_to_string(skill_dir.join("scripts/check.py")).unwrap(),
-        "print('v1')\n"
+        fs::read_to_string(skill_dir.join("scripts/old.py")).unwrap(),
+        "print('mine')\n"
     );
 
     let result = use_case.install(&plan, &alpha, true, false).unwrap();
@@ -554,7 +567,7 @@ fn an_outdated_built_in_with_a_file_the_user_added_is_kept_until_forced() {
 
     let fs_port = FsFileSystem::new();
     let new = catalog_v2();
-    let use_case = SkillsSetupUseCase::new(&fs_port, &new);
+    let use_case = SkillsSetupUseCase::new(&fs_port, &new).with_shipped(alpha_releases());
     let alpha = ["lang/alpha".to_string()];
     let plan = use_case.plan(&options(root), &ProjectSignals::default());
     assert_eq!(state_in(&plan, "lang/alpha"), BuiltinSkillState::Modified);
@@ -586,7 +599,7 @@ fn a_skill_the_user_wrote_at_a_built_in_path_is_never_replaced_without_force() {
     let root = tmp.path();
     let fs_port = FsFileSystem::new();
     let catalog = catalog_v2();
-    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog);
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog).with_shipped(fabricated_releases());
     let alpha = ["lang/alpha".to_string()];
     let skill_md = root.join(".imrule/skills/lang/alpha/SKILL.md");
     fs::create_dir_all(skill_md.parent().unwrap()).unwrap();
@@ -630,7 +643,7 @@ fn a_directory_without_skill_md_at_a_built_in_path_is_left_alone() {
     let root = tmp.path();
     let fs_port = FsFileSystem::new();
     let catalog = catalog_v1();
-    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog);
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog).with_shipped(fabricated_releases());
     // `beta` is a built-in path; here it is the user's grouping folder.
     let nested = root.join(".imrule/skills/beta/auth/SKILL.md");
     fs::create_dir_all(nested.parent().unwrap()).unwrap();
@@ -663,7 +676,7 @@ fn a_built_in_path_reached_through_a_symlink_is_not_emptied() {
 
     let fs_port = FsFileSystem::new();
     let catalog = catalog_v1();
-    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog);
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog).with_shipped(fabricated_releases());
     let plan = use_case.plan(&options(root), &ProjectSignals::default());
     assert_eq!(state_in(&plan, "lang/alpha"), BuiltinSkillState::Modified);
     let result = use_case
@@ -690,7 +703,7 @@ fn install_refuses_to_replace_what_appeared_after_the_plan() {
     let root = tmp.path();
     let fs_port = FsFileSystem::new();
     let catalog = catalog_v1();
-    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog);
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog).with_shipped(fabricated_releases());
     let plan = use_case.plan(&options(root), &ProjectSignals::default());
     assert_eq!(
         state_in(&plan, "lang/alpha"),
@@ -716,7 +729,7 @@ fn only_consented_paths_overwrite_a_locally_modified_skill() {
     let root = tmp.path();
     let fs_port = FsFileSystem::new();
     let catalog = catalog_v1();
-    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog);
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog).with_shipped(fabricated_releases());
     let plan = use_case.plan(&options(root), &ProjectSignals::default());
     use_case
         .install(&plan, &plan.all_paths(), false, false)
@@ -792,7 +805,7 @@ fn a_locally_modified_skill_is_only_overwritten_on_request() {
     let root = tmp.path();
     let fs_port = FsFileSystem::new();
     let catalog = catalog_v1();
-    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog);
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog).with_shipped(fabricated_releases());
     let plan = use_case.plan(&options(root), &ProjectSignals::default());
     use_case
         .install(&plan, &["lang/alpha".to_string()], false, false)
@@ -825,7 +838,7 @@ fn dry_run_reports_without_writing() {
     let root = tmp.path();
     let fs_port = FsFileSystem::new();
     let catalog = catalog_v1();
-    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog);
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog).with_shipped(fabricated_releases());
     let plan = use_case.plan(&options(root), &ProjectSignals::default());
     let result = use_case
         .install(&plan, &plan.all_paths(), false, true)
@@ -839,15 +852,70 @@ fn dry_run_reports_without_writing() {
     assert!(!root.join(".imrule/skills").exists());
 }
 
-/// The state of an installed directory holding exactly `files`.
+fn leak(text: &str) -> &'static str {
+    Box::leak(text.to_owned().into_boxed_str())
+}
+
+/// A release that installed `files` at `path` as `revision`, the way the
+/// generated table records one.
+fn shipped_files(path: &str, revision: u32, files: &[(&str, &str)]) -> ShippedRevision {
+    let files: Vec<(&'static str, u64)> = files
+        .iter()
+        .map(|(relative, content)| (leak(relative), content_digest(content)))
+        .collect();
+    ShippedRevision {
+        path: leak(path),
+        revision,
+        files: Box::leak(files.into_boxed_slice()),
+    }
+}
+
+/// The revisions `catalogs` would have installed, as if each were a release.
+fn shipped_by(catalogs: &[Vec<BuiltinSkill>]) -> &'static [ShippedRevision] {
+    let shipped: Vec<ShippedRevision> = catalogs
+        .iter()
+        .flatten()
+        .map(|skill| {
+            let files: Vec<(&str, &str)> = skill
+                .files
+                .iter()
+                .map(|(relative, content)| (relative.as_str(), *content))
+                .collect();
+            shipped_files(&skill.path, skill.revision, &files)
+        })
+        .collect();
+    Box::leak(shipped.into_boxed_slice())
+}
+
+/// Alpha's older releases: revision 1 with and without `scripts/old.py`.
+fn alpha_releases() -> &'static [ShippedRevision] {
+    shipped_by(&[catalog_v1(), catalog_v1_same_files()])
+}
+
+/// The state of an installed directory holding exactly `files`, judged
+/// against alpha's releases.
 fn state_of(skill: &BuiltinSkill, files: &[(&str, &str)]) -> BuiltinSkillState {
+    state_against(skill, alpha_releases(), files)
+}
+
+fn state_against(
+    skill: &BuiltinSkill,
+    shipped: &[ShippedRevision],
+    files: &[(&str, &str)],
+) -> BuiltinSkillState {
     let listed: Vec<String> = files.iter().map(|(path, _)| path.to_string()).collect();
-    BuiltinSkillState::compare(skill, Some(&listed), |relative: &str| {
-        files
-            .iter()
-            .find(|(path, _)| *path == relative)
-            .map(|(_, content)| content.to_string())
-    })
+    BuiltinSkillState::compare(
+        skill,
+        &skill.path,
+        shipped,
+        Some(&listed),
+        |relative: &str| {
+            files
+                .iter()
+                .find(|(path, _)| *path == relative)
+                .map(|(_, content)| content.to_string())
+        },
+    )
 }
 
 #[test]
@@ -858,7 +926,7 @@ fn install_state_compares_contents_before_revisions() {
     let old_check = "print('v1')\n";
 
     assert_eq!(
-        BuiltinSkillState::compare(alpha, None, |_| None),
+        BuiltinSkillState::compare(alpha, &alpha.path, &[], None, |_| None),
         BuiltinSkillState::NotInstalled,
         "only a path where nothing exists is not installed"
     );
@@ -931,10 +999,52 @@ fn install_state_compares_contents_before_revisions() {
         BuiltinSkillState::Outdated
     );
     assert_eq!(
-        state_of(alpha, &[("SKILL.md", ALPHA_V1)]),
+        state_of(
+            alpha,
+            &[
+                ("SKILL.md", ALPHA_V1),
+                ("scripts/check.py", old_check),
+                ("scripts/old.py", "print('dropped in v2')\n"),
+            ]
+        ),
         BuiltinSkillState::Outdated,
-        "an older copy may lack a file the newer revision added"
+        "a file only the older release shipped is known to be ImRule's"
     );
+    assert_eq!(
+        state_of(
+            alpha,
+            &[
+                ("SKILL.md", ALPHA_V1),
+                ("scripts/check.py", "print('mine')\n")
+            ]
+        ),
+        BuiltinSkillState::Modified,
+        "an older copy edited since its release is the user's"
+    );
+    assert_eq!(
+        state_of(alpha, &[("SKILL.md", ALPHA_V1)]),
+        BuiltinSkillState::Modified,
+        "an older copy missing a file its release shipped was trimmed locally"
+    );
+    assert_eq!(
+        state_against(
+            alpha,
+            &[],
+            &[("SKILL.md", ALPHA_V1), ("scripts/check.py", old_check)]
+        ),
+        BuiltinSkillState::Modified,
+        "an older revision no release shipped cannot be shown untouched"
+    );
+    // As if exactly these files were released, so only the marker and the
+    // revision decide.
+    let released = |files: &[(&str, &str)]| {
+        let revision = installed_skill_revision(files[0].1);
+        state_against(
+            alpha,
+            &[shipped_files("lang/alpha", revision, files)],
+            files,
+        )
+    };
     assert_eq!(
         state_of(
             alpha,
@@ -949,28 +1059,25 @@ fn install_state_compares_contents_before_revisions() {
     );
     let boolean_marker = ALPHA_V1.replace("\"true\"", "true");
     assert_eq!(
-        state_of(alpha, &[("SKILL.md", boolean_marker.as_str())]),
+        released(&[("SKILL.md", boolean_marker.as_str())]),
         BuiltinSkillState::Outdated,
         "the marker may be a YAML boolean"
     );
     let unmarked = ALPHA_V1.replace("  imrule-builtin: \"true\"\n", "");
     assert_eq!(
-        state_of(alpha, &[("SKILL.md", unmarked.as_str())]),
+        released(&[("SKILL.md", unmarked.as_str())]),
         BuiltinSkillState::Modified,
         "a SKILL.md without the built-in marker is the user's"
     );
     let revision_zero = ALPHA_V1.replace("\"1\"", "\"0\"");
     assert_eq!(
-        state_of(alpha, &[("SKILL.md", revision_zero.as_str())]),
+        released(&[("SKILL.md", revision_zero.as_str())]),
         BuiltinSkillState::Modified,
         "no built-in ever shipped revision 0"
     );
     let newer = ALPHA_V2.replace("\"2\"", "\"3\"");
     assert_eq!(
-        state_of(
-            alpha,
-            &[("SKILL.md", newer.as_str()), ("scripts/check.py", check)]
-        ),
+        released(&[("SKILL.md", newer.as_str()), ("scripts/check.py", check)]),
         BuiltinSkillState::Modified,
         "a copy from a newer ImRule is never downgraded silently"
     );
@@ -1001,7 +1108,7 @@ fn install_rejects_a_path_the_plan_does_not_hold() {
     let root = tmp.path();
     let fs_port = FsFileSystem::new();
     let catalog = catalog_v1();
-    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog);
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog).with_shipped(fabricated_releases());
     let plan = use_case.plan(&options(root), &ProjectSignals::default());
 
     let error = use_case
@@ -1041,11 +1148,524 @@ fn setup_outcomes_say_what_would_happen_under_dry_run() {
     );
 }
 
+// ------------------------------------------------------- renamed skills ---
+
+#[test]
+fn every_renamed_path_points_at_a_shipped_skill_and_still_resolves() {
+    let catalog = builtin_catalog();
+    for (old, current) in RENAMED_BUILTIN_SKILLS {
+        assert!(
+            catalog.iter().any(|skill| skill.path == *current),
+            "{old} is renamed to {current}, which is not shipped"
+        );
+        assert!(
+            !catalog.iter().any(|skill| skill.path == *old),
+            "{old} is both renamed and shipped"
+        );
+        for query in [old.to_string(), old.replace('/', "-")] {
+            assert_eq!(
+                find_builtin_skill(&catalog, &query).map(|skill| skill.path.as_str()),
+                Some(*current),
+                "{query}"
+            );
+        }
+    }
+    assert_eq!(
+        resolve_builtin_skills(&catalog, &["rust/cli".into(), "cli-rust".into()]).unwrap(),
+        vec!["cli-rust"],
+        "an old and a new name for one skill resolve once"
+    );
+}
+
+#[test]
+fn the_update_checker_knows_every_renamed_path() {
+    let check = fs::read_to_string("skills/imrule-update/scripts/check.py").unwrap();
+    let start = check
+        .find("RENAMED = (")
+        .expect("RENAMED table in check.py");
+    let end = start + check[start..].find("\n)\n").unwrap();
+    let pairs: Vec<(String, String)> = check[start..end]
+        .lines()
+        .filter_map(|line| {
+            let quoted: Vec<&str> = line.split('"').skip(1).step_by(2).collect();
+            (quoted.len() == 2).then(|| (quoted[0].to_string(), quoted[1].to_string()))
+        })
+        .collect();
+    let expected: Vec<(String, String)> = RENAMED_BUILTIN_SKILLS
+        .iter()
+        .map(|(old, current)| (old.to_string(), current.to_string()))
+        .collect();
+    assert_eq!(pairs, expected);
+}
+
+#[test]
+fn the_catalog_lists_skills_group_by_group() {
+    let catalog = builtin_catalog();
+    let groups: Vec<&str> = catalog
+        .iter()
+        .map(|skill| builtin_skill_group(&skill.name))
+        .collect();
+    let mut order: Vec<&str> = groups.clone();
+    order.dedup();
+    assert_eq!(order, vec!["cli", "server", "setup", "optimize", "imrule"]);
+    // Base skills lead their group: `cli` before `cli-python`.
+    assert_eq!(catalog[0].name, "cli");
+    assert_eq!(builtin_skill_group("server-python"), "server");
+    assert_eq!(builtin_skill_group("cli"), "cli");
+}
+
+/// Writes `current`'s embedded files under the old path `old`, as an earlier
+/// ImRule installed them: the old published name and `revision`.
+fn install_previous(root: &Path, old: &str, current: &str, revision: u32) -> PathBuf {
+    let dir = root.join(".imrule/skills").join(old);
+    for (relative, content) in previous_files(old, current, revision) {
+        fs::create_dir_all(dir.join(&relative).parent().unwrap()).unwrap();
+        fs::write(dir.join(&relative), content).unwrap();
+    }
+    dir
+}
+
+/// The files [`install_previous`] writes: the current skill renamed back and
+/// given an older revision.
+fn previous_files(old: &str, current: &str, revision: u32) -> Vec<(String, String)> {
+    let catalog = builtin_catalog();
+    let skill = catalog.iter().find(|skill| skill.path == current).unwrap();
+    let mut files = Vec::new();
+    for (relative, content) in &skill.files {
+        let content = if relative == "SKILL.md" {
+            content
+                .lines()
+                .map(|line| {
+                    if line.starts_with("name: ") {
+                        format!("name: {}", old.replace('/', "-"))
+                    } else if line.trim_start().starts_with("imrule-skill-version:") {
+                        format!("  imrule-skill-version: \"{revision}\"")
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            content.to_string()
+        };
+        files.push((relative.clone(), content));
+    }
+    files
+}
+
+/// Treats every copy [`install_previous`] makes at revision 1 — under a
+/// renamed skill's old path or any skill's own — as what a release shipped,
+/// so a fabricated older copy counts as untouched.
+fn fabricated_releases() -> &'static [ShippedRevision] {
+    let catalog = builtin_catalog();
+    let copies = RENAMED_BUILTIN_SKILLS
+        .iter()
+        .map(|(old, current)| (old.to_string(), current.to_string()))
+        .chain(
+            catalog
+                .iter()
+                .map(|skill| (skill.path.clone(), skill.path.clone())),
+        );
+    let shipped: Vec<ShippedRevision> = copies
+        .map(|(old, current)| {
+            let files = previous_files(&old, &current, 1);
+            let files: Vec<(&str, &str)> = files
+                .iter()
+                .map(|(r, c)| (r.as_str(), c.as_str()))
+                .collect();
+            shipped_files(&old, 1, &files)
+        })
+        .collect();
+    Box::leak(shipped.into_boxed_slice())
+}
+
+/// Copies a skill tree exactly as release 0.5.1.0 installed it.
+fn install_shipped(project: &Path, path: &str) -> PathBuf {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/shipped-v0.5.1.0")
+        .join(path);
+    let dir = project.join(".imrule/skills").join(path);
+    copy_tree(&fixture, &dir);
+    dir
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap().path();
+        let target = to.join(entry.file_name().unwrap());
+        if entry.is_dir() {
+            copy_tree(&entry, &target);
+        } else {
+            fs::copy(&entry, &target).unwrap();
+        }
+    }
+}
+
+#[test]
+fn a_skill_installed_under_its_old_path_moves_to_the_new_one() {
+    let tmp = project();
+    let root = tmp.path();
+    let old = install_previous(root, "python/cli", "cli-python", 1);
+    let fs_port = FsFileSystem::new();
+    let catalog = builtin_catalog();
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog).with_shipped(fabricated_releases());
+
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    let entry = plan
+        .entries
+        .iter()
+        .find(|entry| entry.skill.path == "cli-python")
+        .unwrap();
+    assert_eq!(entry.state, BuiltinSkillState::NotInstalled);
+    let previous = entry.previous.as_ref().expect("old copy found");
+    assert_eq!(previous.path, "python/cli");
+    assert_eq!(previous.state, BuiltinSkillState::Outdated);
+    assert_eq!(plan.installed_paths(), vec!["cli-python"]);
+
+    let dry = use_case
+        .install(&plan, &plan.installed_paths(), false, true)
+        .unwrap();
+    assert_eq!(dry.outcomes[0].status, BuiltinSkillSetupStatus::Updated);
+    assert_eq!(dry.outcomes[0].moved_from.as_deref(), Some("python/cli"));
+    assert!(old.is_dir(), "dry run moved nothing");
+
+    let result = use_case
+        .install(&plan, &plan.installed_paths(), false, false)
+        .unwrap();
+    assert_eq!(result.outcomes[0].status, BuiltinSkillSetupStatus::Updated);
+    assert_eq!(result.outcomes[0].moved_from.as_deref(), Some("python/cli"));
+    assert!(!old.exists());
+    assert!(
+        !root.join(".imrule/skills/python").exists(),
+        "the emptied grouping directory is removed"
+    );
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    let entry = plan
+        .entries
+        .iter()
+        .find(|entry| entry.skill.path == "cli-python")
+        .unwrap();
+    assert_eq!(entry.state, BuiltinSkillState::UpToDate);
+    assert_eq!(entry.previous, None);
+}
+
+#[test]
+fn an_old_copy_beside_an_up_to_date_new_one_is_removed() {
+    let tmp = project();
+    let root = tmp.path();
+    let fs_port = FsFileSystem::new();
+    let catalog = builtin_catalog();
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog).with_shipped(fabricated_releases());
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    use_case
+        .install(&plan, &["setup-make".to_string()], false, false)
+        .unwrap();
+    let old = install_previous(root, "make/setup", "setup-make", 1);
+    // A sibling in the old grouping directory keeps it in place.
+    fs::create_dir_all(root.join(".imrule/skills/make/mine")).unwrap();
+    fs::write(root.join(".imrule/skills/make/mine/SKILL.md"), "mine\n").unwrap();
+
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    let result = use_case
+        .install(&plan, &plan.installed_paths(), false, false)
+        .unwrap();
+    assert_eq!(result.outcomes[0].status, BuiltinSkillSetupStatus::Updated);
+    assert_eq!(result.outcomes[0].moved_from.as_deref(), Some("make/setup"));
+    assert!(!old.exists());
+    assert!(root.join(".imrule/skills/make/mine/SKILL.md").is_file());
+}
+
+#[test]
+fn a_modified_old_copy_moves_only_with_consent_and_a_users_own_is_ignored() {
+    let tmp = project();
+    let root = tmp.path();
+    let old = install_previous(root, "rust/cli", "cli-rust", 1);
+    fs::write(old.join("notes.md"), "mine\n").unwrap();
+    // The user's own skill at an old path: no built-in marker.
+    fs::create_dir_all(root.join(".imrule/skills/docker/setup")).unwrap();
+    fs::write(
+        root.join(".imrule/skills/docker/setup/SKILL.md"),
+        "---\nname: docker-setup\ndescription: mine\n---\n",
+    )
+    .unwrap();
+    let fs_port = FsFileSystem::new();
+    let catalog = builtin_catalog();
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog).with_shipped(fabricated_releases());
+
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    assert_eq!(
+        plan.installed_paths(),
+        vec!["cli-rust"],
+        "a directory without the built-in marker is not a previous install"
+    );
+    let result = use_case
+        .install(&plan, &plan.installed_paths(), false, false)
+        .unwrap();
+    assert_eq!(
+        result.outcomes[0].status,
+        BuiltinSkillSetupStatus::SkippedModified
+    );
+    assert_eq!(result.outcomes[0].moved_from, None);
+    assert!(old.join("notes.md").is_file());
+    assert!(!root.join(".imrule/skills/cli-rust").exists());
+
+    let result = use_case
+        .install(&plan, &plan.installed_paths(), true, false)
+        .unwrap();
+    assert_eq!(result.outcomes[0].status, BuiltinSkillSetupStatus::Updated);
+    assert!(!root.join(".imrule/skills/rust").exists());
+    assert!(root.join(".imrule/skills/cli-rust/SKILL.md").is_file());
+    assert!(root.join(".imrule/skills/docker/setup/SKILL.md").is_file());
+}
+
+#[test]
+fn an_old_copy_beside_a_modified_new_one_stays_until_forced() {
+    let tmp = project();
+    let root = tmp.path();
+    let fs_port = FsFileSystem::new();
+    let catalog = builtin_catalog();
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog).with_shipped(fabricated_releases());
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    use_case
+        .install(&plan, &["cli-rust".to_string()], false, false)
+        .unwrap();
+    fs::write(root.join(".imrule/skills/cli-rust/notes.md"), "mine\n").unwrap();
+    let old = install_previous(root, "rust/cli", "cli-rust", 1);
+
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    let result = use_case
+        .install(&plan, &plan.installed_paths(), false, false)
+        .unwrap();
+    assert_eq!(
+        result.outcomes[0].status,
+        BuiltinSkillSetupStatus::SkippedModified
+    );
+    assert_eq!(
+        result.outcomes[0].moved_from, None,
+        "a skipped skill reports no move"
+    );
+    assert!(
+        old.is_dir(),
+        "the old copy stays while the new one is skipped"
+    );
+    assert!(root.join(".imrule/skills/cli-rust/notes.md").is_file());
+
+    let result = use_case
+        .install(&plan, &plan.installed_paths(), true, false)
+        .unwrap();
+    assert_eq!(result.outcomes[0].status, BuiltinSkillSetupStatus::Updated);
+    assert_eq!(result.outcomes[0].moved_from.as_deref(), Some("rust/cli"));
+    assert!(!root.join(".imrule/skills/rust").exists());
+    assert!(!root.join(".imrule/skills/cli-rust/notes.md").exists());
+}
+
+#[test]
+fn a_modified_old_copy_beside_an_up_to_date_new_one_is_left_until_forced() {
+    let tmp = project();
+    let root = tmp.path();
+    let fs_port = FsFileSystem::new();
+    let catalog = builtin_catalog();
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog).with_shipped(fabricated_releases());
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    use_case
+        .install(&plan, &["setup-make".to_string()], false, false)
+        .unwrap();
+    let old = install_previous(root, "make/setup", "setup-make", 1);
+    fs::write(old.join("notes.md"), "mine\n").unwrap();
+
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    let entry = plan
+        .entries
+        .iter()
+        .find(|entry| entry.skill.path == "setup-make")
+        .unwrap();
+    assert_eq!(entry.state, BuiltinSkillState::UpToDate);
+    assert_eq!(
+        entry.previous.as_ref().map(|previous| previous.state),
+        Some(BuiltinSkillState::Modified)
+    );
+    let result = use_case
+        .install(&plan, &["setup-make".to_string()], false, false)
+        .unwrap();
+    assert_eq!(
+        result.outcomes[0].status,
+        BuiltinSkillSetupStatus::Unchanged
+    );
+    assert_eq!(result.outcomes[0].moved_from, None);
+    assert!(old.join("notes.md").is_file());
+
+    let result = use_case
+        .install(&plan, &["setup-make".to_string()], true, false)
+        .unwrap();
+    assert_eq!(result.outcomes[0].status, BuiltinSkillSetupStatus::Updated);
+    assert_eq!(result.outcomes[0].moved_from.as_deref(), Some("make/setup"));
+    assert!(!root.join(".imrule/skills/make").exists());
+    assert!(root.join(".imrule/skills/setup-make/SKILL.md").is_file());
+}
+
+#[test]
+fn an_old_copy_beside_an_outdated_new_one_is_refreshed_and_moved() {
+    let tmp = project();
+    let root = tmp.path();
+    let current = install_previous(root, "cli-python", "cli-python", 1);
+    let old = install_previous(root, "python/cli", "cli-python", 1);
+    let fs_port = FsFileSystem::new();
+    let catalog = builtin_catalog();
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog).with_shipped(fabricated_releases());
+
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    let entry = plan
+        .entries
+        .iter()
+        .find(|entry| entry.skill.path == "cli-python")
+        .unwrap();
+    assert_eq!(entry.state, BuiltinSkillState::Outdated);
+    let result = use_case
+        .install(&plan, &plan.installed_paths(), false, false)
+        .unwrap();
+    assert_eq!(result.outcomes[0].status, BuiltinSkillSetupStatus::Updated);
+    assert_eq!(result.outcomes[0].moved_from.as_deref(), Some("python/cli"));
+    assert!(!old.exists() && !root.join(".imrule/skills/python").exists());
+    let skill = catalog
+        .iter()
+        .find(|skill| skill.path == "cli-python")
+        .unwrap();
+    let embedded = &skill
+        .files
+        .iter()
+        .find(|(relative, _)| relative == "SKILL.md")
+        .unwrap()
+        .1;
+    assert_eq!(
+        fs::read_to_string(current.join("SKILL.md")).unwrap(),
+        *embedded
+    );
+}
+
+#[test]
+fn an_old_copy_changed_after_the_plan_is_left_in_place() {
+    let tmp = project();
+    let root = tmp.path();
+    let old = install_previous(root, "rust/server", "server-rust", 1);
+    let fs_port = FsFileSystem::new();
+    let catalog = builtin_catalog();
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog).with_shipped(fabricated_releases());
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+
+    // The user edits the old copy while the picker is open.
+    fs::write(old.join("notes.md"), "mine\n").unwrap();
+
+    let error = use_case
+        .install(&plan, &["server-rust".to_string()], false, false)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("changed while setting up"), "{error}");
+    assert!(
+        error.contains("rust/server") || error.contains("rust\\server"),
+        "{error}"
+    );
+    assert_eq!(fs::read_to_string(old.join("notes.md")).unwrap(), "mine\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_old_grouping_directory_linked_outside_is_not_emptied() {
+    let tmp = project();
+    let root = tmp.path();
+    let outside = tempdir().unwrap();
+    // A copy ImRule once installed, now reached through a symlinked group.
+    let staged = install_previous(outside.path(), "python/cli", "cli-python", 1);
+    fs::create_dir_all(root.join(".imrule/skills")).unwrap();
+    std::os::unix::fs::symlink(staged.parent().unwrap(), root.join(".imrule/skills/python"))
+        .unwrap();
+    let fs_port = FsFileSystem::new();
+    let catalog = builtin_catalog();
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog).with_shipped(fabricated_releases());
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    assert_eq!(plan.installed_paths(), vec!["cli-python"]);
+
+    let error = use_case
+        .install(&plan, &plan.installed_paths(), true, false)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("resolves outside"), "{error}");
+    assert!(
+        staged.join("SKILL.md").is_file(),
+        "files outside the install directory were removed"
+    );
+}
+
+#[test]
+fn every_renamed_skill_installed_under_its_old_path_moves_in_one_update() {
+    let tmp = project();
+    let root = tmp.path();
+    for (old, current) in RENAMED_BUILTIN_SKILLS {
+        install_previous(root, old, current, 1);
+    }
+    let fs_port = FsFileSystem::new();
+    let catalog = builtin_catalog();
+    let use_case = SkillsSetupUseCase::new(&fs_port, &catalog).with_shipped(fabricated_releases());
+    let plan = use_case.plan(&options(root), &ProjectSignals::default());
+    assert_eq!(plan.installed_paths().len(), RENAMED_BUILTIN_SKILLS.len());
+
+    let result = use_case
+        .install(&plan, &plan.installed_paths(), false, false)
+        .unwrap();
+    for outcome in &result.outcomes {
+        assert_eq!(
+            outcome.status,
+            BuiltinSkillSetupStatus::Updated,
+            "{}",
+            outcome.path
+        );
+        let (old, _) = RENAMED_BUILTIN_SKILLS
+            .iter()
+            .find(|(_, current)| *current == outcome.path)
+            .unwrap();
+        assert_eq!(outcome.moved_from.as_deref(), Some(*old));
+    }
+    // `docker/` held two skills; it goes once both have moved out.
+    let mut left: Vec<String> = fs::read_dir(root.join(".imrule/skills"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    left.sort();
+    let mut expected: Vec<String> = RENAMED_BUILTIN_SKILLS
+        .iter()
+        .map(|(_, current)| current.to_string())
+        .collect();
+    expected.sort();
+    assert_eq!(left, expected);
+}
+
+#[test]
+fn legacy_names_resolve_through_slashes_and_spaces_but_not_partial_matches() {
+    let catalog = builtin_catalog();
+    let found = |query: &str| find_builtin_skill(&catalog, query).map(|skill| skill.path.clone());
+    assert_eq!(found(" /rust/cli/ ").as_deref(), Some("cli-rust"));
+    assert_eq!(found("python-server").as_deref(), Some("server-python"));
+    assert_eq!(
+        found("ci-github-actions").as_deref(),
+        Some("setup-github-actions")
+    );
+    assert_eq!(found("rust"), None);
+    assert_eq!(found("docker"), None);
+    assert!(
+        resolve_builtin_skills(&catalog, &["docker/nope".into()])
+            .unwrap_err()
+            .to_string()
+            .contains("unknown built-in skill: docker/nope")
+    );
+}
+
 // ----------------------------------------------------------------- picker ---
 
 fn item(title: &str, description: &str, selected: bool) -> PickerItem {
     PickerItem {
         id: title.to_string(),
+        group: String::new(),
         title: title.to_string(),
         meta: vec![],
         description: description.to_string(),
@@ -1178,6 +1798,87 @@ fn only_toggling_an_item_on_by_itself_records_consent() {
     picker.handle(PickerKey::ToggleAll, 30);
     assert_eq!(picker.selected().len(), 4);
     assert!(picker.individually_selected_ids().is_empty());
+}
+
+#[test]
+fn group_headings_take_the_blank_row_above_each_group() {
+    let grouped = |group: &str, title: &str| PickerItem {
+        group: group.to_string(),
+        ..item(title, "", false)
+    };
+    let picker = Picker::new(
+        "Skills",
+        "",
+        vec![
+            grouped("cli", "cli"),
+            grouped("cli", "cli-rust"),
+            grouped("setup", "setup-make"),
+        ],
+    );
+    let lines = text(&picker.render(80, 40));
+    let rows: Vec<&str> = lines.lines().collect();
+    let heading = |name: &str| {
+        rows.iter()
+            .position(|row| row.trim() == format!("── {name}"))
+            .unwrap_or_else(|| panic!("no {name} heading in\n{lines}"))
+    };
+    let title = |name: &str| {
+        rows.iter()
+            .position(|row| row.trim_start_matches([' ', '❯']).trim() == format!("○ {name}"))
+            .unwrap()
+    };
+    assert_eq!(heading("cli") + 1, title("cli"));
+    assert_eq!(heading("setup") + 1, title("setup-make"));
+    assert_eq!(lines.matches("── cli").count(), 1, "{lines}");
+    // Headings reuse spacer rows, so the layout keeps its height.
+    let flat = Picker::new(
+        "Skills",
+        "",
+        vec![
+            item("cli", "", false),
+            item("cli-rust", "", false),
+            item("setup-make", "", false),
+        ],
+    );
+    assert_eq!(picker.render(80, 40).len(), flat.render(80, 40).len());
+}
+
+#[test]
+fn a_group_heading_shows_above_the_first_visible_item_after_scrolling_or_searching() {
+    let grouped = |group: &str, title: &str| PickerItem {
+        group: group.to_string(),
+        ..item(title, "", false)
+    };
+    let items = vec![
+        grouped("cli", "cli"),
+        grouped("cli", "cli-python"),
+        grouped("cli", "cli-rust"),
+        grouped("setup", "setup-make"),
+    ];
+    // Room for two items at a time.
+    let height = 14;
+    let list = Picker::list_height(height);
+    let mut picker = Picker::new("Skills", "", items.clone());
+    for _ in 0..2 {
+        picker.handle(PickerKey::Down, list);
+    }
+    let rendered = text(&picker.render(80, height));
+    assert!(!rendered.contains("○ cli\n"), "{rendered}");
+    assert_eq!(
+        rendered.matches("── cli").count(),
+        1,
+        "the group scrolled into keeps its heading: {rendered}"
+    );
+
+    let mut picker = Picker::new("Skills", "", items);
+    for c in "rust".chars() {
+        picker.handle(PickerKey::Char(c), list);
+    }
+    let rendered = text(&picker.render(80, 40));
+    assert!(
+        rendered.contains("── cli") && !rendered.contains("── setup"),
+        "{rendered}"
+    );
 }
 
 #[test]
@@ -1342,19 +2043,20 @@ fn meta_matches_rank_between_title_and_description_and_terms_combine() {
 // ------------------------------------------------------- shipped skills ---
 
 const SHIPPED: &[&str] = &[
-    "ci/github-actions",
     "cli",
-    "docker/optimize",
-    "docker/setup",
-    "imrule-issue",
-    "make/setup",
-    "python/cli",
-    "python/server",
-    "release/versioning",
-    "rust/cli",
-    "rust/server",
+    "cli-python",
+    "cli-rust",
     "server",
-    "vscode/setup",
+    "server-python",
+    "server-rust",
+    "setup-docker",
+    "setup-github-actions",
+    "setup-make",
+    "setup-release",
+    "setup-vscode",
+    "optimize-docker",
+    "imrule-issue",
+    "imrule-update",
 ];
 
 fn helper_block(text: &str) -> Option<&str> {
@@ -1481,7 +2183,7 @@ fn rust_cli_state(project: &Path, extra: &[&str]) -> String {
         .as_array()
         .unwrap()
         .iter()
-        .find(|skill| skill["path"] == "rust/cli")
+        .find(|skill| skill["path"] == "cli-rust")
         .unwrap()["state"]
         .as_str()
         .unwrap()
@@ -1492,11 +2194,11 @@ fn rust_cli_state(project: &Path, extra: &[&str]) -> String {
 fn setup_rejects_unknown_names_conflicting_flags_and_a_missing_terminal() {
     let (_tmp, project) = claude_project();
 
-    let unknown = setup_cli(&project, &["rust-cli", "nope"]);
+    let unknown = setup_cli(&project, &["cli-rust", "nope"]);
     assert_eq!(unknown.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&unknown.stderr);
     assert!(stderr.contains("unknown built-in skill: nope"), "{stderr}");
-    assert!(stderr.contains("Available: ci/github-actions"), "{stderr}");
+    assert!(stderr.contains("Available: cli, cli-python"), "{stderr}");
     assert!(
         !project.join(".imrule/skills").exists(),
         "a known name beside an unknown one was installed"
@@ -1504,8 +2206,8 @@ fn setup_rejects_unknown_names_conflicting_flags_and_a_missing_terminal() {
 
     for args in [
         &["--json"][..],
-        &["--all", "rust-cli"][..],
-        &["--yes", "rust-cli"][..],
+        &["--all", "cli-rust"][..],
+        &["--yes", "cli-rust"][..],
         &["--yes", "--all"][..],
     ] {
         assert_eq!(setup_cli(&project, args).status.code(), Some(2), "{args:?}");
@@ -1537,7 +2239,7 @@ fn setup_all_dry_run_reports_every_skill_without_writing_or_syncing() {
     );
     for skill in builtin_catalog() {
         assert!(
-            stdout.contains(&format!("{} ({}) [would install]", skill.name, skill.path)),
+            stdout.contains(&format!("{} [would install]", skill.name)),
             "{stdout}"
         );
     }
@@ -1549,17 +2251,14 @@ fn setup_all_dry_run_reports_every_skill_without_writing_or_syncing() {
 #[test]
 fn setup_skips_a_locally_modified_skill_until_forced() {
     let (_tmp, project) = claude_project();
-    let embedded = fs::read_to_string("skills/rust/cli/SKILL.md").unwrap();
-    let installed = project.join(".imrule/skills/rust/cli/SKILL.md");
-    let published = project.join(".claude/skills/rust-cli/SKILL.md");
+    let embedded = fs::read_to_string("skills/cli-rust/SKILL.md").unwrap();
+    let installed = project.join(".imrule/skills/cli-rust/SKILL.md");
+    let published = project.join(".claude/skills/cli-rust/SKILL.md");
 
-    assert!(setup_cli(&project, &["rust/cli"]).status.success());
+    assert!(setup_cli(&project, &["cli-rust"]).status.success());
     assert_eq!(rust_cli_state(&project, &[]), "up-to-date");
     let listed = stdout_of(&setup_cli(&project, &["--list"]));
-    assert!(
-        listed.contains("rust-cli [rust/cli, installed]"),
-        "{listed}"
-    );
+    assert!(listed.contains("cli-rust [installed]"), "{listed}");
     // Nothing in this project is detectable, and a skill with no tags to
     // show (path equals name, not detected, not installed) has no brackets.
     assert!(
@@ -1571,17 +2270,14 @@ fn setup_skips_a_locally_modified_skill_until_forced() {
     fs::write(&installed, format!("{embedded}\nmy note\n")).unwrap();
     assert_eq!(rust_cli_state(&project, &[]), "modified");
     let listed = stdout_of(&setup_cli(&project, &["--list"]));
-    assert!(
-        listed.contains("rust-cli [rust/cli, modified locally]"),
-        "{listed}"
-    );
+    assert!(listed.contains("cli-rust [modified locally]"), "{listed}");
 
-    let skipped = setup_cli(&project, &["rust-cli"]);
+    let skipped = setup_cli(&project, &["cli-rust"]);
     assert!(skipped.status.success());
     let stdout = stdout_of(&skipped);
     assert!(
         stdout.contains(
-            "rust-cli (rust/cli) [modified locally, skipped — pass --force or toggle it on individually in the picker]"
+            "cli-rust [modified locally, skipped — pass --force or toggle it on individually in the picker]"
         ),
         "{stdout}"
     );
@@ -1591,9 +2287,9 @@ fn setup_skips_a_locally_modified_skill_until_forced() {
     );
     assert!(fs::read_to_string(&installed).unwrap().contains("my note"));
 
-    let forced = setup_cli(&project, &["rust-cli", "--force"]);
+    let forced = setup_cli(&project, &["cli-rust", "--force"]);
     assert!(forced.status.success());
-    assert!(stdout_of(&forced).contains("rust-cli (rust/cli) [updated]"));
+    assert!(stdout_of(&forced).contains("cli-rust [updated]"));
     assert_eq!(fs::read_to_string(&installed).unwrap(), embedded);
     assert_eq!(fs::read_to_string(&published).unwrap(), embedded);
 
@@ -1613,8 +2309,8 @@ fn setup_skips_a_locally_modified_skill_until_forced() {
         .join("\n");
     fs::write(&installed, &older).unwrap();
     assert_eq!(rust_cli_state(&project, &[]), "modified");
-    let skipped = setup_cli(&project, &["rust-cli"]);
-    assert!(stdout_of(&skipped).contains("rust-cli (rust/cli) [modified locally, skipped"));
+    let skipped = setup_cli(&project, &["cli-rust"]);
+    assert!(stdout_of(&skipped).contains("cli-rust [modified locally, skipped"));
     assert_eq!(fs::read_to_string(&installed).unwrap(), older);
 }
 
@@ -1644,13 +2340,13 @@ fn setup_from_a_subdirectory_detects_the_enclosing_project_but_syncs_only_where_
     );
     let stdout = stdout_of(&output);
     assert!(
-        stdout.contains("rust-cli (rust/cli) [installed]"),
+        stdout.contains("cli-rust [installed]"),
         "the project's Cargo.toml was not detected from src/: {stdout}"
     );
     // Like `imrule apply`, the sync runs for the directory setup ran in, so it
     // explains itself instead of rewriting an ancestor.
     assert!(stdout.contains("Skipping agent sync"), "{stdout}");
-    assert!(project.join(".imrule/skills/rust/cli/SKILL.md").is_file());
+    assert!(project.join(".imrule/skills/cli-rust/SKILL.md").is_file());
     assert!(!project.join(".claude/skills").exists());
     assert!(!src.join(".imrule").exists() && !src.join(".claude").exists());
 }
@@ -1690,7 +2386,7 @@ fn setup_below_a_home_with_imrule_never_reads_or_rewrites_the_home_directory() {
     );
     let stdout = stdout_of(&output);
     assert!(
-        !stdout.contains("rust-cli"),
+        !stdout.contains("cli-rust"),
         "the home directory was read as the project: {stdout}"
     );
     assert_eq!(
@@ -1741,7 +2437,7 @@ fn skills_resolve_to_the_project_that_owns_their_imrule_directory() {
 fn setup_global_installs_into_the_config_home_without_syncing_the_project() {
     let (tmp, project) = claude_project();
 
-    let output = setup_cli(&project, &["rust-cli", "--global"]);
+    let output = setup_cli(&project, &["cli-rust", "--global"]);
     assert!(
         output.status.success(),
         "{}",
@@ -1754,7 +2450,7 @@ fn setup_global_installs_into_the_config_home_without_syncing_the_project() {
     );
     assert!(
         tmp.path()
-            .join("xdg/imrule/skills/rust/cli/SKILL.md")
+            .join("xdg/imrule/skills/cli-rust/SKILL.md")
             .is_file()
     );
     assert!(!project.join(".imrule/skills").exists());
@@ -1786,10 +2482,7 @@ fn setup_lists_detected_skills_and_installs_named_ones_without_a_terminal() {
     assert!(listed.status.success());
     let stdout = String::from_utf8_lossy(&listed.stdout);
     assert!(stdout.contains("detected: rust, cli"), "{stdout}");
-    assert!(
-        stdout.contains("* rust-cli [rust/cli, detected]"),
-        "{stdout}"
-    );
+    assert!(stdout.contains("* cli-rust [detected]"), "{stdout}");
 
     let listed_json = Command::cargo_bin("imrule")
         .unwrap()
@@ -1810,7 +2503,7 @@ fn setup_lists_detected_skills_and_installs_named_ones_without_a_terminal() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|skill| skill["name"] == "rust-cli")
+        .find(|skill| skill["name"] == "cli-rust")
         .unwrap();
     assert_eq!(rust_cli["recommended"], true);
     assert_eq!(rust_cli["state"], "not-installed");
@@ -1824,12 +2517,12 @@ fn setup_lists_detected_skills_and_installs_named_ones_without_a_terminal() {
 
     Command::cargo_bin("imrule")
         .unwrap()
-        .args(["skills", "setup", "rust-cli", "--project-root", root_arg])
+        .args(["skills", "setup", "cli-rust", "--project-root", root_arg])
         .assert()
         .success();
-    assert!(root.join(".imrule/skills/rust/cli/SKILL.md").is_file());
+    assert!(root.join(".imrule/skills/cli-rust/SKILL.md").is_file());
     assert!(
-        root.join(".claude/skills/rust-cli/SKILL.md").is_file(),
+        root.join(".claude/skills/cli-rust/SKILL.md").is_file(),
         "setup syncs agents like skills add does"
     );
 
@@ -1840,14 +2533,8 @@ fn setup_lists_detected_skills_and_installs_named_ones_without_a_terminal() {
         .unwrap();
     assert!(rerun.status.success());
     let stdout = String::from_utf8_lossy(&rerun.stdout);
-    assert!(
-        stdout.contains("rust-cli (rust/cli) [unchanged]"),
-        "{stdout}"
-    );
-    assert!(
-        stdout.contains("make-setup (make/setup) [installed]"),
-        "{stdout}"
-    );
+    assert!(stdout.contains("cli-rust [unchanged]"), "{stdout}");
+    assert!(stdout.contains("setup-make [installed]"), "{stdout}");
 
     let installed = Command::cargo_bin("imrule")
         .unwrap()
@@ -1863,7 +2550,516 @@ fn setup_lists_detected_skills_and_installs_named_ones_without_a_terminal() {
         .map(|skill| skill["name"].as_str().unwrap())
         .collect();
     assert!(
-        names.contains(&"rust-cli") && names.contains(&"make-setup"),
+        names.contains(&"cli-rust") && names.contains(&"setup-make"),
         "{names:?}"
     );
+}
+
+#[test]
+fn setup_update_refreshes_installed_skills_moves_old_paths_and_prunes_agent_copies() {
+    let (_tmp, project) = claude_project();
+    let nothing = setup_cli(&project, &["--update"]);
+    assert!(nothing.status.success());
+    assert!(
+        stdout_of(&nothing).contains("No built-in skills installed in"),
+        "{}",
+        stdout_of(&nothing)
+    );
+
+    install_shipped(&project, "python/cli");
+    // An earlier apply published the old copy under its old name.
+    assert!(
+        Command::cargo_bin("imrule")
+            .unwrap()
+            .args(["apply", "--project-root", project.to_str().unwrap()])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert!(project.join(".claude/skills/python-cli/SKILL.md").is_file());
+
+    let listed: serde_json::Value =
+        serde_json::from_slice(&setup_cli(&project, &["--list", "--json"]).stdout).unwrap();
+    let entry = listed["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|skill| skill["name"] == "cli-python")
+        .unwrap();
+    assert_eq!(entry["group"], "cli");
+    assert_eq!(entry["state"], "not-installed");
+    assert_eq!(
+        entry["previous"],
+        serde_json::json!({"path": "python/cli", "state": "outdated"})
+    );
+    let text = stdout_of(&setup_cli(&project, &["--list"]));
+    assert!(
+        text.contains("cli-python [update available, installed as python/cli]"),
+        "{text}"
+    );
+    assert!(
+        text.contains("  ── cli\n") && text.contains("  ── imrule\n"),
+        "{text}"
+    );
+
+    let dry = setup_cli(&project, &["--update", "--dry-run"]);
+    assert!(
+        stdout_of(&dry).contains("cli-python [would update, moved from python/cli]"),
+        "{}",
+        stdout_of(&dry)
+    );
+    assert!(project.join(".imrule/skills/python/cli").is_dir());
+
+    let updated = setup_cli(&project, &["--update"]);
+    assert!(updated.status.success());
+    let stdout = stdout_of(&updated);
+    assert!(
+        stdout.contains("cli-python [updated, moved from python/cli]"),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("setup-make"),
+        "--update installs nothing new: {stdout}"
+    );
+    assert!(!project.join(".imrule/skills/python").exists());
+    assert!(project.join(".claude/skills/cli-python/SKILL.md").is_file());
+    assert!(
+        !project.join(".claude/skills/python-cli").exists(),
+        "the agent copy under the old name is pruned by the sync"
+    );
+
+    let again = setup_cli(&project, &["--update"]);
+    assert!(stdout_of(&again).contains("cli-python [unchanged]"));
+
+    for args in [
+        &["--update", "cli-rust"][..],
+        &["--update", "--all"][..],
+        &["--update", "--yes"][..],
+    ] {
+        assert_eq!(setup_cli(&project, args).status.code(), Some(2), "{args:?}");
+    }
+}
+
+#[test]
+fn setup_update_skips_a_locally_modified_skill_until_forced() {
+    let (_tmp, project) = claude_project();
+    assert!(setup_cli(&project, &["cli-rust"]).status.success());
+    let installed = project.join(".imrule/skills/cli-rust/notes.md");
+    fs::write(&installed, "mine\n").unwrap();
+
+    let skipped = setup_cli(&project, &["--update"]);
+    assert!(skipped.status.success());
+    let stdout = stdout_of(&skipped);
+    assert!(
+        stdout.contains("cli-rust [modified locally, skipped"),
+        "{stdout}"
+    );
+    assert!(installed.is_file());
+
+    let forced = setup_cli(&project, &["--update", "--force"]);
+    assert!(forced.status.success());
+    assert!(
+        stdout_of(&forced).contains("cli-rust [updated]"),
+        "{}",
+        stdout_of(&forced)
+    );
+    assert!(!installed.exists());
+}
+
+#[test]
+fn setup_update_leaves_an_old_copy_edited_since_its_release_until_forced() {
+    let (_tmp, project) = claude_project();
+    let old = install_shipped(&project, "python/cli");
+    let convention = old.join("references/convention.md");
+    let edited = format!(
+        "{}\nOur team's extra rule.\n",
+        fs::read_to_string(&convention).unwrap()
+    );
+    fs::write(&convention, &edited).unwrap();
+
+    let skipped = setup_cli(&project, &["--update"]);
+    assert!(skipped.status.success());
+    let stdout = stdout_of(&skipped);
+    assert!(
+        stdout.contains("cli-python [modified locally, skipped"),
+        "{stdout}"
+    );
+    assert_eq!(fs::read_to_string(&convention).unwrap(), edited);
+    assert!(!project.join(".imrule/skills/cli-python").exists());
+
+    let forced = setup_cli(&project, &["cli-python", "--force"]);
+    assert!(forced.status.success());
+    assert!(
+        stdout_of(&forced).contains("cli-python [updated, moved from python/cli]"),
+        "{}",
+        stdout_of(&forced)
+    );
+    assert!(!old.exists());
+}
+
+#[test]
+fn the_shipped_table_covers_every_old_path_below_the_current_revisions() {
+    let catalog = builtin_catalog();
+    for (old, _) in RENAMED_BUILTIN_SKILLS {
+        assert!(
+            SHIPPED_BUILTIN_REVISIONS
+                .iter()
+                .any(|release| release.path == *old),
+            "no release recorded for {old}"
+        );
+    }
+    for release in SHIPPED_BUILTIN_REVISIONS {
+        let current = RENAMED_BUILTIN_SKILLS
+            .iter()
+            .find(|(old, _)| *old == release.path)
+            .map_or(release.path, |(_, current)| *current);
+        let skill = catalog
+            .iter()
+            .find(|skill| skill.path == current)
+            .unwrap_or_else(|| panic!("{} maps to no built-in skill", release.path));
+        // Regenerated after tagging, the table also holds the embedded
+        // revision, which must then be exactly the embedded files. Anything
+        // else at or above it means a skill changed without a revision bump.
+        if release.revision == skill.revision && release.path == skill.path {
+            let embedded: Vec<(&str, u64)> = skill
+                .files
+                .iter()
+                .map(|(relative, content)| (relative.as_str(), content_digest(content)))
+                .collect();
+            assert_eq!(
+                release.files,
+                embedded.as_slice(),
+                "{} revision {} changed without a revision bump",
+                skill.path,
+                skill.revision
+            );
+            continue;
+        }
+        assert!(
+            release.revision < skill.revision,
+            "{} revision {} is not below {} revision {}",
+            release.path,
+            release.revision,
+            skill.path,
+            skill.revision
+        );
+        assert!(
+            release
+                .files
+                .iter()
+                .any(|(relative, _)| *relative == "SKILL.md")
+        );
+    }
+}
+
+#[test]
+fn a_release_fixture_matches_the_generated_digests() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/shipped-v0.5.1.0");
+    for path in ["python/cli", "rust/cli"] {
+        let skill_md = fs::read_to_string(fixtures.join(path).join("SKILL.md")).unwrap();
+        let revision = installed_skill_revision(&skill_md);
+        let release = SHIPPED_BUILTIN_REVISIONS
+            .iter()
+            .find(|release| release.path == path && release.revision == revision)
+            .unwrap_or_else(|| panic!("{path} revision {revision} is not recorded"));
+        for (relative, digest) in release.files {
+            let content = fs::read_to_string(fixtures.join(path).join(relative)).unwrap();
+            assert_eq!(content_digest(&content), *digest, "{path}/{relative}");
+            // A Windows release embedded its checkout's CRLF.
+            let crlf = content.replace('\n', "\r\n");
+            assert_eq!(
+                content_digest(&crlf),
+                *digest,
+                "{path}/{relative} with CRLF"
+            );
+        }
+    }
+}
+
+#[test]
+fn setup_update_never_touches_a_users_skill_sharing_a_built_in_name() {
+    let (_tmp, project) = claude_project();
+    let mine = project.join(".imrule/skills/server");
+    fs::create_dir_all(&mine).unwrap();
+    let skill_md = "---\nname: server\ndescription: mine\n---\n\nMy server rules.\n";
+    fs::write(mine.join("SKILL.md"), skill_md).unwrap();
+
+    for args in [&["--update"][..], &["--update", "--force"][..]] {
+        let output = setup_cli(&project, args);
+        assert!(output.status.success());
+        let stdout = stdout_of(&output);
+        assert!(stdout.contains("No built-in skills installed"), "{stdout}");
+        assert_eq!(fs::read_to_string(mine.join("SKILL.md")).unwrap(), skill_md);
+    }
+}
+
+#[test]
+fn setup_update_force_never_moves_an_old_copy_onto_a_users_skill() {
+    let (_tmp, project) = claude_project();
+    let old = install_shipped(&project, "python/cli");
+    let mine = project.join(".imrule/skills/cli-python");
+    fs::create_dir_all(&mine).unwrap();
+    let skill_md = "---\nname: cli-python\ndescription: mine\n---\n\nMy CLI rules.\n";
+    fs::write(mine.join("SKILL.md"), skill_md).unwrap();
+
+    let output = setup_cli(&project, &["--update", "--force"]);
+    assert!(output.status.success());
+    assert_eq!(fs::read_to_string(mine.join("SKILL.md")).unwrap(), skill_md);
+    assert!(
+        old.join("SKILL.md").is_file(),
+        "the old copy stays until the path is free"
+    );
+}
+
+#[test]
+fn setup_list_shows_the_state_of_an_old_copy_when_only_it_is_installed() {
+    let (_tmp, project) = claude_project();
+    let old = install_shipped(&project, "rust/cli");
+    fs::write(old.join("notes.md"), "mine\n").unwrap();
+
+    let text = stdout_of(&setup_cli(&project, &["--list"]));
+    assert!(
+        text.contains("cli-rust [modified locally, installed as rust/cli]"),
+        "{text}"
+    );
+    let listed: serde_json::Value =
+        serde_json::from_slice(&setup_cli(&project, &["--list", "--json"]).stdout).unwrap();
+    let entry = listed["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|skill| skill["name"] == "cli-rust")
+        .unwrap();
+    assert_eq!(entry["state"], "not-installed");
+    assert_eq!(
+        entry["previous"],
+        serde_json::json!({"path": "rust/cli", "state": "modified"})
+    );
+    let unrelated = listed["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|skill| skill["name"] == "cli-python")
+        .unwrap();
+    assert!(unrelated["previous"].is_null());
+
+    let skipped = stdout_of(&setup_cli(&project, &["--update"]));
+    assert!(
+        skipped.contains("cli-rust [modified locally, skipped"),
+        "{skipped}"
+    );
+    assert!(old.join("notes.md").is_file());
+    assert!(!project.join(".imrule/skills/cli-rust").exists());
+}
+
+/// A Python new enough for the built-in checkers (3.11+), if one is installed.
+fn checker_python() -> Option<&'static str> {
+    [
+        "python3.14",
+        "python3.13",
+        "python3.12",
+        "python3.11",
+        "python3",
+    ]
+    .into_iter()
+    .find(|python| {
+        std::process::Command::new(python)
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .args(["-c", "import sys; sys.exit(sys.version_info < (3, 11))"])
+            .output()
+            .is_ok_and(|output| output.status.success())
+    })
+}
+
+#[test]
+fn the_update_checker_never_offers_to_force_over_a_users_skill() {
+    let Some(python) = checker_python() else {
+        eprintln!("skipped: no Python 3.11+ to run imrule-update's check.py");
+        return;
+    };
+    let (_tmp, project) = claude_project();
+    let mine = project.join(".imrule/skills/server");
+    fs::create_dir_all(&mine).unwrap();
+    fs::write(
+        mine.join("SKILL.md"),
+        "---\nname: server\ndescription: mine\n---\n",
+    )
+    .unwrap();
+    let edited = project.join(".imrule/skills/cli");
+    assert!(setup_cli(&project, &["cli"]).status.success());
+    fs::write(edited.join("notes.md"), "mine\n").unwrap();
+
+    let listed: serde_json::Value =
+        serde_json::from_slice(&setup_cli(&project, &["--list", "--json"]).stdout).unwrap();
+    let flag = |name: &str| {
+        listed["skills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|skill| skill["name"] == name)
+            .unwrap()["builtin"]
+            .clone()
+    };
+    assert_eq!(flag("server"), serde_json::json!(false));
+    assert_eq!(flag("cli"), serde_json::json!(true));
+
+    let binary = assert_cmd::cargo::cargo_bin("imrule");
+    let path = std::env::join_paths(
+        std::iter::once(binary.parent().unwrap().to_path_buf()).chain(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        )),
+    )
+    .unwrap();
+    let output = std::process::Command::new(python)
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .arg("skills/imrule-update/scripts/check.py")
+        .arg(&project)
+        .args(["--format", "json", "--only", "UPD-007"])
+        .env("PATH", &path)
+        .env("XDG_CONFIG_HOME", project.parent().unwrap().join("xdg"))
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let evidence = report["findings"][0]["evidence"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(evidence, "cli", "only ImRule's own edited copy is listed");
+}
+
+#[test]
+fn the_update_checker_asks_instead_of_guessing_how_imrule_was_installed() {
+    let Some(python) = checker_python() else {
+        eprintln!("skipped: no Python 3.11+ to run imrule-update's check.py");
+        return;
+    };
+    let tmp = tempdir().unwrap();
+    let cargo_home = tmp.path().join("cargo");
+    fs::create_dir_all(cargo_home.join("bin")).unwrap();
+    let copied = tmp.path().join("local/bin");
+    fs::create_dir_all(&copied).unwrap();
+    let method = |binary: &Path, installs: Option<&str>| -> String {
+        match installs {
+            Some(key) => fs::write(
+                cargo_home.join(".crates2.json"),
+                serde_json::json!({ "installs": { key: {} } }).to_string(),
+            )
+            .unwrap(),
+            None => {
+                let _ = fs::remove_file(cargo_home.join(".crates2.json"));
+            }
+        }
+        let script = "import importlib.util, sys\n\
+            spec = importlib.util.spec_from_file_location('check', 'skills/imrule-update/scripts/check.py')\n\
+            check = importlib.util.module_from_spec(spec)\n\
+            spec.loader.exec_module(check)\n\
+            print('|'.join(check.install_method(sys.argv[1])))";
+        let output = std::process::Command::new(python)
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .args(["-c", script])
+            .arg(binary)
+            .env("CARGO_HOME", &cargo_home)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    };
+    let from_cargo = cargo_home.join("bin/imrule");
+    assert_eq!(
+        method(
+            &from_cargo,
+            Some("imrule 0.5.2 (git+https://github.com/soapbird/imrule?tag=v0.5.2.0#f96cd3a)")
+        ),
+        "cargo-git|https://github.com/soapbird/imrule?tag=v0.5.2.0"
+    );
+    assert_eq!(
+        method(&from_cargo, Some("imrule 0.5.2 (path+file:///src/imrule)")),
+        "cargo-path|/src/imrule"
+    );
+    assert_eq!(
+        method(
+            &from_cargo,
+            Some("imrule 0.5.2 (path+file:///C:/my%20code/imrule)")
+        ),
+        "cargo-path|C:/my code/imrule"
+    );
+    assert_eq!(method(&from_cargo, None), "unknown|", "no record, no guess");
+    assert_eq!(
+        method(&copied.join("imrule"), None),
+        "unknown|",
+        "install.sh and `make install` leave the same plain copy"
+    );
+}
+
+#[test]
+fn the_update_checker_reads_old_installs_from_the_binary_it_finds() {
+    let Some(python) = checker_python() else {
+        eprintln!("skipped: no Python 3.11+ to run imrule-update's check.py");
+        return;
+    };
+    let (_tmp, project) = claude_project();
+    install_shipped(&project, "python/cli");
+    let binary = assert_cmd::cargo::cargo_bin("imrule");
+    let path = std::env::join_paths(
+        std::iter::once(binary.parent().unwrap().to_path_buf()).chain(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        )),
+    )
+    .unwrap();
+    let check = |project: &Path| -> serde_json::Value {
+        let output = std::process::Command::new(python)
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .arg("skills/imrule-update/scripts/check.py")
+            .arg(project)
+            .args([
+                "--format",
+                "json",
+                "--only",
+                "UPD-004,UPD-005,UPD-006,UPD-007",
+            ])
+            .env("PATH", &path)
+            .env("XDG_CONFIG_HOME", project.parent().unwrap().join("xdg"))
+            .output()
+            .unwrap();
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+            panic!(
+                "{error}: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+        })
+    };
+    let finding = |report: &serde_json::Value, id: &str| {
+        report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|finding| finding["id"] == id)
+            .unwrap_or_else(|| panic!("no {id} in {report}"))
+            .clone()
+    };
+
+    let before = check(&project);
+    assert_eq!(finding(&before, "UPD-004")["status"], "pass", "{before}");
+    let moved = finding(&before, "UPD-006");
+    assert_eq!(moved["status"], "warn", "{before}");
+    assert!(
+        moved["evidence"]
+            .as_str()
+            .unwrap()
+            .contains("python/cli → cli-python"),
+        "{moved}"
+    );
+    assert_eq!(finding(&before, "UPD-007")["status"], "pass", "{before}");
+
+    assert!(setup_cli(&project, &["--update"]).status.success());
+    let after = check(&project);
+    for id in ["UPD-005", "UPD-006", "UPD-007"] {
+        assert_eq!(finding(&after, id)["status"], "pass", "{id}: {after}");
+    }
 }

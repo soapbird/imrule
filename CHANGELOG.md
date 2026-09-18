@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.2.0] - 2026-09-18
+
+### Added
+
+- **`imrule-update` built-in skill**: built-in skills live inside the binary, so a new release only reached a project once someone upgraded imrule *and* re-ran `imrule skills setup` for each skill. The new `imrule-update` skill, offered in every project, does both: it detects how imrule was installed (Homebrew, or `cargo install` from git or a checkout; for a plain copied binary, which `install.sh` and `make install` leave alike, it asks), upgrades it with the matching command after confirmation, refreshes the installed built-in skills, and syncs agents. Its `scripts/check.py` reports the version, install method, outdated, renamed and locally modified skills, and — with `--online` — whether a newer release exists.
+- **`imrule skills setup --update`**: refreshes only the built-in skills already installed — older revisions are replaced, copies under a previous name are moved — and installs nothing new. A skill of your own that shares a built-in's name is never a target, even with `--force`. It works without a terminal, so scripts and the `imrule-update` skill can use it.
+
+### Changed
+
+- **Built-in skills are grouped by kind**: skills were grouped by language or tool (`python/cli`, `make/setup`), so the CLI rules sat far from their language variants and setup skills were scattered. Each skill is now one folder named with its kind first — `cli`, `cli-python`, `cli-rust`, `server`, `server-python`, `server-rust`, `setup-make`, `setup-release`, `setup-github-actions`, `setup-docker`, `setup-vscode`, `optimize-docker`, `imrule-issue`, `imrule-update` — and `skills setup` lists them under group headings in that order, preselecting installed skills as well as detected ones. Old paths and names (`rust/cli`, `rust-cli`) still resolve. A copy an earlier release installed under an old path moves to its new name the next time it is set up (or with `--update`), its emptied grouping folder is removed, and the next sync prunes the agent copy under the old name; a copy edited locally moves only with `--force`, and a folder without the `imrule-builtin` marker is never touched. Check ID prefixes (`PYCLI`, `MK`, …) are unchanged. Every built-in skill's revision is bumped.
+
+### Fixed
+
+- **Edits to a skill installed by an earlier release were overwritten without asking**: `skills setup` judged a copy from an older revision by its file names alone, so a `SKILL.md`, reference or checker edited after installing 0.5.0 or 0.5.1 was replaced — or, under an old path, deleted — as if untouched. ImRule now records what every release installed, file by file, and refreshes an older copy only when it is exactly that; a copy edited, added to or trimmed since is reported as modified locally and left alone until you pass `--force` or pick it by itself. A file a newer revision dropped no longer blocks the refresh either, since the record shows ImRule put it there.
+- **The install commands failed where `/bin/sh` is not Bash**: README and `imrule-update` piped `install.sh`, a Bash script, into `sh`, which stops at `set -o pipefail` on Debian and Ubuntu. They now pipe it into `bash`.
+- **`cargo install imrule` pointed at a crate that does not exist**: imrule is not published on crates.io. README now installs from the repository (`cargo install --git https://github.com/soapbird/imrule --locked`).
+
 ## [0.5.1.0] - 2026-09-13
 
 ### Fixed

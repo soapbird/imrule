@@ -22,7 +22,7 @@ use crate::application::skills_setup_use_case::{
     SkillsSetupEntry, SkillsSetupOptions, SkillsSetupPlan, SkillsSetupUseCase, skills_project_root,
 };
 use crate::application::skills_update_use_case::{SkillsUpdateOptions, SkillsUpdateUseCase};
-use crate::domain::builtin_skills::BuiltinSkillState;
+use crate::domain::builtin_skills::{BuiltinSkillState, builtin_skill_group};
 use crate::infrastructure::agent_writer::DefaultAgentWriter;
 use crate::infrastructure::builtin_skills::{builtin_catalog, collect_project_signals};
 use crate::infrastructure::config_loader::TomlConfigLoader;
@@ -578,7 +578,9 @@ fn run_skills_setup(args: SkillsSetupArgs, sync: &AgentSync) -> Result<(), CliEr
         return Ok(());
     }
 
-    let (paths, picked_individually) = if args.all {
+    let (paths, picked_individually) = if args.update {
+        (plan.installed_paths(), None)
+    } else if args.all {
         (plan.all_paths(), None)
     } else if !args.skills.is_empty() {
         (use_case.resolve(&args.skills)?, None)
@@ -596,13 +598,20 @@ fn run_skills_setup(args: SkillsSetupArgs, sync: &AgentSync) -> Result<(), CliEr
         return Err(CliError::new(
             2,
             "no terminal to pick skills interactively. Name them \
-             (`imrule skills setup rust/cli make/setup`), or pass --yes for the detected \
-             skills or --all for every one.",
+             (`imrule skills setup cli-rust setup-make`), or pass --yes for the detected \
+             skills, --update for the installed ones, or --all for every one.",
         ));
     };
 
     if paths.is_empty() {
-        println!("No skills selected.");
+        if args.update {
+            println!(
+                "No built-in skills installed in {}.",
+                plan.install_dir.display()
+            );
+        } else {
+            println!("No skills selected.");
+        }
         return Ok(());
     }
 
@@ -625,12 +634,11 @@ fn run_skills_setup(args: SkillsSetupArgs, sync: &AgentSync) -> Result<(), CliEr
         plan.install_dir.display()
     );
     for outcome in &result.outcomes {
-        println!(
-            "  - {} ({}) [{}]",
-            outcome.name,
-            outcome.path,
-            outcome.status.label(args.dry_run)
-        );
+        let label = outcome.status.label(args.dry_run);
+        match &outcome.moved_from {
+            Some(previous) => println!("  - {} [{label}, moved from {previous}]", outcome.name),
+            None => println!("  - {} [{label}]", outcome.name),
+        }
     }
 
     if result.changed() && !args.dry_run {
@@ -659,34 +667,46 @@ fn encloses_home(dir: &Path) -> bool {
     canonical_or_self(Path::new(&home)).starts_with(canonical_or_self(dir))
 }
 
-/// Tags shown next to a built-in skill: its path, detection, install state.
+/// Install state of a skill wherever its copy is: under its current path, or
+/// under a previous one when only that exists.
+fn effective_state(entry: &SkillsSetupEntry) -> BuiltinSkillState {
+    match (&entry.previous, entry.state) {
+        (Some(previous), BuiltinSkillState::NotInstalled) => previous.state,
+        (_, state) => state,
+    }
+}
+
+/// Tags shown next to a built-in skill: detection, install state, and the
+/// previous path a copy is still installed under.
 fn setup_tags(entry: &SkillsSetupEntry) -> Vec<String> {
     let mut tags = Vec::new();
-    if entry.skill.path != entry.skill.name {
-        tags.push(entry.skill.path.clone());
-    }
     if entry.recommended {
         tags.push("detected".to_string());
     }
-    if let Some(state) = entry.state.tag() {
+    if let Some(state) = effective_state(entry).tag() {
         tags.push(state.to_string());
+    }
+    if let Some(previous) = &entry.previous {
+        tags.push(format!("installed as {}", previous.path));
     }
     tags
 }
 
-/// Builds the picker, detected skills first. Detected skills start selected
-/// unless modified locally; each item's id is the skill's catalog path.
+/// Builds the picker, grouped by kind in catalog order. Detected and
+/// installed skills start selected unless modified locally; each item's id is
+/// the skill's catalog path.
 fn setup_picker(plan: &SkillsSetupPlan) -> Picker {
-    let mut entries: Vec<&SkillsSetupEntry> = plan.entries.iter().collect();
-    entries.sort_by_key(|entry| !entry.recommended);
-    let items = entries
+    let items = plan
+        .entries
         .iter()
         .map(|entry| PickerItem {
             id: entry.skill.path.clone(),
+            group: builtin_skill_group(&entry.skill.name).to_string(),
             title: entry.skill.name.clone(),
             meta: setup_tags(entry),
             description: entry.skill.description.clone(),
-            selected: entry.recommended && entry.state != BuiltinSkillState::Modified,
+            selected: (entry.recommended || entry.installed())
+                && effective_state(entry) != BuiltinSkillState::Modified,
         })
         .collect();
     let subtitle = if plan.detected.is_empty() {
@@ -713,10 +733,16 @@ fn builtin_skills_json(plan: &SkillsSetupPlan) -> serde_json::Value {
             serde_json::json!({
                 "name": entry.skill.name,
                 "path": entry.skill.path,
+                "group": builtin_skill_group(&entry.skill.name),
                 "description": entry.skill.description,
                 "revision": entry.skill.revision,
                 "recommended": entry.recommended,
                 "state": entry.state.label(),
+                "builtin": entry.builtin,
+                "previous": entry.previous.as_ref().map(|previous| serde_json::json!({
+                    "path": previous.path,
+                    "state": previous.state.label(),
+                })),
             })
         })
         .collect();
@@ -733,7 +759,13 @@ fn print_builtin_skills(plan: &SkillsSetupPlan) {
     } else {
         println!("Built-in skills (detected: {}):", plan.detected.join(", "));
     }
+    let mut group = None;
     for entry in &plan.entries {
+        let current = builtin_skill_group(&entry.skill.name);
+        if group != Some(current) {
+            println!("\n  ── {current}");
+            group = Some(current);
+        }
         let marker = if entry.recommended { "*" } else { " " };
         let tags = setup_tags(entry);
         if tags.is_empty() {
@@ -747,7 +779,7 @@ fn print_builtin_skills(plan: &SkillsSetupPlan) {
     }
     println!(
         "\n* fits this project. Install with `imrule skills setup` (pick interactively), \
-         `--yes` (detected), `--all`, or by name."
+         `--yes` (detected), `--all`, or by name; refresh installed ones with `--update`."
     );
 }
 

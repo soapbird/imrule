@@ -20,6 +20,93 @@ pub const BUILTIN_SKILL_VERSION_KEY: &str = "imrule-skill-version";
 /// `SKILL.md` without it was not installed by `setup`, so it belongs to the user.
 pub const BUILTIN_SKILL_MARKER_KEY: &str = "imrule-builtin";
 
+/// Built-in skills that moved when the catalog was regrouped by kind:
+/// `(old path, current path)`. An old path still resolves as a name, and
+/// `setup` moves a copy ImRule installed there to the current path.
+pub const RENAMED_BUILTIN_SKILLS: &[(&str, &str)] = &[
+    ("python/cli", "cli-python"),
+    ("rust/cli", "cli-rust"),
+    ("python/server", "server-python"),
+    ("rust/server", "server-rust"),
+    ("make/setup", "setup-make"),
+    ("vscode/setup", "setup-vscode"),
+    ("docker/setup", "setup-docker"),
+    ("ci/github-actions", "setup-github-actions"),
+    ("release/versioning", "setup-release"),
+    ("docker/optimize", "optimize-docker"),
+];
+
+/// The paths a built-in skill was installed under before it was renamed.
+pub fn previous_builtin_paths(path: &str) -> impl Iterator<Item = &'static str> + '_ {
+    RENAMED_BUILTIN_SKILLS
+        .iter()
+        .filter(move |(_, current)| *current == path)
+        .map(|(old, _)| *old)
+}
+
+/// Groups built-in skills are listed under, in display order. A skill's group
+/// is its published name up to the first hyphen (`cli-python` → `cli`).
+const BUILTIN_SKILL_GROUPS: &[&str] = &["cli", "server", "setup", "optimize", "imrule"];
+
+/// The group a built-in skill is listed under.
+pub fn builtin_skill_group(name: &str) -> &str {
+    name.split('-').next().unwrap_or(name)
+}
+
+/// Sort key that lists skills group by group, then by name within a group.
+fn catalog_order(name: &str) -> (usize, &str, &str) {
+    let group = builtin_skill_group(name);
+    let rank = BUILTIN_SKILL_GROUPS
+        .iter()
+        .position(|known| *known == group)
+        .unwrap_or(BUILTIN_SKILL_GROUPS.len());
+    (rank, group, name)
+}
+
+/// A built-in skill revision a release installed: under which path, and the
+/// [`content_digest`] of each file relative to the skill directory. The table
+/// of them (`shipped_skills.rs`) is generated from the release tags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShippedRevision {
+    pub path: &'static str,
+    pub revision: u32,
+    pub files: &'static [(&'static str, u64)],
+}
+
+impl ShippedRevision {
+    /// Whether a copy holds exactly this revision's files, byte for byte.
+    fn matches(
+        &self,
+        installed_files: &[String],
+        installed: &impl Fn(&str) -> Option<String>,
+    ) -> bool {
+        let listed: BTreeSet<&str> = installed_files
+            .iter()
+            .map(String::as_str)
+            .filter(|file| !is_incidental_file(file))
+            .collect();
+        listed.len() == self.files.len()
+            && self.files.iter().all(|(relative, digest)| {
+                listed.contains(relative)
+                    && installed(relative)
+                        .is_some_and(|content| content_digest(&content) == *digest)
+            })
+    }
+}
+
+/// 64-bit FNV-1a digest of a file's contents with CRLF read as LF, as
+/// `scripts/shipped-skills.py` computes it: a Windows build embedded its
+/// checkout's CRLF. It tells a shipped copy from an edited one, not an
+/// attacker's.
+pub fn content_digest(content: &str) -> u64 {
+    content
+        .replace("\r\n", "\n")
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325, |digest, byte| {
+            (digest ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        })
+}
+
 /// One built-in skill.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuiltinSkill {
@@ -73,13 +160,15 @@ pub fn build_builtin_catalog(files: &[(&'static str, &'static str)]) -> Vec<Buil
         }
     }
 
-    skills
+    let mut skills: Vec<BuiltinSkill> = skills
         .into_values()
         .map(|mut skill| {
             skill.files.sort_by(|a, b| a.0.cmp(&b.0));
             skill
         })
-        .collect()
+        .collect();
+    skills.sort_by(|a, b| catalog_order(&a.name).cmp(&catalog_order(&b.name)));
+    skills
 }
 
 /// Reads `description` and the revision out of a `SKILL.md`.
@@ -120,15 +209,20 @@ pub fn installed_skill_revision(skill_md: &str) -> u32 {
     }
 }
 
-/// Finds a built-in skill by path (`rust/cli`) or published name (`rust-cli`).
+/// Finds a built-in skill by path or published name (`cli-rust`), or by the
+/// path or name it had before it was renamed (`rust/cli`, `rust-cli`).
 pub fn find_builtin_skill<'a>(
     catalog: &'a [BuiltinSkill],
     query: &str,
 ) -> Option<&'a BuiltinSkill> {
     let query = query.trim().trim_matches('/');
+    let current = RENAMED_BUILTIN_SKILLS
+        .iter()
+        .find(|(old, _)| *old == query || old.replace('/', "-") == query)
+        .map_or(query, |(_, current)| *current);
     catalog
         .iter()
-        .find(|skill| skill.path == query || skill.name == query)
+        .find(|skill| skill.path == current || skill.name == current)
 }
 
 /// Resolves requested names to catalog paths, rejecting any it does not know.
@@ -274,30 +368,32 @@ pub fn recommend_builtin_skills(signals: &ProjectSignals) -> BTreeSet<&'static s
     let server = detection.server();
     let rules = [
         ("cli", detection.cli()),
+        ("cli-python", detection.python_cli),
+        ("cli-rust", detection.rust_cli),
         ("server", server),
+        ("server-python", detection.python_server),
+        ("server-rust", detection.rust_server),
         (
-            "make/setup",
+            "setup-make",
             signals.makefile || signals.cargo || signals.pyproject,
         ),
-        ("python/cli", detection.python_cli),
-        ("python/server", detection.python_server),
-        ("rust/cli", detection.rust_cli),
-        ("rust/server", detection.rust_server),
         (
-            "release/versioning",
+            "setup-release",
             signals.version_file || signals.changelog || signals.cargo || signals.pyproject,
         ),
-        ("ci/github-actions", signals.github_workflows),
-        ("docker/setup", signals.docker || server),
-        // Optimizing needs an image to measure; a server without one starts
-        // from docker/setup.
-        ("docker/optimize", signals.docker),
+        ("setup-github-actions", signals.github_workflows),
+        ("setup-docker", signals.docker || server),
         (
-            "vscode/setup",
+            "setup-vscode",
             signals.vscode || signals.cargo || signals.pyproject,
         ),
-        // Reporting imrule's own problems applies to every project using it.
+        // Optimizing needs an image to measure; a server without one starts
+        // from setup-docker.
+        ("optimize-docker", signals.docker),
+        // Reporting imrule's problems and keeping imrule and its skills
+        // current apply to every project using it.
         ("imrule-issue", true),
+        ("imrule-update", true),
     ];
     rules
         .into_iter()
@@ -328,6 +424,12 @@ fn is_builtin_marked(meta: &serde_json::Value) -> bool {
     }
 }
 
+/// Whether an installed `SKILL.md` carries the built-in marker: `setup` put
+/// it there, so it is not the user's own skill.
+pub fn is_builtin_skill_md(skill_md: &str) -> bool {
+    matches!(parse_frontmatter(skill_md), Ok(Some(parsed)) if is_builtin_marked(&parsed.meta))
+}
+
 /// How an installed copy of a built-in skill compares to the embedded one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinSkillState {
@@ -335,9 +437,8 @@ pub enum BuiltinSkillState {
     NotInstalled,
     /// Every embedded file matches what is installed, and nothing else is there.
     UpToDate,
-    /// Installed by ImRule from an older revision (marker set, revision at
-    /// least 1 and below the embedded one) with no files beyond the embedded
-    /// ones; safe to refresh.
+    /// Exactly what a release installed at this path from an older revision,
+    /// untouched since; safe to refresh.
     Outdated,
     /// Anything else that differs: edited or added to locally, a directory or
     /// `SKILL.md` the user owns, or a copy from a newer ImRule. Only
@@ -348,11 +449,16 @@ pub enum BuiltinSkillState {
 impl BuiltinSkillState {
     /// Decides the state of an installed copy.
     ///
-    /// `installed_files` lists every file below the skill's install directory,
-    /// relative to it with forward slashes, or is `None` when nothing exists
-    /// at that path. `installed` reads one of those files by relative path.
+    /// `copy_path` is where the copy sits below the install directory (the
+    /// skill's path, or a path it had before a rename), and `shipped` the
+    /// revisions releases installed. `installed_files` lists every file below
+    /// the copy, relative to it with forward slashes, or is `None` when nothing
+    /// exists at that path. `installed` reads one of those files by relative
+    /// path.
     pub fn compare(
         skill: &BuiltinSkill,
+        copy_path: &str,
+        shipped: &[ShippedRevision],
         installed_files: Option<&[String]>,
         installed: impl Fn(&str) -> Option<String>,
     ) -> Self {
@@ -364,31 +470,37 @@ impl BuiltinSkillState {
         let Some(installed_skill_md) = installed(SKILL_MD_FILENAME) else {
             return Self::Modified;
         };
-        // A file the embedded skill does not ship was added by the user, and
-        // replacing the directory would delete it. Only operating-system litter
-        // (`.DS_Store`) and a checker's `__pycache__` are left out.
+        // Operating-system litter (`.DS_Store`) and a checker's `__pycache__`
+        // are ignored; any other file the embedded skill lacks rules it out.
         let embedded: BTreeSet<&str> = skill.files.iter().map(|(path, _)| path.as_str()).collect();
-        if installed_files
+        let extra = installed_files
             .iter()
             .filter(|file| !is_incidental_file(file))
-            .any(|file| !embedded.contains(file.as_str()))
-        {
-            return Self::Modified;
-        }
+            .any(|file| !embedded.contains(file.as_str()));
         let identical = skill
             .files
             .iter()
             .all(|(relative, content)| installed(relative).as_deref() == Some(*content));
-        if identical {
+        if !extra && identical {
             return Self::UpToDate;
         }
         let Ok(Some(parsed)) = parse_frontmatter(&installed_skill_md) else {
             return Self::Modified;
         };
         let revision = revision_of(&parsed.meta);
-        // An embedded file missing from an older copy may be one the newer
-        // revision added, so only extra files rule a refresh out.
-        if is_builtin_marked(&parsed.meta) && revision >= 1 && revision < skill.revision {
+        // An older revision's own contents are not embedded, so only the
+        // shipped digests show it untouched. A copy edited, added to or
+        // trimmed since, or from a revision no release shipped here, is the
+        // user's to give up.
+        let untouched = is_builtin_marked(&parsed.meta)
+            && revision >= 1
+            && revision < skill.revision
+            && shipped.iter().any(|release| {
+                release.path == copy_path
+                    && release.revision == revision
+                    && release.matches(installed_files, &installed)
+            });
+        if untouched {
             Self::Outdated
         } else {
             Self::Modified

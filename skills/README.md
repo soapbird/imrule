@@ -6,25 +6,38 @@
 
 ## 1. 스킬 목록과 이름
 
-폴더 경로를 `-`로 이은 것이 스킬 이름입니다. `SKILL.md` frontmatter의 `name`도 반드시 같아야 합니다(Cursor·VS Code Copilot·OpenCode는 다르면 스킬을 읽지 않음).
+스킬 폴더는 `skills/` 바로 아래에 한 단계로 두고, 폴더 이름이 곧 스킬 이름입니다. `SKILL.md` frontmatter의 `name`도 반드시 같아야 합니다(Cursor·VS Code Copilot·OpenCode는 다르면 스킬을 읽지 않음).
 
-| 경로 | name | 층 | 검사 ID 접두사 | 전제 스킬 |
-|---|---|---|---|---|
-| `cli/` | `cli` | 공통 | `CLI` | — |
-| `server/` | `server` | 공통 | `SRV` | — |
-| `make/setup/` | `make-setup` | 공통 | `MK` | — |
-| `python/cli/` | `python-cli` | Python | `PYCLI` | `cli`, `make-setup` |
-| `python/server/` | `python-server` | Python | `PYSRV` | `server`, `make-setup` |
-| `rust/cli/` | `rust-cli` | Rust | `RSCLI` | `cli`, `make-setup` |
-| `rust/server/` | `rust-server` | Rust | `RSSRV` | `server`, `make-setup` |
-| `release/versioning/` | `release-versioning` | 공통 | `REL` | — |
-| `ci/github-actions/` | `ci-github-actions` | 공통 | `CI` | `make-setup` |
-| `docker/setup/` | `docker-setup` | 공통 | `DOCKER` | `server` |
-| `docker/optimize/` | `docker-optimize` | 공통 | `DOPT` | `docker-setup` |
-| `vscode/setup/` | `vscode-setup` | 공통 | `VSCODE` | `make-setup` |
-| `imrule-issue/` | `imrule-issue` | imrule | `ISSUE` | — |
+이름은 **종류 접두사**로 시작합니다. `imrule skills setup`의 목록과 선택 화면은 첫 `-` 앞부분으로 묶어 이 순서로 보여 줍니다.
 
-`imrule-issue`는 규칙 검사 스킬이 아니라 **작업 흐름 스킬**입니다. 구성(§2)과 check.py 계약(§4)은 같게 따르되, check.py는 "이슈를 만들 준비가 됐는가"를 검사하고, 진단 수집은 `scripts/collect.py`가 맡습니다(§5.10).
+| 접두사 | 뜻 | 이름 규칙 |
+|---|---|---|
+| `cli` | 명령행 도구 | 공통 스킬은 `cli`, 언어 스킬은 `cli-<언어>` |
+| `server` | 서버 | 공통 스킬은 `server`, 언어 스킬은 `server-<언어>` |
+| `setup` | 도구·저장소 설정 | `setup-<도구>` |
+| `optimize` | 측정하며 개선 | `optimize-<도구>` |
+| `imrule` | imrule 자체의 작업 흐름 | `imrule-<동작>` |
+
+| 폴더·name | 층 | 검사 ID 접두사 | 전제 스킬 |
+|---|---|---|---|
+| `cli` | 공통 | `CLI` | — |
+| `cli-python` | Python | `PYCLI` | `cli`, `setup-make` |
+| `cli-rust` | Rust | `RSCLI` | `cli`, `setup-make` |
+| `server` | 공통 | `SRV` | — |
+| `server-python` | Python | `PYSRV` | `server`, `setup-make` |
+| `server-rust` | Rust | `RSSRV` | `server`, `setup-make` |
+| `setup-make` | 공통 | `MK` | — |
+| `setup-release` | 공통 | `REL` | — |
+| `setup-github-actions` | 공통 | `CI` | `setup-make` |
+| `setup-docker` | 공통 | `DOCKER` | `server` |
+| `setup-vscode` | 공통 | `VSCODE` | `setup-make` |
+| `optimize-docker` | 공통 | `DOPT` | `setup-docker` |
+| `imrule-issue` | imrule | `ISSUE` | — |
+| `imrule-update` | imrule | `UPD` | — |
+
+`imrule-issue`와 `imrule-update`는 규칙 검사 스킬이 아니라 **작업 흐름 스킬**입니다. 구성(§2)과 check.py 계약(§4)은 같게 따르되, check.py는 "작업할 준비가 됐는가·무엇이 남았는가"를 검사합니다. `imrule-issue`의 진단 수집은 `scripts/collect.py`가 맡습니다(§5.10, §5.11).
+
+이름을 바꾸면 옛 경로를 `src/domain/builtin_skills.rs`의 `RENAMED_BUILTIN_SKILLS`와 `imrule-update/scripts/check.py`의 `RENAMED`에 더합니다. `imrule skills setup --update`가 옛 경로에 설치된 스킬을 새 이름으로 옮기고, 옛 경로·이름으로 지정해도 새 스킬로 해석합니다. 검사 ID 접두사는 이름이 바뀌어도 그대로 둡니다.
 
 언어 스킬은 공통 스킬의 원칙을 되풀이하지 않습니다. "공통 원칙은 `cli` 스킬을 따른다"고 적고 그 언어에서의 구현만 다룹니다.
 
@@ -48,8 +61,8 @@
 
 ```markdown
 ---
-name: python-cli
-description: "Python CLI 프로젝트를 soapbird 규칙(uv, src 레이아웃, Typer, ruff, basedpyright, pytest)으로 세팅하거나 규칙 준수 여부를 검사한다. 'Python CLI 세팅', 'CLI 구조 검사', 'pyproject 점검', 'check python cli conventions' 같은 요청에 사용. 서버(FastAPI)는 python-server, 공통 CLI 원칙은 cli 스킬."
+name: cli-python
+description: "Python CLI 프로젝트를 soapbird 규칙(uv, src 레이아웃, Typer, ruff, basedpyright, pytest)으로 세팅하거나 규칙 준수 여부를 검사한다. 'Python CLI 세팅', 'CLI 구조 검사', 'pyproject 점검', 'check python cli conventions' 같은 요청에 사용. 서버(FastAPI)는 server-python, 공통 CLI 원칙은 cli 스킬."
 compatibility: "uv 또는 Python 3.11+ 필요"
 metadata:
   imrule-builtin: "true"
@@ -57,7 +70,7 @@ metadata:
 ---
 ```
 
-- `metadata.imrule-skill-version`: 스킬 파일을 하나라도 바꾸면 **1 올립니다.** `imrule skills setup`은 설치본에 `imrule-builtin: "true"`가 있고 값이 1 이상이면서 더 낮고, 내장본에 없는 파일(`.DS_Store` 같은 OS 파일·`__pycache__` 제외, `.env` 같은 다른 숨김 파일은 사용자 파일로 봄)이 없을 때만 "업데이트 가능"으로 보고 덮어씁니다. 값이 같은데 내용이 다르거나, 표식·값이 없거나, 사용자가 추가한 파일이 있으면 사용자가 고친 것으로 보고 `--force`(또는 목록에서 그 스킬만 따로 선택) 없이는 건드리지 않습니다. `imrule-builtin`을 지우지 마세요.
+- `metadata.imrule-skill-version`: 스킬 파일을 하나라도 바꾸면 **1 올립니다.** `imrule skills setup`은 설치본이 더 낮은 리비전이고 그 리비전을 릴리스가 설치한 그대로일 때만(`src/domain/shipped_skills.rs`의 파일별 해시와 모두 같고, `.DS_Store` 같은 OS 파일·`__pycache__` 말고는 더하거나 뺀 파일이 없을 때만) "업데이트 가능"으로 보고 덮어씁니다. 한 줄이라도 고쳤거나, 파일을 더하거나 뺐거나, 표식·값이 없거나, 릴리스가 설치한 적 없는 리비전이면 사용자가 고친 것으로 보고 `--force`(또는 목록에서 그 스킬만 따로 선택) 없이는 건드리지 않습니다. `imrule-builtin`을 지우지 마세요. 스킬을 바꾼 릴리스를 태그한 뒤에는 `make shipped-skills`로 해시 표를 다시 만들어 커밋합니다. 빠뜨리면 그 릴리스로 설치한 사본은 다음 릴리스에서 "로컬에서 고침"으로 보입니다.
 - `description`: 400자 이하, 한국어. **무엇을 하는지 / 언제 쓰는지(한·영 트리거 문구) / 무엇은 다른 스킬인지**를 담습니다. 큰따옴표로 감쌉니다.
 - 규격 밖 필드(`allowed-tools` 등)는 넣지 않습니다. 파일 경로는 스킬 루트 기준 상대 경로로만 씁니다(`${CLAUDE_SKILL_DIR}` 금지).
 
@@ -81,7 +94,7 @@ metadata:
 ### 보고 형식 (모든 스킬 공통)
 
 ```markdown
-## python-cli 검사: <프로젝트> — PASS 14 · WARN 3 · FAIL 2
+## cli-python 검사: <프로젝트> — PASS 14 · WARN 3 · FAIL 2
 
 | ID | 항목 | 결과 | 근거 | 조치 |
 |----|------|------|------|------|
@@ -105,14 +118,14 @@ FAIL → WARN → PASS 순으로 정렬하고, PASS가 10개를 넘으면 표에
   ```
 - 사용법: `check.py [ROOT] [--format json|text] [--only ID[,ID...]]`. ROOT 기본값은 현재 디렉터리.
 - 종료 코드: `0` FAIL 없음 · `1` FAIL 있음 · `2` 사용법 오류(ROOT 없음 등).
-- 대상이 아닌 프로젝트(예: python-cli인데 pyproject.toml 없음)면 모든 항목을 `skip`으로 내고 `0`. 대상이 한 단계 아래 디렉터리에 있으면(예: `server/pyproject.toml`) skip 사유에 그 경로를 적습니다.
+- 대상이 아닌 프로젝트(예: cli-python인데 pyproject.toml 없음)면 모든 항목을 `skip`으로 내고 `0`. 대상이 한 단계 아래 디렉터리에 있으면(예: `server/pyproject.toml`) skip 사유에 그 경로를 적습니다.
 - git 서브모듈(루트 `.gitmodules`의 `path`)과 자체 `.git`이 있는 하위 디렉터리는 다른 저장소이므로 검사하지 않습니다.
-- 저장소 단위 검사기(`make-setup`, `release-versioning`, `vscode-setup`)를 모노레포 멤버 같은 하위 디렉터리에서 실행하면, 그 디렉터리에 Makefile·VERSION·`.vscode`가 없고 저장소 루트에 있을 때 모든 항목을 skip하고 루트 경로를 안내합니다.
+- 저장소 단위 검사기(`setup-make`, `setup-release`, `setup-vscode`)를 모노레포 멤버 같은 하위 디렉터리에서 실행하면, 그 디렉터리에 Makefile·VERSION·`.vscode`가 없고 저장소 루트에 있을 때 모든 항목을 skip하고 루트 경로를 안내합니다.
 - 테스트 코드(`tests/`, `test_*.py`, `*_tests.rs`, `#[cfg(test)]` 블록)는 운영 코드 규칙(환경 변수, 비밀값 플래그, unwrap 등)에서 제외합니다.
 - JSON 출력(stdout, 한 문서):
   ```json
   {
-    "skill": "python-cli",
+    "skill": "cli-python",
     "version": 1,
     "root": "/abs/path",
     "summary": {"pass": 14, "warn": 3, "fail": 2, "skip": 1},
@@ -214,7 +227,7 @@ def parse_args(skill: str) -> tuple[Report, str]:
 
 soapbird 하위 프로젝트 조사와 2026년 자료 조사를 거쳐 정한 값입니다. 스킬 references는 이 값과 어긋나면 안 됩니다.
 
-### 5.1 Makefile (`make-setup`)
+### 5.1 Makefile (`setup-make`)
 
 - 맨 위: `SHELL := bash`, `.SHELLFLAGS := -eu -o pipefail -c`, `MAKEFLAGS += --warn-undefined-variables --no-builtin-rules`, `.DEFAULT_GOAL := help`. `.ONESHELL`은 쓰지 않음(macOS 기본 make 3.81 비호환).
 - `help`는 `## 설명` 주석을 읽어 출력하는 자동 help. 모든 사용자 타깃에 `## ` 주석.
@@ -236,7 +249,7 @@ soapbird 하위 프로젝트 조사와 2026년 자료 조사를 거쳐 정한 �
 - 모든 비파일 타깃은 `.PHONY`에 선언. 레시피는 도구(`uv`, `cargo`, `pnpm`, `docker`)를 부르는 얇은 한두 줄(`echo`·`printf` 줄과 `help` 타깃은 길이에 세지 않음).
 - 적용 대상은 `Cargo.toml`이나 `pyproject.toml`이 있는 프로젝트입니다. 둘 다 없고 Makefile도 없는 프로젝트(예: pnpm TS 라이브러리)는 대상이 아닙니다.
 
-### 5.2 버전과 릴리스 (`release-versioning`)
+### 5.2 버전과 릴리스 (`setup-release`)
 
 - `VERSION` 파일이 유일한 원천. 형식 **4자리 `MAJOR.MINOR.PATCH.MICRO`** (gstack `/ship` 방식).
 - `Cargo.toml` `version` = 앞 3자리. 바이너리가 보여주는 버전은 `build.rs`가 VERSION을 읽어 넣은 전체 4자리.
@@ -271,7 +284,7 @@ soapbird 하위 프로젝트 조사와 2026년 자료 조사를 거쳐 정한 �
 - DB 마이그레이션은 명시적 단계(`make migrate` 또는 컨테이너 시작 시)로 실행하고 버전 관리.
 - 백그라운드 루프는 `main`에서만 띄우고 앱(라우터) 생성은 부작용 없이 테스트 가능하게.
 
-### 5.5 Python (`python-cli`, `python-server`)
+### 5.5 Python (`cli-python`, `server-python`)
 
 - uv, `uv.lock` 커밋, `.python-version`, `requires-python = ">=3.12"`.
 - `src/<패키지>/` 레이아웃. 빌드 백엔드 `uv_build`(빌드 훅이 필요하면 `hatchling` 허용).
@@ -286,7 +299,7 @@ soapbird 하위 프로젝트 조사와 2026년 자료 조사를 거쳐 정한 �
 - CLI: Typer(`Annotated` 스타일). `[project.scripts] <name> = "<pkg>.cli:app"`, `__main__.py`. `cli/`만 typer·rich를 import, 로직은 `core/`(또는 도메인 패키지). 무거운 import는 명령 함수 안에서. 테스트는 `typer.testing.CliRunner`로 stdout/stderr/exit code를 따로 검증.
 - 서버: FastAPI. `main.py`의 `create_app()` + `lifespan`(`on_event` 금지). 기능별 패키지 `<feature>/{router,schemas,models,service,repository,dependencies,exceptions}.py`. `settings.py`, `health.py`. DI는 `Annotated[..., Depends()]` 별칭. DB는 SQLAlchemy 2.0 async + Alembic. 테스트는 `httpx.AsyncClient(ASGITransport)` + `dependency_overrides`. Docker는 uv 멀티스테이지(`uv sync --locked`), non-root, exec 형식 CMD.
 
-### 5.6 Rust (`rust-cli`, `rust-server`)
+### 5.6 Rust (`cli-rust`, `server-rust`)
 
 - 새 프로젝트는 `edition = "2024"`, 기존 2021은 WARN. `rust-version` 필수. 가상 워크스페이스는 `resolver = "3"`.
 - `Cargo.lock` 커밋. `rust-toolchain.toml`(channel + rustfmt, clippy) 권장. `deny.toml`(cargo-deny) 권장.
@@ -299,7 +312,7 @@ soapbird 하위 프로젝트 조사와 2026년 자료 조사를 거쳐 정한 �
 - CLI: `fn main() -> ExitCode`. 버전은 `build.rs`가 VERSION을 읽어 env로 주입. 통합 테스트는 `assert_cmd`로 `tests/`에. 릴리스 프로필 `lto`, `codegen-units = 1`, `strip`.
 - 서버: axum 0.8(경로 `/{id}` 문법), `State<AppState>`, tower-http `TraceLayer`·`TimeoutLayer`, `with_graceful_shutdown`, `/healthz`·`/readyz`, 에러 타입이 `IntoResponse` 구현. 릴리스 프로필에서 `panic = "abort"` 금지(패닉 복구 레이어와 충돌). Docker는 cargo-chef 멀티스테이지, non-root.
 
-### 5.7 Docker (`docker-setup`)
+### 5.7 Docker (`setup-docker`)
 
 - 멀티스테이지 빌드. 베이스 이미지 태그 고정(`latest` 금지, 다이제스트 고정은 권장). `COPY --from=<이미지>:latest` 금지. 버전 숫자가 없는 이동 태그(`alpine`, `slim`, `stable`)도 피합니다(`bookworm` 같은 배포판 코드네임은 허용).
 - 마지막 스테이지는 non-root `USER`. `CMD`/`ENTRYPOINT`는 exec(JSON 배열) 형식.
@@ -309,18 +322,18 @@ soapbird 하위 프로젝트 조사와 2026년 자료 조사를 거쳐 정한 �
 - compose 파일 이름 `compose.yaml`(기존 `docker-compose.yml`은 WARN). 민감한 포트는 `127.0.0.1:` 바인딩.
 - Makefile: `docker-build`, `docker-push`, `deploy`(buildx `linux/amd64,linux/arm64`, 태그 `$(VERSION)`·`latest`·git 짧은 해시, `REGISTRY ?=` 변수).
 
-### 5.7.1 Docker 최적화 (`docker-optimize`)
+### 5.7.1 Docker 최적화 (`optimize-docker`)
 
-- `docker-setup`의 기본 규칙이 먼저 통과해야 합니다. 이 스킬은 그 위에서 이미지 크기, 콜드·웜 빌드 속도, 캐시 재사용, 공급망, 런타임 안정성을 **측정하며** 개선합니다.
+- `setup-docker`의 기본 규칙이 먼저 통과해야 합니다. 이 스킬은 그 위에서 이미지 크기, 콜드·웜 빌드 속도, 캐시 재사용, 공급망, 런타임 안정성을 **측정하며** 개선합니다.
 - 우선순위는 기능 보존·호환성 → 보안 → 재현성 → 측정된 성능입니다. 작은 이미지를 위해 동작을 깨지 않고, 도구·패키지 관리자·베이스 배포판을 임의로 바꾸지 않습니다.
 - 변경 전후는 같은 context·target·build args·platform으로 비교하고, 측정하지 못한 축은 `미측정`·`미검증`으로 적습니다. 수치 없이 "최적화 완료"라고 하지 않습니다.
 - 레이어 순서는 매니페스트·잠금 파일 → 의존성 설치 → 소스. 패키지 캐시는 `RUN --mount=type=cache`, 빌드 비밀은 `RUN --mount=type=secret`(ARG·ENV 금지), 소유권은 `COPY --chown`.
 - compose 런타임은 non-root, 가능하면 `read_only` + `tmpfs`, `cap_drop: [ALL]` 후 필요한 것만 추가, `security_opt: [no-new-privileges:true]`, 측정에 근거한 리소스 제한. `privileged`, docker socket·호스트 루트 마운트는 금지.
 - 레지스트리에 올리는 CI 빌드는 외부 캐시(`cache-from`/`cache-to`)와 `--sbom`·`--provenance`를 붙입니다.
 - 승인 없이 하지 않는 일: `docker system prune`·캐시 전체 삭제, registry push·login, 운영 컨테이너 교체, 비밀값 출력, 테스트 없는 베이스·libc 교체, 근거 없는 CVE 무시.
-- 근거 지도는 `docker/optimize/references/official-sources.md`입니다.
+- 근거 지도는 `optimize-docker/references/official-sources.md`입니다.
 
-### 5.8 GitHub Actions (`ci-github-actions`)
+### 5.8 GitHub Actions (`setup-github-actions`)
 
 - CI 워크플로(`.github/workflows/ci.yml`)는 `make check`를 호출. 트리거: `push`(`main`, `develop`), `pull_request`.
 - 최상위 `permissions: contents: read`, 쓰기 권한은 필요한 job에만.
@@ -329,7 +342,7 @@ soapbird 하위 프로젝트 조사와 2026년 자료 조사를 거쳐 정한 �
 - 툴체인: Rust `dtolnay/rust-toolchain` + `Swatinem/rust-cache`, Python `astral-sh/setup-uv`(캐시 켬), Node `pnpm/action-setup` + `actions/setup-node`.
 - 릴리스 워크플로(`release.yml`)는 `v*` 태그 푸시에서만 실행하고 태그와 VERSION이 같은지 먼저 확인.
 
-### 5.9 VS Code (`vscode-setup`) — Cursor 호환
+### 5.9 VS Code (`setup-vscode`) — Cursor 호환
 
 - 커밋하는 파일은 `.vscode/settings.json`, `extensions.json`, `launch.json`, `tasks.json` 네 개. `.gitignore`는 `.vscode/*` 다음에 이 네 파일을 `!`로 예외 처리.
 - JSONC(주석 허용), 들여쓰기 2칸, 마지막 줄바꿈. **기존 파일을 고칠 때는 필요한 키만 추가하고 파일 전체를 다시 포맷하지 않음**(배열 줄바꿈·키 순서 변경 금지).
@@ -354,7 +367,7 @@ soapbird 하위 프로젝트 조사와 2026년 자료 조사를 거쳐 정한 �
   | 종류 | 라벨 | 제목 영역 예시 |
   |---|---|---|
   | CLI 버그 (명령이 틀리게 동작·실패) | `bug` | `apply`, `clear`, `init`, `mcp`, `skills add`, `skills update`, `skills setup`, `skills list`, `agent:<id>` |
-  | 내장 스킬 오작동, 검사기 오탐·미탐 | `bug` | `skill:<name>` (예: `skill:rust-cli`) |
+  | 내장 스킬 오작동, 검사기 오탐·미탐 | `bug` | `skill:<name>` (예: `skill:cli-rust`) |
   | 기능 요청 (새 명령·옵션·스킬·에이전트 지원) | `enhancement` | 위와 같음, 새 영역이면 `new` |
   | 문서 오류·부족 | `documentation` | `docs` |
   | 사용법 질문 | `question` | 해당 명령 |
@@ -370,3 +383,12 @@ soapbird 하위 프로젝트 조사와 2026년 자료 조사를 거쳐 정한 �
   - collect.py가 1차로 가리고, 에이전트가 초안을 다시 훑어 남은 것을 가립니다.
 - `gh`가 없거나 인증되지 않았으면 본문을 파일로 저장하고, `https://github.com/soapbird/imrule/issues/new?title=…&labels=…` 링크를 안내합니다(본문은 파일에서 붙여넣기).
 - check.py(`ISSUE`)는 준비 상태를 검사합니다: `gh` 설치, `imrule` 실행 가능 여부와 버전, 프로젝트 `.imrule/` 유무(info). §4의 네트워크 금지 예외로, `gh auth status`와 저장소 접근·이슈 기능 확인은 `--online`을 줄 때만 합니다.
+
+### 5.11 imrule 업데이트 (`imrule-update`)
+
+- 내장 스킬은 바이너리에 들어 있으므로 **바이너리를 먼저 올리고** 스킬을 갱신합니다. 바이너리만 올리고 끝내지 않습니다.
+- 설치 방식은 `command -v imrule`의 실제 경로로 판별합니다: `…/Cellar/imrule/…` Homebrew(`brew upgrade imrule`), `~/.cargo/bin`은 `.crates2.json`의 출처로 git 설치(`cargo install --git … --tag <태그> --locked`)와 체크아웃 설치(`cargo install --path <체크아웃> --locked`)를 나눕니다. 그 밖의 경로는 install.sh·릴리스 바이너리·`make install`을 구별할 수 없어 `unknown`으로 보고 사용자에게 묻습니다.
+- 올리기 전에 설치 방식·명령·이어질 스킬 변경을 보여 주고 확인을 받습니다. `sudo`가 필요하면 사용자가 직접 실행합니다.
+- 스킬 갱신은 `imrule skills setup --update`(먼저 `--dry-run`)입니다. 설치된 내장 스킬만 대상으로 하고, 옛 리비전은 교체, 옛 경로(`python/cli`)의 설치본은 새 이름(`cli-python`)으로 옮기며, 바뀐 것이 있으면 `imrule apply`로 에이전트 디렉터리까지 맞춥니다.
+- 로컬에서 고친 스킬은 이름마다 승인받은 것만 `imrule skills setup <이름> --force`로 덮어씁니다. `imrule-builtin` 표지가 없는 스킬은 옛 경로와 이름이 같아도 건드리지 않습니다.
+- check.py(`UPD`)는 imrule 실행·버전, 설치 방식, `--update` 지원, 옛 리비전·옛 이름·로컬 수정 스킬을 봅니다. §4의 네트워크 금지 예외로 최신 릴리스 비교(`gh release view`, 없으면 `git ls-remote`)는 `--online`을 줄 때만 합니다.
