@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.2.0] - 2026-09-18
+
 ### Added
 
 - **`imrule-update` built-in skill**: built-in skills live inside the binary, so a new release only reached a project once someone upgraded imrule *and* re-ran `imrule skills setup` for each skill. The new `imrule-update` skill, offered in every project, does both: it detects how imrule was installed (Homebrew, cargo, or a copied binary from `install.sh` or `make install`), upgrades it with the matching command after confirmation, refreshes the installed built-in skills, and syncs agents. Its `scripts/check.py` reports the version, install method, outdated, renamed and locally modified skills, and — with `--online` — whether a newer release exists.
