@@ -41,7 +41,7 @@ crossterm = "0.29"
 
 [dev-dependencies]
 assert_cmd = "2"
-criterion = "0.5"
+criterion = "0.7"
 
 [[bench]]
 name = "rules_concat"
